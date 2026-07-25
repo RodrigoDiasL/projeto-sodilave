@@ -1,0 +1,1 @@
+import Link from "next/link";export default function AccessDenied(){return <main className="center-page"><section className="panel narrow"><h1>Acesso reservado</h1><p>Este painel só pode ser utilizado por administradores.</p><Link className="btn primary" href="/dashboard">Voltar ao início</Link></section></main>}

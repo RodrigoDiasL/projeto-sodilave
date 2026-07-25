@@ -1,0 +1,191 @@
+SODILAVE — PATCH NOTES CONSOLIDADOS
+Versões incluídas: v0.2, v0.3, v0.4, v0.4.5, v0.4.6 e v0.4.7
+
+============================================================
+v0.2
+============================================================
+
+- Turnos corrigidos:
+  - Turno A: 00:00–08:00
+  - Turno B: 08:00–16:00
+  - Turno C: 16:00–24:00
+- Adicionados botões para eliminar máquinas, produtos, matérias-primas e lotes de matérias-primas.
+- A eliminação é bloqueada quando o registo já tem histórico associado, preservando a rastreabilidade.
+- Criadas páginas de detalhe para produções.
+- Criadas páginas de detalhe para verificações de turno por máquina e verificações gerais.
+- No registo de produção, o operador escolhe primeiro a matéria-prima e depois o lote disponível.
+- As matérias-primas sem lotes continuam visíveis, mas indicam que não existem lotes disponíveis.
+
+============================================================
+v0.3
+============================================================
+
+- Mantida a correção dos horários dos turnos:
+  - Turno A: 00:00–08:00
+  - Turno B: 08:00–16:00
+  - Turno C: 16:00–24:00
+- Adicionada a possibilidade de eliminar ou desativar produtos, máquinas, matérias-primas, lotes e utilizadores.
+- Adicionada a possibilidade de eliminar produções e verificações de turno no painel de administração.
+- Melhorada a consulta detalhada de produções e verificações de turno.
+- Matérias-primas e lotes ativos passam a aparecer imediatamente no registo de produção.
+- Estados traduzidos para português.
+- Adicionada validação de campos no navegador e no servidor.
+- Bloqueados valores negativos onde não são permitidos.
+- Pesos passam a aceitar apenas gramas inteiras.
+- Removidas as setas dos campos numéricos de peso.
+- Percentagens da mistura passam a usar barras deslizantes em intervalos de 5%.
+- Adicionada validação para garantir que a soma das percentagens é 100%.
+- Adicionada verificação de coerência entre quantidades, percentagens e stock disponível.
+- Textos de exemplo passam a ser apresentados como placeholders nos formulários principais.
+
+============================================================
+v0.4
+============================================================
+
+- Criado um novo ecrã inicial de Produções, com opções para:
+  - Criar nova produção;
+  - Continuar produções em aberto;
+  - Consultar produções finalizadas.
+- Os rascunhos passam a abrir e atualizar o mesmo registo, evitando duplicação do lote produzido.
+- Reforçada a geração de lotes para impedir a reutilização de códigos existentes.
+- Os sliders da mistura passam a ser dependentes, mantendo automaticamente a soma em 100%.
+- A última percentagem é calculada automaticamente.
+- As percentagens continuam a variar em passos de 5%.
+- Removidas casas decimais desnecessárias na apresentação de pesos, quantidades e stocks.
+- Adicionadas traduções de estados, testes e momentos dos testes para português.
+- Impedida a edição de produções já finalizadas.
+- Corrigido o schema Prisma, incluindo os enums em formato válido.
+
+============================================================
+v0.4.5
+============================================================
+
+- Removida a indicação de contas de demonstração no ecrã de login.
+- Criados nove utilizadores reais com os PINs fornecidos.
+- As contas fictícias “Administrador” e “Operador Demo” passam a ser eliminadas ou desativadas quando possuem histórico.
+- A administração de utilizadores passa a permitir:
+  - Alterar o nome;
+  - Alterar o PIN;
+  - Alterar a função;
+  - Ativar ou desativar o utilizador.
+- Adicionada proteção contra um administrador desativar a própria conta ou retirar a si próprio a função de administrador.
+- O registo de auditoria passa a distinguir:
+  - Criação;
+  - Edição;
+  - Finalização de produções;
+  - Criação, edição e finalização de verificações de turno.
+- As páginas de detalhe passam a mostrar o histórico do registo e o utilizador responsável por cada ação.
+- A quantidade total de matéria-prima é introduzida uma única vez.
+- As quantidades individuais de cada matéria-prima são calculadas automaticamente com base nas percentagens.
+- Os rascunhos de produção podem ser gravados incompletos.
+- A validação integral passa a ocorrer apenas ao finalizar.
+- Os rascunhos de verificações de turno também podem ser gravados incompletos.
+- Numa verificação de turno por máquina, a seleção da máquina continua obrigatória.
+- Adicionadas traduções de estados e níveis para português.
+
+============================================================
+v0.4.6
+============================================================
+
+- Criado um catálogo técnico mais detalhado de matérias-primas.
+- A unidade das matérias-primas passa a estar fixa em kg.
+- Criado o módulo “Registar arranque semanal”, baseado na Folha de Arranque.r1.
+- Apenas as máquinas incluídas no último arranque semanal finalizado ficam disponíveis em Produção e Verificações de Turno.
+- A designação “Check-ups” passa a “Verificações de Turno”.
+- Adicionada a temperatura ambiente à verificação geral do turno.
+- O campo “Temperatura do molde” é substituído por “Pressão de água no sistema”.
+- Adicionada uma checkbox para a limpeza de aparadeiras, tapetes e mesa de embalamento.
+- Os rascunhos das verificações podem ser reabertos e concluídos mais tarde.
+- Aplicado o logótipo oficial da empresa.
+- Aplicados ícones próprios para as máquinas.
+- Nesta versão, as máquinas 4 e 5 utilizavam o ícone de máquina de tampas, e as restantes o ícone de máquina de garrafões.
+- O ícone de Produtos foi alterado para um jerrycan.
+
+============================================================
+v0.4.7
+============================================================
+
+- A produção do turno passa a ser apresentada por máquina, com um formulário completo para cada máquina em funcionamento.
+- As Verificações de Turno passam a seguir a mesma estrutura:
+  - Uma verificação geral;
+  - Um formulário individual para cada máquina.
+- Definida a regra de uma produção normal por máquina e por turno.
+- Produções adicionais exigem um motivo ao finalizar:
+  - Alteração de molde/modelo;
+  - Alteração de matérias-primas;
+  - Outra razão, com explicação obrigatória.
+- Os rascunhos continuam a poder ser guardados incompletos.
+- Adicionado o painel administrativo “Consultar arranques semanais”.
+- Removido o campo de certificações/análises das matérias-primas.
+- Os lotes de matérias-primas passam a poder ser alterados, incluindo:
+  - Matéria-prima;
+  - Número do lote;
+  - Fornecedor;
+  - Quantidade inicial;
+  - Quantidade disponível;
+  - Estado.
+- Aumentado o logótipo no cabeçalho.
+- Corrigida a associação dos ícones:
+  - Máquinas 5 e 6: ícone de máquina de tampas;
+  - Restantes máquinas: ícone de máquina de garrafões.
+- Alterações no schema Prisma:
+  - Removido RawMaterial.certificationReference;
+  - Adicionado Production.exceptionReason;
+  - Adicionado Production.exceptionNotes.
+
+
+============================================================
+SODILAVE GESTÃO DE PRODUÇÃO — v0.4.8
+============================================================
+
+- Criado o módulo de paragem semanal, com rascunho e finalização.
+- As limpezas gerais foram removidas do arranque e transferidas para a paragem semanal.
+- A paragem inclui limpezas detalhadas por cada máquina incluída no arranque ativo.
+- Implementado o ciclo obrigatório: arranque semanal → produções/verificações → paragem semanal → novo arranque.
+- A primeira utilização continua a permitir um arranque sem paragem anterior.
+- Criada a consulta administrativa de paragens semanais.
+- As consultas administrativas foram agrupadas num subpainel próprio.
+- A consulta detalhada de uma produção passa a apresentar todas as máquinas registadas no mesmo turno e dia.
+- Removida a opção “Não aplicável” dos novos testes de vedação e queda.
+- O lote do produto produzido é mostrado como campo informativo e não editável pelo operador.
+- A quantidade produzida passa a representar embalagens (sacos ou paletes).
+- Adicionado aos produtos o campo “Unidades por embalagem”.
+- Os produtos passam a poder ser editados.
+- A aplicação calcula uma sugestão de consumo de matéria-prima usando peso médio, embalagens produzidas e unidades por embalagem.
+- O operador pode corrigir manualmente as quantidades reais de matéria-prima consumida.
+- Adicionado, por máquina, o botão “Conforme em tudo” no arranque semanal.
+
+
+============================================================
+SODILAVE GESTÃO DE PRODUÇÃO — v0.4.9
+============================================================
+
+- Removida a limpeza de filtros de água da Paragem Semanal; continua disponível no Arranque Semanal.
+- A Paragem Semanal pode ser finalizada com campos por assinalar, desde que exista uma explicação nas observações gerais.
+- Adicionado o botão “Limpeza total da máquina” em cada máquina da Paragem Semanal.
+- Adicionado o botão “Conforme em tudo” nas verificações gerais do Arranque Semanal.
+- Corrigidas as designações das limpezas gerais nas Verificações de Turno.
+- O botão Controlos de Administrador fica oculto para operadores.
+- Reorganizado o módulo de Produtos: lista simplificada, página de detalhes e página própria de edição.
+- Adicionadas ações separadas para editar, ativar/desativar e eliminar produtos.
+- Aumentado o logótipo no cabeçalho de toda a aplicação.
+- Adicionado modo escuro persistente com botão sempre visível.
+
+
+============================================================
+SODILAVE — v0.9.5
+============================================================
+
+- Novo perfil “Responsável de produção”.
+- Luís atualizado para Responsável de produção.
+- Novo módulo de manutenções preventivas, corretivas e programadas.
+- Registo de máquinas e funcionários envolvidos em cada manutenção.
+- Produções finalizadas podem ser corrigidas até ao fim do respetivo turno.
+- Estados operacionais das máquinas: Em funcionamento e Parada.
+- Avarias podem ser registadas nas Verificações de Turno e parar automaticamente a máquina.
+- Novo módulo de Arranque Intermédio para retomar máquinas paradas.
+- Possibilidade de criar manutenção corretiva durante o arranque intermédio.
+- Página individual de cada máquina com estado, incidentes, manutenções, uptime e linha temporal.
+- Base inicial do módulo de Rastreabilidade por lote, produto ou máquina.
+- Arranques e paragens semanais passam a gerar eventos de máquina para cálculo de uptime.
+

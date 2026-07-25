@@ -1,0 +1,10 @@
+Nome 	| PIN  | Função
+Rodrigo | 1234 | Administrador
+Ana 	| 4321 | Administrador
+Emídio 	| 1111 | Operador
+Miguel 	| 1112 | Operador
+Nuno 	| 1113 | Operador
+Rafael	| 1114 | Operador
+Hugo	| 1115 | Operador
+Luís 	| 1116 | Operador
+Claudio	| 1117 | Operador

@@ -1,0 +1,431 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "mysql"
+  url      = env("DATABASE_URL")
+}
+
+enum UserRole {
+  OPERATOR
+  PRODUCTION_MANAGER
+  ADMIN
+}
+
+enum RecordStatus {
+  DRAFT
+  FINALIZED
+  CANCELLED
+}
+
+enum LotStatus {
+  ACTIVE
+  DEPLETED
+  CLOSED
+  CANCELLED
+}
+
+enum TestResult {
+  CONFORMING
+  NON_CONFORMING
+  NOT_PERFORMED
+  NOT_APPLICABLE
+}
+
+enum TestType {
+  LEAK
+  DROP
+}
+
+enum TestMoment {
+  START
+  MID
+  END
+}
+
+enum OilLevel {
+  LOW
+  NORMAL
+  HIGH
+}
+
+enum MachineStatus {
+  RUNNING
+  STOPPED
+}
+
+enum MaintenanceType {
+  PREVENTIVE
+  CORRECTIVE
+  SCHEDULED
+}
+
+enum MaintenanceStatus {
+  OPEN
+  COMPLETED
+  CANCELLED
+}
+
+enum IncidentType {
+  BREAKDOWN
+  STOPPAGE
+  OTHER
+}
+
+enum MachineEventType {
+  WEEKLY_STARTUP
+  INTERMEDIATE_STARTUP
+  BREAKDOWN_STOP
+  MANUAL_STOP
+  MAINTENANCE_START
+  MAINTENANCE_END
+  WEEKLY_SHUTDOWN
+}
+
+model User {
+  id            Int                 @id @default(autoincrement())
+  name          String
+  pinHash       String
+  role          UserRole            @default(OPERATOR)
+  active        Boolean             @default(true)
+  productions   Production[]
+  checkups      MachineCheckup[]
+  generalChecks ShiftGeneralCheck[]
+  auditLogs     AuditLog[]
+  weeklyStartups WeeklyStartup[]
+  weeklyShutdowns WeeklyShutdown[]
+  maintenancesCreated Maintenance[] @relation("MaintenanceCreator")
+  maintenanceParticipants MaintenanceParticipant[]
+  incidentsCreated Incident[] @relation("IncidentCreator")
+  machineEventsCreated MachineEvent[] @relation("MachineEventCreator")
+  createdAt     DateTime            @default(now())
+  updatedAt     DateTime            @updatedAt
+}
+
+model Machine {
+  id             Int                    @id @default(autoincrement())
+  code           String                 @unique
+  name           String
+  active         Boolean                @default(true)
+  productions    Production[]
+  checkups       MachineCheckup[]
+  startupMachines WeeklyStartupMachine[]
+  shutdownMachines WeeklyShutdownMachine[]
+  status MachineStatus @default(STOPPED)
+  statusChangedAt DateTime @default(now())
+  maintenanceMachines MaintenanceMachine[]
+  incidents Incident[]
+  events MachineEvent[]
+  createdAt      DateTime               @default(now())
+  updatedAt      DateTime               @updatedAt
+}
+
+model Product {
+  id          Int          @id @default(autoincrement())
+  code        String       @unique
+  name        String
+  packageType String?
+  unitsPerPackage Int?
+  active      Boolean      @default(true)
+  productions Production[]
+  createdAt   DateTime     @default(now())
+  updatedAt   DateTime     @updatedAt
+}
+
+model RawMaterial {
+  id                    Int              @id @default(autoincrement())
+  code                  String           @unique
+  name                  String
+  materialType          String?
+  color                 String?
+  manufacturer          String?
+  internalReference     String?
+  notes                 String?          @db.Text
+  unit                  String           @default("kg")
+  active                Boolean          @default(true)
+  lots                  RawMaterialLot[]
+  createdAt             DateTime         @default(now())
+  updatedAt             DateTime         @updatedAt
+}
+
+model RawMaterialLot {
+  id                Int                  @id @default(autoincrement())
+  rawMaterialId     Int
+  rawMaterial       RawMaterial          @relation(fields: [rawMaterialId], references: [id])
+  supplierLot       String
+  supplier          String?
+  quantityInitial   Decimal              @db.Decimal(12, 3)
+  quantityAvailable Decimal              @db.Decimal(12, 3)
+  receivedAt        DateTime             @default(now())
+  expiryDate        DateTime?
+  status            LotStatus            @default(ACTIVE)
+  usages            ProductionMaterial[]
+  createdAt         DateTime             @default(now())
+  updatedAt         DateTime             @updatedAt
+
+  @@unique([rawMaterialId, supplierLot])
+}
+
+model ProductionLotRule {
+  id        Int      @id @default(autoincrement())
+  name      String
+  prefix    String   @default("SD")
+  template  String   @default("{PREFIX}-{YY}{WW}-{SHIFT}-{MACHINE}-{SEQ}")
+  active    Boolean  @default(true)
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+}
+
+model Production {
+  id               Int                  @id @default(autoincrement())
+  machineId        Int
+  machine          Machine              @relation(fields: [machineId], references: [id])
+  productId        Int
+  product          Product              @relation(fields: [productId], references: [id])
+  operatorId       Int
+  operator         User                 @relation(fields: [operatorId], references: [id])
+  productionLot    String               @unique
+  shiftCode        String
+  status           RecordStatus         @default(DRAFT)
+  startedAt        DateTime             @default(now())
+  finalizedAt      DateTime?
+  initialWeightG   Decimal?             @db.Decimal(10, 2)
+  midWeightG       Decimal?             @db.Decimal(10, 2)
+  quantityProduced Int?
+  observations     String?              @db.Text
+  exceptionReason  String?
+  exceptionNotes   String?              @db.Text
+  materials        ProductionMaterial[]
+  tests            QualityTest[]
+  createdAt        DateTime             @default(now())
+  updatedAt        DateTime             @updatedAt
+}
+
+model ProductionMaterial {
+  id               Int            @id @default(autoincrement())
+  productionId     Int
+  production       Production     @relation(fields: [productionId], references: [id], onDelete: Cascade)
+  rawMaterialLotId Int
+  rawMaterialLot   RawMaterialLot @relation(fields: [rawMaterialLotId], references: [id])
+  percentage       Decimal?       @db.Decimal(6, 3)
+  quantityKg       Decimal?       @db.Decimal(12, 3)
+}
+
+model QualityTest {
+  id           Int        @id @default(autoincrement())
+  productionId Int
+  production   Production @relation(fields: [productionId], references: [id], onDelete: Cascade)
+  type         TestType
+  moment       TestMoment
+  result       TestResult
+  notes        String?
+  measuredAt   DateTime   @default(now())
+
+  @@unique([productionId, type, moment])
+}
+
+model MachineCheckup {
+  id          Int          @id @default(autoincrement())
+  machineId   Int
+  machine     Machine      @relation(fields: [machineId], references: [id])
+  operatorId  Int
+  operator    User         @relation(fields: [operatorId], references: [id])
+  shiftCode   String
+  status      RecordStatus @default(DRAFT)
+  observedAt  DateTime     @default(now())
+  finalizedAt DateTime?
+  oilTempC    Decimal?     @db.Decimal(6, 2)
+  oilLevel    OilLevel?
+  waterPressure Decimal?   @db.Decimal(6, 2)
+  airPressure   Decimal?   @db.Decimal(6, 2)
+  cleanMachineArea Boolean @default(false)
+  hasBreakdown Boolean @default(false)
+  breakdownStoppedMachine Boolean @default(false)
+  breakdownDescription String? @db.Text
+  incident Incident?
+  notes         String?    @db.Text
+  createdAt   DateTime     @default(now())
+  updatedAt   DateTime     @updatedAt
+}
+
+model ShiftGeneralCheck {
+  id              Int          @id @default(autoincrement())
+  operatorId      Int
+  operator        User         @relation(fields: [operatorId], references: [id])
+  shiftCode       String
+  status          RecordStatus @default(DRAFT)
+  observedAt      DateTime     @default(now())
+  finalizedAt     DateTime?
+  chillerLargeC   Decimal?     @db.Decimal(6, 2)
+  chillerSmallC   Decimal?     @db.Decimal(6, 2)
+  ambientTempC    Decimal?     @db.Decimal(6, 2)
+  cleanDispatch   Boolean      @default(false)
+  cleanStorage    Boolean      @default(false)
+  cleanProduction Boolean      @default(false)
+  notes           String?      @db.Text
+  createdAt       DateTime     @default(now())
+  updatedAt       DateTime     @updatedAt
+}
+
+model AuditLog {
+  id        Int      @id @default(autoincrement())
+  userId    Int?
+  user      User?    @relation(fields: [userId], references: [id])
+  action    String
+  entity    String
+  entityId  String?
+  details   Json?
+  createdAt DateTime @default(now())
+}
+
+
+model WeeklyStartup {
+  id                    Int                    @id @default(autoincrement())
+  operatorId            Int
+  operator              User                   @relation(fields: [operatorId], references: [id])
+  status                RecordStatus           @default(DRAFT)
+  startupDate           DateTime               @default(now())
+  shiftCode             String
+  chillerSmall          Boolean                @default(false)
+  chillerLarge          Boolean                @default(false)
+  coolingPump           Boolean                @default(false)
+  compressor            Boolean                @default(false)
+  airDryers             Boolean                @default(false)
+  airDemolecularizer    Boolean                @default(false)
+  productionWindows     TestResult?
+  storageWindows        TestResult?
+  dispatchWindows       TestResult?
+  forkliftIntegrity     TestResult?
+  emergencyLighting     TestResult?
+  observations          String?                @db.Text
+  finalizedAt           DateTime?
+  machines              WeeklyStartupMachine[]
+  shutdown              WeeklyShutdown?
+  createdAt             DateTime               @default(now())
+  updatedAt             DateTime               @updatedAt
+}
+
+model WeeklyStartupMachine {
+  id                    Int           @id @default(autoincrement())
+  weeklyStartupId       Int
+  weeklyStartup         WeeklyStartup @relation(fields: [weeklyStartupId], references: [id], onDelete: Cascade)
+  machineId             Int
+  machine               Machine       @relation(fields: [machineId], references: [id])
+  acrylics              TestResult?
+  plasticTrays          TestResult?
+  lighting              TestResult?
+  extruderTemperatures  TestResult?
+  lubrication           TestResult?
+  mouldCleaning         TestResult?
+  beltsTraysTables      TestResult?
+  waterFilters          TestResult?
+
+  @@unique([weeklyStartupId, machineId])
+}
+
+model WeeklyShutdown {
+  id                    Int                     @id @default(autoincrement())
+  operatorId            Int
+  operator              User                    @relation(fields: [operatorId], references: [id])
+  weeklyStartupId       Int                     @unique
+  weeklyStartup         WeeklyStartup           @relation(fields: [weeklyStartupId], references: [id])
+  status                RecordStatus            @default(DRAFT)
+  shutdownDate          DateTime                @default(now())
+  shiftCode             String
+  cleanDispatch         Boolean                 @default(false)
+  cleanStorage          Boolean                 @default(false)
+  cleanProduction       Boolean                 @default(false)
+  observations          String?                 @db.Text
+  finalizedAt           DateTime?
+  machines              WeeklyShutdownMachine[]
+  createdAt             DateTime                @default(now())
+  updatedAt             DateTime                @updatedAt
+}
+
+model WeeklyShutdownMachine {
+  id                    Int             @id @default(autoincrement())
+  weeklyShutdownId      Int
+  weeklyShutdown        WeeklyShutdown  @relation(fields: [weeklyShutdownId], references: [id], onDelete: Cascade)
+  machineId             Int
+  machine               Machine         @relation(fields: [machineId], references: [id])
+  externalCleaning      Boolean         @default(false)
+  acrylicsCleaning      Boolean         @default(false)
+  mouldCleaning         Boolean         @default(false)
+  traysCleaning         Boolean         @default(false)
+  catchersCleaning      Boolean         @default(false)
+  beltsCleaning         Boolean         @default(false)
+  packingTableCleaning  Boolean         @default(false)
+  surroundingArea       Boolean         @default(false)
+  notes                 String?         @db.Text
+
+  @@unique([weeklyShutdownId, machineId])
+}
+
+
+model Maintenance {
+  id Int @id @default(autoincrement())
+  type MaintenanceType
+  status MaintenanceStatus @default(OPEN)
+  performedAt DateTime
+  completedAt DateTime?
+  observations String @db.Text
+  createdById Int
+  createdBy User @relation("MaintenanceCreator", fields: [createdById], references: [id])
+  machines MaintenanceMachine[]
+  participants MaintenanceParticipant[]
+  incidentId Int? @unique
+  incident Incident? @relation(fields: [incidentId], references: [id])
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+}
+
+model MaintenanceMachine {
+  maintenanceId Int
+  machineId Int
+  maintenance Maintenance @relation(fields: [maintenanceId], references: [id], onDelete: Cascade)
+  machine Machine @relation(fields: [machineId], references: [id])
+  @@id([maintenanceId, machineId])
+}
+
+model MaintenanceParticipant {
+  maintenanceId Int
+  userId Int
+  maintenance Maintenance @relation(fields: [maintenanceId], references: [id], onDelete: Cascade)
+  user User @relation(fields: [userId], references: [id])
+  @@id([maintenanceId, userId])
+}
+
+model Incident {
+  id Int @id @default(autoincrement())
+  machineId Int
+  machine Machine @relation(fields: [machineId], references: [id])
+  checkupId Int? @unique
+  checkup MachineCheckup? @relation(fields: [checkupId], references: [id])
+  type IncidentType @default(BREAKDOWN)
+  occurredAt DateTime
+  description String @db.Text
+  stoppedMachine Boolean @default(true)
+  createdById Int
+  createdBy User @relation("IncidentCreator", fields: [createdById], references: [id])
+  maintenance Maintenance?
+  createdAt DateTime @default(now())
+}
+
+model MachineEvent {
+  id Int @id @default(autoincrement())
+  machineId Int
+  machine Machine @relation(fields: [machineId], references: [id])
+  type MachineEventType
+  fromStatus MachineStatus?
+  toStatus MachineStatus
+  occurredAt DateTime
+  reason String?
+  notes String? @db.Text
+  createdById Int
+  createdBy User @relation("MachineEventCreator", fields: [createdById], references: [id])
+  maintenanceId Int?
+  incidentId Int?
+  createdAt DateTime @default(now())
+  @@index([machineId, occurredAt])
+}
