@@ -48,6 +48,12 @@ export async function requireAuditAccess() {
   return user;
 }
 
+export async function requireReadAccess() {
+  const user = await requireUser();
+  if (!["ADMIN", "PRODUCTION_MANAGER", "AUDITOR"].includes(user.role)) redirect("/access-denied");
+  return user;
+}
+
 export async function requireProductionManager() {
   const user = await requireUser();
   if (!["ADMIN", "PRODUCTION_MANAGER"].includes(user.role)) redirect("/access-denied");
