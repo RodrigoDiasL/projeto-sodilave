@@ -4,282 +4,81 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 import { saveProduction } from "@/app/actions/production";
 
-type Machine = { id: number; code: string; name: string };
-type Product = { id: number; code: string; name: string; unitsPerPackage: number | null };
-type RawMaterial = { id: number; name: string };
-type Lot = { id: number; supplierLot: string; quantityAvailable: string; rawMaterial: { id: number; name: string } };
-type MaterialRowState = { key: number; materialId: string; lotId: string; percentage: number; quantityKg?: string; manualQuantity?: boolean };
-type InitialProduction = {
-  id: number;
-  machineId: number;
-  productId: number;
-  productionLot: string;
-  initialWeightG: string;
-  midWeightG: string;
-  rightInitialWeightG?: string;
-  rightMidWeightG?: string;
-  quantityProduced: string;
-  observations: string;
-  totalMaterialKg: string;
-  materials: MaterialRowState[];
-  tests: Record<string, string>;
-  exceptionReason?: string;
-  exceptionNotes?: string;
-};
-type StoredDraft = {
-  selectedMachineId: string;
-  productId: string;
-  initialWeight: string;
-  midWeight: string;
-  rightInitialWeight: string;
-  rightMidWeight: string;
-  packageCount: string;
-  rows: MaterialRowState[];
-  fields: Record<string, string | boolean>;
-  savedAt: number;
-};
+type Machine={id:number;code:string;name:string};
+type Product={id:number;code:string;name:string;unitsPerPackage:number|null};
+type RawMaterial={id:number;name:string};
+type Lot={id:number;supplierLot:string;quantityAvailable:string;rawMaterial:{id:number;name:string}};
+type MaterialRowState={key:number;materialId:string;lotId:string;percentage:number;quantityKg?:string;manualQuantity?:boolean};
+type InitialProduction={id:number;machineId:number;productId:number;productionLot:string;initialWeightG:string;midWeightG:string;rightInitialWeightG?:string;rightMidWeightG?:string;quantityProduced:string;observations:string;totalMaterialKg:string;materials:MaterialRowState[];tests:Record<string,string>;exceptionReason?:string;exceptionNotes?:string};
+type StoredDraft={selectedMachineId:string;productId:string;initialWeight:string;midWeight:string;rightInitialWeight:string;rightMidWeight:string;packageCount:string;rows:MaterialRowState[];tests:Record<string,string>;observations:string;exceptionReason:string;exceptionNotes:string;savedAt:number};
 
-const results = ["CONFORMING", "NON_CONFORMING", "NOT_PERFORMED"];
+const results=["CONFORMING","NON_CONFORMING","NOT_PERFORMED"];
+const emptyTests={leakStart:"",leakMid:"",dropStart:"",dropMid:"",leakStartRight:"",leakMidRight:"",dropStartRight:"",dropMidRight:""};
 
-function distributePercentages(count: number) {
-  if (count <= 1) return [100];
-  const base = Math.floor(100 / count / 5) * 5;
-  const values = Array.from({ length: count }, () => base);
-  values[0] += 100 - values.reduce((sum, value) => sum + value, 0);
-  return values;
+function distributePercentages(count:number){if(count<=1)return[100];const base=Math.floor(100/count/5)*5;const values=Array.from({length:count},()=>base);values[0]+=100-values.reduce((a,b)=>a+b,0);return values}
+function normalizeRows(rows:MaterialRowState[]){const p=distributePercentages(rows.length);return rows.map((r,i)=>({...r,percentage:p[i]}))}
+function formatQuantity(value:number,maxDigits=3){return new Intl.NumberFormat("pt-PT",{maximumFractionDigits:maxDigits}).format(value)}
+function calculatedQuantity(total:number,percentage:number){if(!Number.isFinite(total)||total<=0)return 0;return Math.round(total*percentage*10)/1000}
+function labelResult(x:string){return({CONFORMING:"Conforme",NON_CONFORMING:"Não conforme",NOT_PERFORMED:"Não realizado"} as Record<string,string>)[x]}
+
+export function ProductionForm({machines,products,rawMaterials,lots,initial,fixedMachine,additional=false}:{machines:Machine[];products:Product[];rawMaterials:RawMaterial[];lots:Lot[];initial?:InitialProduction;fixedMachine?:Machine;additional?:boolean}){
+ const router=useRouter();
+ const restoredRef=useRef(false);
+ const timerRef=useRef<ReturnType<typeof setTimeout>|null>(null);
+ const storageKey=useMemo(()=>`sodilave:production-draft:${initial?.id??`new-${fixedMachine?.id??"free"}-${additional?"additional":"normal"}`}`,[initial?.id,fixedMachine?.id,additional]);
+ const [rows,setRows]=useState<MaterialRowState[]>(initial?.materials?.length?initial.materials:[{key:0,materialId:"",lotId:"",percentage:100,quantityKg:""}]);
+ const [selectedMachineId,setSelectedMachineId]=useState(String(fixedMachine?.id??initial?.machineId??""));
+ const [productId,setProductId]=useState(String(initial?.productId??""));
+ const [initialWeight,setInitialWeight]=useState(initial?.initialWeightG??"");
+ const [midWeight,setMidWeight]=useState(initial?.midWeightG??"");
+ const [rightInitialWeight,setRightInitialWeight]=useState(initial?.rightInitialWeightG??"");
+ const [rightMidWeight,setRightMidWeight]=useState(initial?.rightMidWeightG??"");
+ const [packageCount,setPackageCount]=useState(initial?.quantityProduced??"");
+ const [tests,setTests]=useState<Record<string,string>>({...emptyTests,...(initial?.tests??{})});
+ const [observations,setObservations]=useState(initial?.observations??"");
+ const [exceptionReason,setExceptionReason]=useState(initial?.exceptionReason??"");
+ const [exceptionNotes,setExceptionNotes]=useState(initial?.exceptionNotes??"");
+ const [message,setMessage]=useState("");
+ const [error,setError]=useState("");
+ const [saving,setSaving]=useState(false);
+ const [draftRecovered,setDraftRecovered]=useState(false);
+ const selectedMachine=fixedMachine??machines.find(m=>String(m.id)===selectedMachineId);
+ const isMachine7=selectedMachine?.code==="7";
+ const percentageTotal=useMemo(()=>rows.reduce((s,r)=>s+r.percentage,0),[rows]);
+ const product=products.find(p=>String(p.id)===productId);
+ const unitsPerPackage=product?.unitsPerPackage??0;
+ const leftAverage=initialWeight&&midWeight?(Number(initialWeight)+Number(midWeight))/2:0;
+ const rightAverage=rightInitialWeight&&rightMidWeight?(Number(rightInitialWeight)+Number(rightMidWeight))/2:0;
+ const averageWeightG=isMachine7&&leftAverage>0&&rightAverage>0?(leftAverage+rightAverage)/2:leftAverage;
+ const suggestedTotalKg=averageWeightG>0&&Number(packageCount)>0&&unitsPerPackage>0?(averageWeightG*Number(packageCount)*unitsPerPackage)/1000:0;
+
+ const payload=():StoredDraft=>({selectedMachineId,productId,initialWeight,midWeight,rightInitialWeight,rightMidWeight,packageCount,rows,tests,observations,exceptionReason,exceptionNotes,savedAt:Date.now()});
+ const saveLocal=()=>{if(typeof window!=="undefined"&&restoredRef.current)window.localStorage.setItem(storageKey,JSON.stringify(payload()))};
+ const queueSave=()=>{if(timerRef.current)clearTimeout(timerRef.current);timerRef.current=setTimeout(saveLocal,250)};
+ const clearLocal=()=>{if(typeof window!=="undefined")window.localStorage.removeItem(storageKey);setDraftRecovered(false)};
+
+ useEffect(()=>{if(typeof window==="undefined")return;const raw=window.localStorage.getItem(storageKey);if(raw){try{const d=JSON.parse(raw) as StoredDraft;setSelectedMachineId(d.selectedMachineId??"");setProductId(d.productId??"");setInitialWeight(d.initialWeight??"");setMidWeight(d.midWeight??"");setRightInitialWeight(d.rightInitialWeight??"");setRightMidWeight(d.rightMidWeight??"");setPackageCount(d.packageCount??"");if(d.rows?.length)setRows(d.rows);setTests({...emptyTests,...(d.tests??{})});setObservations(d.observations??"");setExceptionReason(d.exceptionReason??"");setExceptionNotes(d.exceptionNotes??"");setDraftRecovered(true)}catch{window.localStorage.removeItem(storageKey)}}restoredRef.current=true},[storageKey]);
+ useEffect(()=>{queueSave();return()=>{if(timerRef.current)clearTimeout(timerRef.current)}},[selectedMachineId,productId,initialWeight,midWeight,rightInitialWeight,rightMidWeight,packageCount,rows,tests,observations,exceptionReason,exceptionNotes]);
+ useEffect(()=>{if(!suggestedTotalKg)return;setRows(current=>current.map(row=>row.manualQuantity?row:{...row,quantityKg:String(Math.round(suggestedTotalKg*row.percentage)/100)}))},[suggestedTotalKg]);
+
+ const addRow=()=>setRows(c=>c.length>=8?c:normalizeRows([...c,{key:Date.now(),materialId:"",lotId:"",percentage:5,quantityKg:""}]));
+ const updateRow=(key:number,patch:Partial<MaterialRowState>)=>setRows(c=>c.map(r=>r.key===key?{...r,...patch}:r));
+ const removeRow=(key:number)=>setRows(c=>normalizeRows(c.filter(r=>r.key!==key)));
+ const updatePercentage=(index:number,value:number)=>setRows(current=>{if(current.length===1||index===current.length-1)return current;const next=current.map(r=>({...r}));const min=5*(current.length-index-1);const prev=next.slice(0,index).reduce((s,r)=>s+r.percentage,0);next[index].percentage=Math.max(5,Math.min(value,100-prev-min));const remaining=100-next.slice(0,index+1).reduce((s,r)=>s+r.percentage,0);const count=next.length-index-1;if(count===1)next[next.length-1].percentage=remaining;else{const tail=distributePercentages(count).map(p=>Math.round((p/100)*remaining/5)*5);tail[tail.length-1]+=remaining-tail.reduce((a,b)=>a+b,0);tail.forEach((p,o)=>next[index+1+o].percentage=p)}return next});
+ const setTest=(key:string,value:string)=>setTests(c=>({...c,[key]:value}));
+
+ const validate=(fd:FormData)=>{if(!fd.get("machineId"))return"Selecione a máquina.";if(additional&&!exceptionReason)return"Indique o motivo da produção adicional.";if(exceptionReason==="OTHER"&&!exceptionNotes.trim())return"Explique o motivo da produção adicional.";if(!productId)return"Selecione o tipo de embalagem produzido.";if(rows.some(r=>!r.materialId||!r.lotId))return"Selecione a matéria-prima e o lote em todas as linhas da mistura.";if(percentageTotal!==100)return"A mistura tem de totalizar 100%.";if(rows.some(r=>r.percentage<5||r.percentage>100||r.percentage%5!==0))return"As percentagens devem variar de 5% em 5%.";for(const row of rows){const lot=lots.find(l=>String(l.id)===row.lotId);const q=Number(row.quantityKg||0);if(!Number.isFinite(q)||q<=0)return"Introduza as quantidades efetivamente consumidas de todas as matérias-primas.";if(lot&&q>Number(lot.quantityAvailable))return`A quantidade calculada excede o stock disponível do lote ${lot.supplierLot}.`}if(!initialWeight||!midWeight)return"Preencha os pesos do início e do meio do turno.";if(isMachine7&&(!rightInitialWeight||!rightMidWeight))return"Preencha os pesos das cavidades esquerda e direita.";const req=isMachine7?Object.keys(emptyTests):["leakStart","leakMid","dropStart","dropMid"];if(req.some(k=>!tests[k]))return"Preencha todos os testes de vedação e de queda.";if(packageCount==="")return"Introduza a quantidade produzida.";return""};
+ const submit=async(fd:FormData)=>{setMessage("");setError("");saveLocal();const finalize=fd.get("intent")==="finalize";if(finalize){const e=validate(fd);if(e){setError(e);return}if(!confirm("Tem a certeza de que pretende finalizar esta produção?"))return}setSaving(true);try{const result=await saveProduction(fd);clearLocal();if(result.finalized){router.push("/production");router.refresh();return}setMessage(`Produção ${result.lot||`#${result.id}`} guardada como rascunho.`);if(!initial?.id&&!fixedMachine)router.replace(`/production/${result.id}`);router.refresh()}catch(e){saveLocal();setError(e instanceof Error?e.message:"Não foi possível guardar a produção.")}finally{setSaving(false)}};
+
+ const TestFields=({suffix="",title}:{suffix?:string;title?:string})=><section className="subpanel form-stack">{title&&<h3>{title}</h3>}<div className="two-col"><section><h3>Teste de vedação</h3><div className="two-col compact"><label>Início<select name={`leakStart${suffix}`} value={tests[`leakStart${suffix}`]??""} onChange={e=>setTest(`leakStart${suffix}`,e.target.value)}><option value="">Selecione</option>{results.map(x=><option key={x} value={x}>{labelResult(x)}</option>)}</select></label><label>Meio<select name={`leakMid${suffix}`} value={tests[`leakMid${suffix}`]??""} onChange={e=>setTest(`leakMid${suffix}`,e.target.value)}><option value="">Selecione</option>{results.map(x=><option key={x} value={x}>{labelResult(x)}</option>)}</select></label></div></section><section><h3>Teste de queda</h3><div className="two-col compact"><label>Início<select name={`dropStart${suffix}`} value={tests[`dropStart${suffix}`]??""} onChange={e=>setTest(`dropStart${suffix}`,e.target.value)}><option value="">Selecione</option>{results.map(x=><option key={x} value={x}>{labelResult(x)}</option>)}</select></label><label>Meio<select name={`dropMid${suffix}`} value={tests[`dropMid${suffix}`]??""} onChange={e=>setTest(`dropMid${suffix}`,e.target.value)}><option value="">Selecione</option>{results.map(x=><option key={x} value={x}>{labelResult(x)}</option>)}</select></label></div></section></div></section>;
+
+ return <form action={submit} className="panel form-stack machine-production-form">{initial?.id&&<input type="hidden" name="productionId" value={initial.id}/>}<div className="notice"><strong>Lote do produto produzido:</strong> {initial?.productionLot??"Será gerado automaticamente ao gravar"}</div><div className="notice muted"><strong>Proteção de dados preenchidos:</strong> o formulário é guardado automaticamente neste dispositivo.</div>{draftRecovered&&<div className="alert success">Foi recuperada a informação preenchida. <button type="button" className="icon-btn" onClick={clearLocal}>Descartar cópia local</button></div>}
+ {fixedMachine?<><input type="hidden" name="machineId" value={fixedMachine.id}/><div className="machine-form-heading"><img src={["5","6"].includes(fixedMachine.code)?"/maq-tampas.png":"/maq-garrafoes.png"} alt=""/><div><h2>Máquina {fixedMachine.code}</h2><p>{fixedMachine.name}</p></div></div></>:<fieldset><legend>Selecione a máquina *</legend><div className="machine-grid">{machines.map(m=><label className="machine-option" key={m.id}><input type="radio" name="machineId" value={m.id} checked={selectedMachineId===String(m.id)} onChange={()=>setSelectedMachineId(String(m.id))}/><img src={["5","6"].includes(m.code)?"/maq-tampas.png":"/maq-garrafoes.png"} alt=""/><strong>{m.code}</strong></label>)}</div></fieldset>}
+ {additional&&<section className="subpanel exception-panel"><h3>Motivo da produção adicional *</h3><div className="two-col"><label>Motivo<select name="exceptionReason" value={exceptionReason} onChange={e=>setExceptionReason(e.target.value)}><option value="">Selecione</option><option value="MOULD_CHANGE">Alteração de molde / modelo</option><option value="RAW_MATERIAL_CHANGE">Alteração de matérias-primas</option><option value="OTHER">Outra</option></select></label><label>Explicação<textarea name="exceptionNotes" value={exceptionNotes} onChange={e=>setExceptionNotes(e.target.value)} placeholder="Obrigatório quando selecionar Outra"/></label></div></section>}
+ <div className="two-col"><label>Tipo de embalagem produzido *<select name="productId" value={productId} onChange={e=>setProductId(e.target.value)}><option value="">Selecione o tipo de embalagem</option>{products.map(p=><option key={p.id} value={p.id}>{p.code} — {p.name}</option>)}</select></label><div><label>Lotes de matérias-primas consumidas *</label><button type="button" className="btn secondary" onClick={addRow}>+ Adicionar lote</button></div></div>
+ <section className="subpanel"><div className="two-col mixture-heading"><div><h3>Mistura / Lotes utilizados</h3><p className="muted small">A aplicação sugere as quantidades pelo peso médio, embalagens produzidas e unidades por embalagem. O operador pode corrigir os valores reais.</p></div><div className="calculated-field"><span>Consumo total sugerido</span><strong>{suggestedTotalKg>0?`${formatQuantity(suggestedTotalKg)} kg`:"Preencha pesos, produto e quantidade"}</strong></div></div>{rows.map((row,index)=><MaterialRow key={row.key} index={index} row={row} isLast={index===rows.length-1} rawMaterials={rawMaterials} lots={lots} removable={rows.length>1} calculatedKg={suggestedTotalKg>0?calculatedQuantity(suggestedTotalKg,row.percentage):0} onChange={patch=>updateRow(row.key,patch)} onPercentageChange={value=>updatePercentage(index,value)} onRemove={()=>removeRow(row.key)}/>)}<div className="mixture-summary valid"><strong>Total: {percentageTotal}%</strong><span>{suggestedTotalKg>0?`${formatQuantity(suggestedTotalKg)} kg sugeridos no total`:"Consumo sugerido ainda indisponível"}</span></div></section>
+ {isMachine7?<><section className="subpanel form-stack"><h3>Peso das embalagens (g)</h3><div className="two-col"><section className="subpanel"><h3>Embalagem da cavidade esquerda</h3><div className="two-col"><label>Início do turno<input className="no-spinner" name="initialWeightG" value={initialWeight} onChange={e=>setInitialWeight(e.target.value)} type="number" step="1" min="1" max="100000"/></label><label>Meio do turno<input className="no-spinner" name="midWeightG" value={midWeight} onChange={e=>setMidWeight(e.target.value)} type="number" step="1" min="1" max="100000"/></label></div></section><section className="subpanel"><h3>Embalagem da cavidade direita</h3><div className="two-col"><label>Início do turno<input className="no-spinner" name="rightInitialWeightG" value={rightInitialWeight} onChange={e=>setRightInitialWeight(e.target.value)} type="number" step="1" min="1" max="100000"/></label><label>Meio do turno<input className="no-spinner" name="rightMidWeightG" value={rightMidWeight} onChange={e=>setRightMidWeight(e.target.value)} type="number" step="1" min="1" max="100000"/></label></div></section></div></section>{TestFields({title:"Embalagem da cavidade esquerda"})}{TestFields({suffix:"Right",title:"Embalagem da cavidade direita"})}</>:<><section className="subpanel"><h3>Peso da embalagem (g)</h3><div className="two-col"><label>Início do turno<input className="no-spinner" name="initialWeightG" value={initialWeight} onChange={e=>setInitialWeight(e.target.value)} type="number" step="1" min="1" max="100000"/></label><label>Meio do turno<input className="no-spinner" name="midWeightG" value={midWeight} onChange={e=>setMidWeight(e.target.value)} type="number" step="1" min="1" max="100000"/></label></div></section>{TestFields({})}</>}
+ <label>Quantidade produzida (embalagens: sacos ou paletes)<input className="no-spinner" name="quantityProduced" value={packageCount} onChange={e=>setPackageCount(e.target.value)} type="number" step="1" min="0" max="10000000"/></label><label>Observações / Comentários<textarea name="observations" maxLength={500} value={observations} onChange={e=>setObservations(e.target.value)} placeholder="Escreva aqui observações ou comentários..."/></label>{error&&<div className="alert error">{error}</div>}{message&&<div className="alert success">{message}</div>}<div className="button-row"><button className="btn secondary" name="intent" value="draft" formNoValidate disabled={saving}>{saving?"A guardar...":"Gravar rascunho"}</button><button className="btn primary" name="intent" value="finalize" disabled={saving}>Finalizar e registar produção</button></div></form>
 }
 
-function normalizeRows(rows: MaterialRowState[]) {
-  const percentages = distributePercentages(rows.length);
-  return rows.map((row, index) => ({ ...row, percentage: percentages[index] }));
-}
-
-function formatQuantity(value: number, maxDigits = 3) {
-  return new Intl.NumberFormat("pt-PT", { maximumFractionDigits: maxDigits }).format(value);
-}
-
-function calculatedQuantity(total: number, percentage: number) {
-  if (!Number.isFinite(total) || total <= 0) return 0;
-  return Math.round(total * percentage * 10) / 1000;
-}
-
-export function ProductionForm({ machines, products, rawMaterials, lots, initial, fixedMachine, additional = false }: {
-  machines: Machine[];
-  products: Product[];
-  rawMaterials: RawMaterial[];
-  lots: Lot[];
-  initial?: InitialProduction;
-  fixedMachine?: Machine;
-  additional?: boolean;
-}) {
-  const router = useRouter();
-  const formRef = useRef<HTMLFormElement>(null);
-  const restoredRef = useRef(false);
-  const saveTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
-  const storageKey = useMemo(() => `sodilave:production-draft:${initial?.id ?? `new-${fixedMachine?.id ?? "free"}-${additional ? "additional" : "normal"}`}`, [initial?.id, fixedMachine?.id, additional]);
-
-  const [rows, setRows] = useState<MaterialRowState[]>(initial?.materials?.length ? initial.materials : [{ key: 0, materialId: "", lotId: "", percentage: 100, quantityKg: "" }]);
-  const [selectedMachineId, setSelectedMachineId] = useState(String(fixedMachine?.id ?? initial?.machineId ?? ""));
-  const [productId, setProductId] = useState(String(initial?.productId ?? ""));
-  const [initialWeight, setInitialWeight] = useState(initial?.initialWeightG ?? "");
-  const [midWeight, setMidWeight] = useState(initial?.midWeightG ?? "");
-  const [rightInitialWeight, setRightInitialWeight] = useState(initial?.rightInitialWeightG ?? "");
-  const [rightMidWeight, setRightMidWeight] = useState(initial?.rightMidWeightG ?? "");
-  const [packageCount, setPackageCount] = useState(initial?.quantityProduced ?? "");
-  const [message, setMessage] = useState("");
-  const [error, setError] = useState("");
-  const [saving, setSaving] = useState(false);
-  const [draftRecovered, setDraftRecovered] = useState(false);
-
-  const selectedMachine = fixedMachine ?? machines.find((machine) => String(machine.id) === selectedMachineId);
-  const isMachine7 = selectedMachine?.code === "7";
-  const percentageTotal = useMemo(() => rows.reduce((sum, row) => sum + row.percentage, 0), [rows]);
-  const product = products.find((p) => String(p.id) === productId);
-  const unitsPerPackage = product?.unitsPerPackage ?? 0;
-  const leftAverage = initialWeight && midWeight ? (Number(initialWeight) + Number(midWeight)) / 2 : 0;
-  const rightAverage = rightInitialWeight && rightMidWeight ? (Number(rightInitialWeight) + Number(rightMidWeight)) / 2 : 0;
-  const averageWeightG = isMachine7 && leftAverage > 0 && rightAverage > 0 ? (leftAverage + rightAverage) / 2 : leftAverage;
-  const suggestedTotalKg = averageWeightG > 0 && Number(packageCount) > 0 && unitsPerPackage > 0 ? (averageWeightG * Number(packageCount) * unitsPerPackage) / 1000 : 0;
-
-  const readFormFields = () => {
-    const fields: Record<string, string | boolean> = {};
-    if (!formRef.current) return fields;
-    formRef.current.querySelectorAll<HTMLInputElement | HTMLSelectElement | HTMLTextAreaElement>("input[name], select[name], textarea[name]").forEach((element) => {
-      if (["productionId", "machineId", "productId"].includes(element.name) || element.name.startsWith("materialLotId_") || element.name.startsWith("percentage_") || element.name.startsWith("quantityKg_")) return;
-      fields[element.name] = element instanceof HTMLInputElement && (element.type === "checkbox" || element.type === "radio") ? element.checked : element.value;
-    });
-    return fields;
-  };
-
-  const saveLocalDraft = () => {
-    if (typeof window === "undefined" || !restoredRef.current) return;
-    const payload: StoredDraft = {
-      selectedMachineId,
-      productId,
-      initialWeight,
-      midWeight,
-      rightInitialWeight,
-      rightMidWeight,
-      packageCount,
-      rows,
-      fields: readFormFields(),
-      savedAt: Date.now(),
-    };
-    window.localStorage.setItem(storageKey, JSON.stringify(payload));
-  };
-
-  const queueLocalSave = () => {
-    if (saveTimerRef.current) clearTimeout(saveTimerRef.current);
-    saveTimerRef.current = setTimeout(saveLocalDraft, 250);
-  };
-
-  const clearLocalDraft = () => {
-    if (typeof window !== "undefined") window.localStorage.removeItem(storageKey);
-    setDraftRecovered(false);
-  };
-
-  useEffect(() => {
-    if (typeof window === "undefined") return;
-    const raw = window.localStorage.getItem(storageKey);
-    if (!raw) { restoredRef.current = true; return; }
-    try {
-      const draft = JSON.parse(raw) as StoredDraft;
-      if (draft.selectedMachineId) setSelectedMachineId(draft.selectedMachineId);
-      if (draft.productId !== undefined) setProductId(draft.productId);
-      setInitialWeight(draft.initialWeight ?? "");
-      setMidWeight(draft.midWeight ?? "");
-      setRightInitialWeight(draft.rightInitialWeight ?? "");
-      setRightMidWeight(draft.rightMidWeight ?? "");
-      setPackageCount(draft.packageCount ?? "");
-      if (Array.isArray(draft.rows) && draft.rows.length) setRows(draft.rows);
-      requestAnimationFrame(() => {
-        if (!formRef.current) return;
-        Object.entries(draft.fields ?? {}).forEach(([name, value]) => {
-          const elements = formRef.current!.querySelectorAll<HTMLInputElement | HTMLSelectElement | HTMLTextAreaElement>(`[name="${CSS.escape(name)}"]`);
-          elements.forEach((element) => {
-            if (element instanceof HTMLInputElement && (element.type === "checkbox" || element.type === "radio")) element.checked = Boolean(value);
-            else element.value = String(value ?? "");
-          });
-        });
-      });
-      setDraftRecovered(true);
-    } catch {
-      window.localStorage.removeItem(storageKey);
-    } finally {
-      restoredRef.current = true;
-    }
-  }, [storageKey]);
-
-  useEffect(() => {
-    queueLocalSave();
-    return () => { if (saveTimerRef.current) clearTimeout(saveTimerRef.current); };
-  }, [selectedMachineId, productId, initialWeight, midWeight, rightInitialWeight, rightMidWeight, packageCount, rows]);
-
-  useEffect(() => {
-    if (!suggestedTotalKg) return;
-    setRows((current) => current.map((row) => row.manualQuantity ? row : ({ ...row, quantityKg: String(Math.round(suggestedTotalKg * row.percentage) / 100) })));
-  }, [suggestedTotalKg]);
-
-  const addRow = () => setRows((current) => current.length >= 8 ? current : normalizeRows([...current, { key: Date.now(), materialId: "", lotId: "", percentage: 5, quantityKg: "" }]));
-  const updateRow = (key: number, patch: Partial<MaterialRowState>) => setRows((current) => current.map((row) => row.key === key ? { ...row, ...patch } : row));
-  const removeRow = (key: number) => setRows((current) => normalizeRows(current.filter((row) => row.key !== key)));
-
-  const updatePercentage = (index: number, value: number) => {
-    setRows((current) => {
-      if (current.length === 1 || index === current.length - 1) return current;
-      const next = current.map((row) => ({ ...row }));
-      const minimumForRemaining = 5 * (current.length - index - 1);
-      const previousTotal = next.slice(0, index).reduce((sum, row) => sum + row.percentage, 0);
-      const maximum = 100 - previousTotal - minimumForRemaining;
-      next[index].percentage = Math.max(5, Math.min(value, maximum));
-      const remaining = 100 - next.slice(0, index + 1).reduce((sum, row) => sum + row.percentage, 0);
-      const tailCount = next.length - index - 1;
-      if (tailCount === 1) next[next.length - 1].percentage = remaining;
-      else {
-        const tail = distributePercentages(tailCount).map((part) => Math.round((part / 100) * remaining / 5) * 5);
-        tail[tail.length - 1] += remaining - tail.reduce((sum, part) => sum + part, 0);
-        tail.forEach((part, offset) => { next[index + 1 + offset].percentage = part; });
-      }
-      return next;
-    });
-  };
-
-  const validateForFinalization = (formData: FormData) => {
-    if (!formData.get("machineId")) return "Selecione a máquina.";
-    if (additional && !formData.get("exceptionReason")) return "Indique o motivo da produção adicional.";
-    if (formData.get("exceptionReason") === "OTHER" && !String(formData.get("exceptionNotes") || "").trim()) return "Explique o motivo da produção adicional.";
-    if (!formData.get("productId")) return "Selecione o tipo de embalagem produzido.";
-    if (rows.some((row) => !row.materialId || !row.lotId)) return "Selecione a matéria-prima e o lote em todas as linhas da mistura.";
-    if (percentageTotal !== 100) return "A mistura tem de totalizar 100%.";
-    if (rows.some((row) => row.percentage < 5 || row.percentage > 100 || row.percentage % 5 !== 0)) return "As percentagens devem variar de 5% em 5%.";
-    for (const row of rows) {
-      const lot = lots.find((item) => String(item.id) === row.lotId);
-      const quantity = Number(row.quantityKg || 0);
-      if (!Number.isFinite(quantity) || quantity <= 0) return "Introduza as quantidades efetivamente consumidas de todas as matérias-primas.";
-      if (lot && quantity > Number(lot.quantityAvailable)) return `A quantidade calculada excede o stock disponível do lote ${lot.supplierLot}.`;
-    }
-    if (!formData.get("initialWeightG") || !formData.get("midWeightG")) return "Preencha os pesos do início e do meio do turno.";
-    if (isMachine7 && (!formData.get("rightInitialWeightG") || !formData.get("rightMidWeightG"))) return "Preencha os pesos das cavidades esquerda e direita.";
-    const requiredTests = isMachine7 ? ["leakStart", "leakMid", "dropStart", "dropMid", "leakStartRight", "leakMidRight", "dropStartRight", "dropMidRight"] : ["leakStart", "leakMid", "dropStart", "dropMid"];
-    if (requiredTests.some((key) => !formData.get(key))) return "Preencha todos os testes de vedação e de queda.";
-    if (formData.get("quantityProduced") === "") return "Introduza a quantidade produzida.";
-    return "";
-  };
-
-  const submit = async (formData: FormData) => {
-    setMessage(""); setError("");
-    saveLocalDraft();
-    const finalize = formData.get("intent") === "finalize";
-    if (finalize) {
-      const finalizationError = validateForFinalization(formData);
-      if (finalizationError) { setError(finalizationError); return; }
-      if (!confirm("Tem a certeza de que pretende finalizar esta produção?")) return;
-    }
-    setSaving(true);
-    try {
-      const result = await saveProduction(formData);
-      clearLocalDraft();
-      if (result.finalized) { router.push("/production"); router.refresh(); return; }
-      setMessage(`Produção ${result.lot || `#${result.id}`} guardada como rascunho. Os campos em falta podem ser preenchidos mais tarde.`);
-      if (!initial?.id && !fixedMachine) router.replace(`/production/${result.id}`);
-      router.refresh();
-    } catch (e) {
-      saveLocalDraft();
-      setError(e instanceof Error ? e.message : "Não foi possível guardar a produção.");
-    } finally { setSaving(false); }
-  };
-
-  const TestFields = ({ suffix = "", title }: { suffix?: string; title?: string }) => <section className="subpanel form-stack">
-    {title && <h3>{title}</h3>}
-    <div className="two-col">
-      <section><h3>Teste de vedação</h3><div className="two-col compact"><label>Início<select name={`leakStart${suffix}`} defaultValue={initial?.tests[`leakStart${suffix}`] ?? ""}><option value="">Selecione</option>{results.map((x) => <option key={x} value={x}>{labelResult(x)}</option>)}</select></label><label>Meio<select name={`leakMid${suffix}`} defaultValue={initial?.tests[`leakMid${suffix}`] ?? ""}><option value="">Selecione</option>{results.map((x) => <option key={x} value={x}>{labelResult(x)}</option>)}</select></label></div></section>
-      <section><h3>Teste de queda</h3><div className="two-col compact"><label>Início<select name={`dropStart${suffix}`} defaultValue={initial?.tests[`dropStart${suffix}`] ?? ""}><option value="">Selecione</option>{results.map((x) => <option key={x} value={x}>{labelResult(x)}</option>)}</select></label><label>Meio<select name={`dropMid${suffix}`} defaultValue={initial?.tests[`dropMid${suffix}`] ?? ""}><option value="">Selecione</option>{results.map((x) => <option key={x} value={x}>{labelResult(x)}</option>)}</select></label></div></section>
-    </div>
-  </section>;
-
-  return <form ref={formRef} action={submit} onInput={queueLocalSave} onChange={queueLocalSave} className="panel form-stack machine-production-form">
-    {initial?.id && <input type="hidden" name="productionId" value={initial.id}/>} 
-    <div className="notice"><strong>Lote do produto produzido:</strong> {initial?.productionLot ?? "Será gerado automaticamente ao gravar"}</div>
-    <div className="notice muted"><strong>Proteção de dados preenchidos:</strong> o formulário é guardado automaticamente neste dispositivo. Erros de validação, refresh ou saída acidental não apagam os campos.</div>
-    {draftRecovered && <div className="alert success">Foi recuperada a informação que estava preenchida neste formulário. <button type="button" className="icon-btn" onClick={clearLocalDraft}>Descartar cópia local</button></div>}
-    {fixedMachine ? <><input type="hidden" name="machineId" value={fixedMachine.id}/><div className="machine-form-heading"><img src={["5","6"].includes(fixedMachine.code)?"/maq-tampas.png":"/maq-garrafoes.png"} alt=""/><div><h2>Máquina {fixedMachine.code}</h2><p>{fixedMachine.name}</p></div></div></> : <fieldset><legend>Selecione a máquina *</legend><div className="machine-grid">{machines.map((m) => <label className="machine-option" key={m.id}><input type="radio" name="machineId" value={m.id} checked={selectedMachineId === String(m.id)} onChange={() => setSelectedMachineId(String(m.id))}/><img src={["5","6"].includes(m.code)?"/maq-tampas.png":"/maq-garrafoes.png"} alt=""/><strong>{m.code}</strong></label>)}</div></fieldset>}
-    {additional && <section className="subpanel exception-panel"><h3>Motivo da produção adicional *</h3><div className="two-col"><label>Motivo<select name="exceptionReason" defaultValue={initial?.exceptionReason ?? ""}><option value="">Selecione</option><option value="MOULD_CHANGE">Alteração de molde / modelo</option><option value="RAW_MATERIAL_CHANGE">Alteração de matérias-primas</option><option value="OTHER">Outra</option></select></label><label>Explicação<textarea name="exceptionNotes" placeholder="Obrigatório quando selecionar Outra" defaultValue={initial?.exceptionNotes ?? ""}/></label></div></section>}
-    <div className="two-col"><label>Tipo de embalagem produzido *<select name="productId" value={productId} onChange={(e) => setProductId(e.target.value)}><option value="">Selecione o tipo de embalagem</option>{products.map((p) => <option key={p.id} value={p.id}>{p.code} — {p.name}</option>)}</select></label><div><label>Lotes de matérias-primas consumidas *</label><button type="button" className="btn secondary" onClick={addRow}>+ Adicionar lote</button></div></div>
-    <section className="subpanel"><div className="two-col mixture-heading"><div><h3>Mistura / Lotes utilizados</h3><p className="muted small">A aplicação sugere as quantidades pelo peso médio, embalagens produzidas e unidades por embalagem. O operador pode corrigir os valores reais.</p></div><div className="calculated-field"><span>Consumo total sugerido</span><strong>{suggestedTotalKg > 0 ? `${formatQuantity(suggestedTotalKg)} kg` : "Preencha pesos, produto e quantidade"}</strong></div></div>{rows.map((row, index) => <MaterialRow key={row.key} index={index} row={row} isLast={index === rows.length - 1} rawMaterials={rawMaterials} lots={lots} removable={rows.length > 1} calculatedKg={suggestedTotalKg > 0 ? calculatedQuantity(suggestedTotalKg, row.percentage) : 0} onChange={(patch) => updateRow(row.key, patch)} onPercentageChange={(value) => updatePercentage(index, value)} onRemove={() => removeRow(row.key)}/>)}<div className="mixture-summary valid"><strong>Total: {percentageTotal}%</strong><span>{suggestedTotalKg > 0 ? `${formatQuantity(suggestedTotalKg)} kg sugeridos no total` : "Consumo sugerido ainda indisponível"}</span></div></section>
-    {isMachine7 ? <>
-      <section className="subpanel form-stack"><h3>Peso das embalagens (g)</h3><div className="two-col"><section className="subpanel"><h3>Embalagem da cavidade esquerda</h3><div className="two-col"><label>Início do turno<input className="no-spinner" name="initialWeightG" value={initialWeight} onChange={(e)=>setInitialWeight(e.target.value)} type="number" step="1" min="1" max="100000"/></label><label>Meio do turno<input className="no-spinner" name="midWeightG" value={midWeight} onChange={(e)=>setMidWeight(e.target.value)} type="number" step="1" min="1" max="100000"/></label></div></section><section className="subpanel"><h3>Embalagem da cavidade direita</h3><div className="two-col"><label>Início do turno<input className="no-spinner" name="rightInitialWeightG" value={rightInitialWeight} onChange={(e)=>setRightInitialWeight(e.target.value)} type="number" step="1" min="1" max="100000"/></label><label>Meio do turno<input className="no-spinner" name="rightMidWeightG" value={rightMidWeight} onChange={(e)=>setRightMidWeight(e.target.value)} type="number" step="1" min="1" max="100000"/></label></div></section></div></section>
-      <TestFields title="Embalagem da cavidade esquerda"/><TestFields suffix="Right" title="Embalagem da cavidade direita"/>
-    </> : <><section className="subpanel"><h3>Peso da embalagem (g)</h3><div className="two-col"><label>Início do turno<input className="no-spinner" name="initialWeightG" value={initialWeight} onChange={(e)=>setInitialWeight(e.target.value)} type="number" step="1" min="1" max="100000"/></label><label>Meio do turno<input className="no-spinner" name="midWeightG" value={midWeight} onChange={(e)=>setMidWeight(e.target.value)} type="number" step="1" min="1" max="100000"/></label></div></section><TestFields/></>}
-    <label>Quantidade produzida (embalagens: sacos ou paletes)<input className="no-spinner" name="quantityProduced" value={packageCount} onChange={(e)=>setPackageCount(e.target.value)} type="number" step="1" min="0" max="10000000"/></label>
-    <label>Observações / Comentários<textarea name="observations" maxLength={500} placeholder="Escreva aqui observações ou comentários..." defaultValue={initial?.observations}/></label>
-    {error && <div className="alert error">{error}</div>}{message && <div className="alert success">{message}</div>}
-    <div className="button-row"><button className="btn secondary" name="intent" value="draft" formNoValidate disabled={saving}>{saving ? "A guardar..." : "Gravar rascunho"}</button><button className="btn primary" name="intent" value="finalize" disabled={saving}>Finalizar e registar produção</button></div>
-  </form>;
-}
-
-function MaterialRow({ index, row, isLast, rawMaterials, lots, removable, calculatedKg, onChange, onPercentageChange, onRemove }: { index: number; row: MaterialRowState; isLast: boolean; rawMaterials: RawMaterial[]; lots: Lot[]; removable: boolean; calculatedKg: number; onChange: (patch: Partial<MaterialRowState>) => void; onPercentageChange: (value: number) => void; onRemove: () => void; }) {
-  const available = lots.filter((lot) => String(lot.rawMaterial.id) === row.materialId);
-  return <div className="material-row material-row-slider"><select value={row.materialId} onChange={(e) => onChange({ materialId: e.target.value, lotId: "" })}><option value="">Selecione a matéria-prima</option>{rawMaterials.map((m) => <option key={m.id} value={m.id}>{m.name}</option>)}</select><select name={`materialLotId_${index}`} value={row.lotId} onChange={(e) => onChange({ lotId: e.target.value })} disabled={!row.materialId}><option value="">{row.materialId && available.length === 0 ? "Sem lotes disponíveis" : "Selecione o lote"}</option>{available.map((lot) => <option key={lot.id} value={lot.id}>{lot.supplierLot} · {formatQuantity(Number(lot.quantityAvailable))} kg disponíveis</option>)}</select><label className="range-field"><span>Percentagem: <strong>{row.percentage}%</strong>{isLast && <em> (automática)</em>}</span><input name={`percentage_${index}`} type="range" min="5" max="100" step="5" value={row.percentage} disabled={isLast} onChange={(e) => onPercentageChange(Number(e.target.value))}/>{isLast && <input type="hidden" name={`percentage_${index}`} value={row.percentage}/>}</label><label>Quantidade consumida (kg)<input className="no-spinner" name={`quantityKg_${index}`} type="number" min="0" step="0.001" value={row.quantityKg ?? ""} placeholder={calculatedKg > 0 ? `Sugestão: ${formatQuantity(calculatedKg)} kg` : "Quantidade real"} onChange={(e)=>onChange({quantityKg:e.target.value,manualQuantity:true})}/></label>{removable && <button type="button" className="icon-btn danger" onClick={onRemove} aria-label="Remover matéria-prima">×</button>}</div>;
-}
-
-function labelResult(x: string) { return { CONFORMING: "Conforme", NON_CONFORMING: "Não conforme", NOT_PERFORMED: "Não realizado" }[x]; }
+function MaterialRow({index,row,isLast,rawMaterials,lots,removable,calculatedKg,onChange,onPercentageChange,onRemove}:{index:number;row:MaterialRowState;isLast:boolean;rawMaterials:RawMaterial[];lots:Lot[];removable:boolean;calculatedKg:number;onChange:(patch:Partial<MaterialRowState>)=>void;onPercentageChange:(value:number)=>void;onRemove:()=>void}){const available=lots.filter(l=>String(l.rawMaterial.id)===row.materialId);return <div className="material-row material-row-slider"><select value={row.materialId} onChange={e=>onChange({materialId:e.target.value,lotId:""})}><option value="">Selecione a matéria-prima</option>{rawMaterials.map(m=><option key={m.id} value={m.id}>{m.name}</option>)}</select><select name={`materialLotId_${index}`} value={row.lotId} onChange={e=>onChange({lotId:e.target.value})} disabled={!row.materialId}><option value="">{row.materialId&&available.length===0?"Sem lotes disponíveis":"Selecione o lote"}</option>{available.map(l=><option key={l.id} value={l.id}>{l.supplierLot} · {formatQuantity(Number(l.quantityAvailable))} kg disponíveis</option>)}</select><label className="range-field"><span>Percentagem: <strong>{row.percentage}%</strong>{isLast&&<em> (automática)</em>}</span><input name={`percentage_${index}`} type="range" min="5" max="100" step="5" value={row.percentage} disabled={isLast} onChange={e=>onPercentageChange(Number(e.target.value))}/>{isLast&&<input type="hidden" name={`percentage_${index}`} value={row.percentage}/>}</label><label>Quantidade consumida (kg)<input className="no-spinner" name={`quantityKg_${index}`} type="number" min="0" step="0.001" value={row.quantityKg??""} placeholder={calculatedKg>0?`Sugestão: ${formatQuantity(calculatedKg)} kg`:"Quantidade real"} onChange={e=>onChange({quantityKg:e.target.value,manualQuantity:true})}/></label>{removable&&<button type="button" className="icon-btn danger" onClick={onRemove} aria-label="Remover matéria-prima">×</button>}</div>}
