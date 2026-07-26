@@ -6,7 +6,7 @@ import { db } from "@/lib/db";
 const COOKIE = "sodilave_session";
 const secret = new TextEncoder().encode(process.env.SESSION_SECRET || "dev-only-change-me");
 
-type SessionPayload = { userId: number; role: "ADMIN" | "PRODUCTION_MANAGER" | "OPERATOR"; name: string };
+type SessionPayload = { userId: number; role: "ADMIN" | "PRODUCTION_MANAGER" | "AUDITOR" | "OPERATOR"; name: string };
 
 export async function createSession(payload: SessionPayload) {
   const token = await new SignJWT(payload).setProtectedHeader({ alg: "HS256" }).setIssuedAt().setExpirationTime("12h").sign(secret);
@@ -33,6 +33,18 @@ export async function requireUser() {
   if (!session) redirect("/login");
   const user = await db.user.findUnique({ where: { id: session.userId } });
   if (!user || !user.active) redirect("/login");
+  return user;
+}
+
+export async function requireOperationalUser() {
+  const user = await requireUser();
+  if (user.role === "AUDITOR") redirect("/access-denied");
+  return user;
+}
+
+export async function requireAuditAccess() {
+  const user = await requireUser();
+  if (!["ADMIN", "AUDITOR"].includes(user.role)) redirect("/access-denied");
   return user;
 }
 
