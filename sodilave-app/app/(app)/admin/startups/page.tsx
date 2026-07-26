@@ -1,10 +1,10 @@
 import { db } from "@/lib/db";
-import { requireAdmin } from "@/lib/auth";
+import { requireAuditAccess } from "@/lib/auth";
 import { AdminPage } from "@/components/AdminPage";
 
 const resultLabel = (value: string | null) => value ? ({ CONFORMING: "Conforme", NON_CONFORMING: "Não conforme", NOT_APPLICABLE: "Não aplicável", NOT_PERFORMED: "Não realizado" }[value] ?? value) : "—";
 export default async function Page() {
-  await requireAdmin();
+  await requireAuditAccess();
   const rows = await db.weeklyStartup.findMany({ include: { operator: true, machines: { include: { machine: true } } }, orderBy: { startupDate: "desc" }, take: 100 });
   return <AdminPage title="Arranques semanais" subtitle="Consultar os arranques, as máquinas selecionadas e as verificações efetuadas.">
     {rows.length === 0 ? <p className="empty-state">Ainda não existem arranques semanais.</p> : <div className="startup-history">{rows.map((row) => <details className="panel startup-record" key={row.id}><summary><strong>{row.startupDate.toLocaleDateString("pt-PT")}</strong> · Turno {row.shiftCode} · {row.status === "FINALIZED" ? "Finalizado" : "Rascunho"} · {row.operator.name}</summary>
