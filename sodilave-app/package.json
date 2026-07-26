@@ -1,6 +1,6 @@
 {
   "name": "sodilave-gestao-producao",
-  "version": "0.9.5",
+  "version": "0.9.7",
   "private": true,
   "scripts": {
     "dev": "next dev",
@@ -10,7 +10,8 @@
     "db:generate": "prisma generate",
     "db:migrate": "prisma migrate dev",
     "db:deploy": "prisma migrate deploy",
-    "db:seed": "tsx prisma/seed.ts"
+    "db:seed": "tsx prisma/seed.ts",
+    "db:machine7": "node scripts/apply-machine7-schema.mjs"
   },
   "prisma": {
     "seed": "tsx prisma/seed.ts"
