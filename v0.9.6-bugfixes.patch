@@ -1,0 +1,410 @@
+diff --git a/app/(app)/admin/productions/[id]/page.tsx b/app/(app)/admin/productions/[id]/page.tsx
+index 9ce9743..feec833 100644
+--- a/app/(app)/admin/productions/[id]/page.tsx
++++ b/app/(app)/admin/productions/[id]/page.tsx
+@@ -1,3 +1,3 @@
+ import Link from "next/link";import { notFound } from "next/navigation";import { db } from "@/lib/db";import { requireAdmin } from "@/lib/auth";import { AdminPage } from "@/components/AdminPage";
+ const statusLabel=(s:string)=>({DRAFT:"Em aberto",FINALIZED:"Finalizada",CANCELLED:"Cancelada"}[s]||s);const tr=(s:string)=>({CONFORMING:"Conforme",NON_CONFORMING:"Não conforme",NOT_PERFORMED:"Não realizado",NOT_APPLICABLE:"Não aplicável"}[s]||s);const n=(v:unknown)=>v==null?"—":new Intl.NumberFormat("pt-PT",{maximumFractionDigits:3}).format(Number(v));
+-export default async function Page({params}:{params:Promise<{id:string}>}){await requireAdmin();const {id}=await params;const base=await db.production.findUnique({where:{id:Number(id)}});if(!base)notFound();const dayStart=new Date(base.startedAt);dayStart.setHours(0,0,0,0);const dayEnd=new Date(dayStart);dayEnd.setDate(dayEnd.getDate()+1);const rows=await db.production.findMany({where:{shiftCode:base.shiftCode,startedAt:{gte:dayStart,lt:dayEnd},status:{not:"CANCELLED"}},include:{machine:true,product:true,operator:true,materials:{include:{rawMaterialLot:{include:{rawMaterial:true}}}},tests:true},orderBy:{machine:{code:"asc"}}});return <AdminPage title={`Produção do turno ${base.shiftCode}`} subtitle={`${base.startedAt.toLocaleDateString("pt-PT")} — detalhe de todas as máquinas registadas.`}><div className="machine-forms-stack">{rows.map(r=><section className="panel form-stack" key={r.id}><h2>Máquina {r.machine.code} — {r.product.name}</h2><div className="detail-grid"><p><b>Lote produzido:</b> {r.productionLot}</p><p><b>Operador:</b> {r.operator.name}</p><p><b>Estado:</b> {statusLabel(r.status)}</p><p><b>Peso inicial:</b> {n(r.initialWeightG)} g</p><p><b>Peso intermédio:</b> {n(r.midWeightG)} g</p><p><b>Embalagens produzidas:</b> {r.quantityProduced??"—"}</p><p><b>Unidades por embalagem:</b> {r.product.unitsPerPackage??"—"}</p><p><b>Total de unidades:</b> {r.quantityProduced&&r.product.unitsPerPackage?r.quantityProduced*r.product.unitsPerPackage:"—"}</p></div><h3>Matérias-primas</h3><div className="responsive-table"><table><thead><tr><th>Matéria-prima</th><th>Lote</th><th>%</th><th>Quantidade real</th></tr></thead><tbody>{r.materials.map(m=><tr key={m.id}><td>{m.rawMaterialLot.rawMaterial.name}</td><td>{m.rawMaterialLot.supplierLot}</td><td>{n(m.percentage)}%</td><td>{n(m.quantityKg)} kg</td></tr>)}</tbody></table></div><h3>Testes</h3><p>{r.tests.map(t=>`${t.type==="LEAK"?"Vedação":"Queda"} ${t.moment==="START"?"início":"meio"}: ${tr(t.result)}`).join(" · ")||"—"}</p><h3>Observações</h3><p>{r.observations||"Sem observações."}</p>{r.status==="DRAFT"&&<Link className="btn primary" href={`/production/${r.id}`}>Continuar esta produção</Link>}</section>)}</div><div className="button-row"><Link className="btn secondary" href="/admin/productions">Voltar às produções</Link></div></AdminPage>}
++export default async function Page({params}:{params:Promise<{id:string}>}){await requireAdmin();const {id}=await params;const base=await db.production.findUnique({where:{id:Number(id)}});if(!base)notFound();const dayStart=new Date(base.startedAt);dayStart.setHours(0,0,0,0);const dayEnd=new Date(dayStart);dayEnd.setDate(dayEnd.getDate()+1);const rows=await db.production.findMany({where:{shiftCode:base.shiftCode,startedAt:{gte:dayStart,lt:dayEnd},status:{not:"CANCELLED"}},include:{machine:true,product:true,operator:true,materials:{include:{rawMaterialLot:{include:{rawMaterial:true}}}},tests:true},orderBy:{machine:{code:"asc"}}});return <AdminPage title={`Produção do turno ${base.shiftCode}`} subtitle={`${base.startedAt.toLocaleDateString("pt-PT")} — detalhe de todas as máquinas registadas.`}><div className="machine-forms-stack">{rows.map(r=><section className="panel form-stack" key={r.id}><h2>Máquina {r.machine.code} — {r.product.name}</h2><div className="detail-grid"><p><b>Lote produzido:</b> {r.productionLot}</p><p><b>Operador:</b> {r.operator.name}</p><p><b>Estado:</b> {statusLabel(r.status)}</p>{r.machine.code==="7"?<><p><b>Cavidade esquerda — peso inicial:</b> {n(r.initialWeightLeftG)} g</p><p><b>Cavidade esquerda — peso intermédio:</b> {n(r.midWeightLeftG)} g</p><p><b>Cavidade direita — peso inicial:</b> {n(r.initialWeightRightG)} g</p><p><b>Cavidade direita — peso intermédio:</b> {n(r.midWeightRightG)} g</p></>:<><p><b>Peso inicial:</b> {n(r.initialWeightG)} g</p><p><b>Peso intermédio:</b> {n(r.midWeightG)} g</p></>}<p><b>Embalagens produzidas:</b> {r.quantityProduced??"—"}</p><p><b>Unidades por embalagem:</b> {r.product.unitsPerPackage??"—"}</p><p><b>Total de unidades:</b> {r.quantityProduced&&r.product.unitsPerPackage?r.quantityProduced*r.product.unitsPerPackage:"—"}</p></div><h3>Matérias-primas</h3><div className="responsive-table"><table><thead><tr><th>Matéria-prima</th><th>Lote</th><th>%</th><th>Quantidade real</th></tr></thead><tbody>{r.materials.map(m=><tr key={m.id}><td>{m.rawMaterialLot.rawMaterial.name}</td><td>{m.rawMaterialLot.supplierLot}</td><td>{n(m.percentage)}%</td><td>{n(m.quantityKg)} kg</td></tr>)}</tbody></table></div><h3>Testes</h3><p>{r.tests.map(t=>`${t.cavity && t.cavity!=="SINGLE" ? `Cavidade ${t.cavity==="LEFT"?"esquerda":"direita"} — ` : ""}${t.type==="LEAK"?"Vedação":"Queda"} ${t.moment==="START"?"início":"meio"}: ${tr(t.result)}`).join(" · ")||"—"}</p><h3>Observações</h3><p>{r.observations||"Sem observações."}</p>{r.status==="DRAFT"&&<Link className="btn primary" href={`/production/${r.id}`}>Continuar esta produção</Link>}</section>)}</div><div className="button-row"><Link className="btn secondary" href="/admin/productions">Voltar às produções</Link></div></AdminPage>}
+diff --git a/app/(app)/layout.tsx b/app/(app)/layout.tsx
+index 22c971f..742ddd9 100644
+--- a/app/(app)/layout.tsx
++++ b/app/(app)/layout.tsx
+@@ -1,2 +1,2 @@
+ import { requireUser } from "@/lib/auth"; import { AppHeader } from "@/components/AppHeader";
+-export default async function AppLayout({children}:{children:React.ReactNode}){const user=await requireUser();return <><AppHeader user={user}/><main className="page-shell">{children}</main><footer>SODILAVE PLÁSTICOS · Gestão de Produção</footer></>}
++export default async function AppLayout({children}:{children:React.ReactNode}){const user=await requireUser();return <div className="app-frame"><AppHeader user={user}/><main className="page-shell">{children}</main><footer>SODILAVE PLÁSTICOS · Gestão de Produção</footer></div>}
+diff --git a/app/(app)/production/details/[id]/page.tsx b/app/(app)/production/details/[id]/page.tsx
+index 9a66a74..dcf1489 100644
+--- a/app/(app)/production/details/[id]/page.tsx
++++ b/app/(app)/production/details/[id]/page.tsx
+@@ -1,3 +1,3 @@
+ import { AuditTrail } from "@/components/AuditTrail";import Link from "next/link";import { notFound } from "next/navigation";import { db } from "@/lib/db";import { requireUser } from "@/lib/auth";import { PageIntro } from "@/components/PageIntro";
+ const statusLabel=(s:string)=>({DRAFT:"Em aberto",FINALIZED:"Finalizada",CANCELLED:"Cancelada"}[s]||s);const tr=(s:string)=>({CONFORMING:"Conforme",NON_CONFORMING:"Não conforme",NOT_PERFORMED:"Não realizado",NOT_APPLICABLE:"Não aplicável"}[s]||s);const n=(v:unknown)=>v==null?"—":new Intl.NumberFormat("pt-PT",{maximumFractionDigits:3}).format(Number(v));
+-export default async function Page({params}:{params:Promise<{id:string}>}){await requireUser();const {id}=await params;const base=await db.production.findUnique({where:{id:Number(id)}});if(!base)notFound();const dayStart=new Date(base.startedAt);dayStart.setHours(0,0,0,0);const dayEnd=new Date(dayStart);dayEnd.setDate(dayEnd.getDate()+1);const rows=await db.production.findMany({where:{shiftCode:base.shiftCode,startedAt:{gte:dayStart,lt:dayEnd},status:{not:"CANCELLED"}},include:{machine:true,product:true,operator:true,materials:{include:{rawMaterialLot:{include:{rawMaterial:true}}}},tests:true},orderBy:{machine:{code:"asc"}}});return <><PageIntro title={`Produção do turno ${base.shiftCode}`} subtitle={`${base.startedAt.toLocaleDateString("pt-PT")} — detalhe de todas as máquinas registadas.`}/><div className="machine-forms-stack">{rows.map(r=><section className="panel form-stack" key={r.id}><h2>Máquina {r.machine.code} — {r.product.name}</h2><div className="detail-grid"><p><b>Lote produzido:</b> {r.productionLot}</p><p><b>Operador:</b> {r.operator.name}</p><p><b>Estado:</b> {statusLabel(r.status)}</p><p><b>Peso inicial:</b> {n(r.initialWeightG)} g</p><p><b>Peso intermédio:</b> {n(r.midWeightG)} g</p><p><b>Embalagens produzidas:</b> {r.quantityProduced??"—"}</p><p><b>Unidades por embalagem:</b> {r.product.unitsPerPackage??"—"}</p><p><b>Total de unidades:</b> {r.quantityProduced&&r.product.unitsPerPackage?r.quantityProduced*r.product.unitsPerPackage:"—"}</p></div><h3>Matérias-primas</h3><div className="responsive-table"><table><thead><tr><th>Matéria-prima</th><th>Lote</th><th>%</th><th>Quantidade real</th></tr></thead><tbody>{r.materials.map(m=><tr key={m.id}><td>{m.rawMaterialLot.rawMaterial.name}</td><td>{m.rawMaterialLot.supplierLot}</td><td>{n(m.percentage)}%</td><td>{n(m.quantityKg)} kg</td></tr>)}</tbody></table></div><h3>Testes</h3><p>{r.tests.map(t=>`${t.type==="LEAK"?"Vedação":"Queda"} ${t.moment==="START"?"início":"meio"}: ${tr(t.result)}`).join(" · ")||"—"}</p><h3>Observações</h3><p>{r.observations||"Sem observações."}</p>{r.status==="DRAFT"&&<Link className="btn primary" href={`/production/${r.id}`}>Continuar esta produção</Link>}</section>)}</div><div className="button-row"><Link className="btn secondary" href="/production">Voltar às produções</Link></div></>}
++export default async function Page({params}:{params:Promise<{id:string}>}){await requireUser();const {id}=await params;const base=await db.production.findUnique({where:{id:Number(id)}});if(!base)notFound();const dayStart=new Date(base.startedAt);dayStart.setHours(0,0,0,0);const dayEnd=new Date(dayStart);dayEnd.setDate(dayEnd.getDate()+1);const rows=await db.production.findMany({where:{shiftCode:base.shiftCode,startedAt:{gte:dayStart,lt:dayEnd},status:{not:"CANCELLED"}},include:{machine:true,product:true,operator:true,materials:{include:{rawMaterialLot:{include:{rawMaterial:true}}}},tests:true},orderBy:{machine:{code:"asc"}}});return <><PageIntro title={`Produção do turno ${base.shiftCode}`} subtitle={`${base.startedAt.toLocaleDateString("pt-PT")} — detalhe de todas as máquinas registadas.`}/><div className="machine-forms-stack">{rows.map(r=><section className="panel form-stack" key={r.id}><h2>Máquina {r.machine.code} — {r.product.name}</h2><div className="detail-grid"><p><b>Lote produzido:</b> {r.productionLot}</p><p><b>Operador:</b> {r.operator.name}</p><p><b>Estado:</b> {statusLabel(r.status)}</p>{r.machine.code==="7"?<><p><b>Cavidade esquerda — peso inicial:</b> {n(r.initialWeightLeftG)} g</p><p><b>Cavidade esquerda — peso intermédio:</b> {n(r.midWeightLeftG)} g</p><p><b>Cavidade direita — peso inicial:</b> {n(r.initialWeightRightG)} g</p><p><b>Cavidade direita — peso intermédio:</b> {n(r.midWeightRightG)} g</p></>:<><p><b>Peso inicial:</b> {n(r.initialWeightG)} g</p><p><b>Peso intermédio:</b> {n(r.midWeightG)} g</p></>}<p><b>Embalagens produzidas:</b> {r.quantityProduced??"—"}</p><p><b>Unidades por embalagem:</b> {r.product.unitsPerPackage??"—"}</p><p><b>Total de unidades:</b> {r.quantityProduced&&r.product.unitsPerPackage?r.quantityProduced*r.product.unitsPerPackage:"—"}</p></div><h3>Matérias-primas</h3><div className="responsive-table"><table><thead><tr><th>Matéria-prima</th><th>Lote</th><th>%</th><th>Quantidade real</th></tr></thead><tbody>{r.materials.map(m=><tr key={m.id}><td>{m.rawMaterialLot.rawMaterial.name}</td><td>{m.rawMaterialLot.supplierLot}</td><td>{n(m.percentage)}%</td><td>{n(m.quantityKg)} kg</td></tr>)}</tbody></table></div><h3>Testes</h3><p>{r.tests.map(t=>`${t.cavity && t.cavity!=="SINGLE" ? `Cavidade ${t.cavity==="LEFT"?"esquerda":"direita"} — ` : ""}${t.type==="LEAK"?"Vedação":"Queda"} ${t.moment==="START"?"início":"meio"}: ${tr(t.result)}`).join(" · ")||"—"}</p><h3>Observações</h3><p>{r.observations||"Sem observações."}</p>{r.status==="DRAFT"&&<Link className="btn primary" href={`/production/${r.id}`}>Continuar esta produção</Link>}</section>)}</div><div className="button-row"><Link className="btn secondary" href="/production">Voltar às produções</Link></div></>}
+diff --git a/app/actions/checkups.ts b/app/actions/checkups.ts
+index c53c20c..2912629 100644
+--- a/app/actions/checkups.ts
++++ b/app/actions/checkups.ts
+@@ -2,7 +2,7 @@
+ import { revalidatePath } from "next/cache";
+ import { db } from "@/lib/db";
+ import { requireUser } from "@/lib/auth";
+-import { getShift } from "@/lib/shift";
++import { getShift, getShiftWindow } from "@/lib/shift";
+ import { IncidentType, MachineEventType, MachineStatus, OilLevel, RecordStatus } from "@prisma/client";
+ import { changeMachineStatus } from "@/lib/machine-state";
+ import { assertMachineRunning } from "@/lib/active-machines";
+@@ -26,15 +26,16 @@ export async function saveMachineCheckup(formData: FormData) {
+   const oilLevelValue = String(formData.get("oilLevel") || "");
+   const oilLevel = Object.values(OilLevel).includes(oilLevelValue as OilLevel) ? oilLevelValue as OilLevel : null;
+   if (finalize && (oilTempC === null || waterPressure === null || airPressure === null || oilLevel === null)) throw new Error("Preencha todos os campos obrigatórios antes de finalizar o verificação de turno.");
+-  await assertMachineRunning(machineId);
+-  const data = { machineId, shiftCode: getShift().code, status, oilTempC, oilLevel, waterPressure, airPressure,
++  const existing = id ? await db.machineCheckup.findUnique({ where: { id }, select: { id: true, status: true, observedAt: true, finalizedAt: true } }) : null;
++  if (existing?.status === RecordStatus.FINALIZED && new Date() >= getShiftWindow(existing.observedAt).end) throw new Error("Esta verificação só pode ser alterada até ao fim do turno em que foi registada.");
++  if (!existing) await assertMachineRunning(machineId);
++  const effectiveStatus = existing?.status === RecordStatus.FINALIZED ? RecordStatus.FINALIZED : status;
++  const data = { machineId, shiftCode: getShift(existing?.observedAt).code, status: effectiveStatus, oilTempC, oilLevel, waterPressure, airPressure,
+     cleanMachineArea: formData.get("cleanMachineArea") === "on",
+     hasBreakdown: formData.get("hasBreakdown") === "on",
+     breakdownStoppedMachine: formData.get("breakdownStoppedMachine") === "on",
+     breakdownDescription: String(formData.get("breakdownDescription") || "").trim().slice(0, 1000) || null,
+-    notes: String(formData.get("notes") || "").trim().slice(0, 500) || null, finalizedAt: finalize ? new Date() : null };
+-  const existing = id ? await db.machineCheckup.findUnique({ where: { id }, select: { id: true, status: true } }) : null;
+-  if (existing && existing.status !== RecordStatus.DRAFT) throw new Error("Este verificação de turno já foi finalizado.");
++    notes: String(formData.get("notes") || "").trim().slice(0, 500) || null, finalizedAt: effectiveStatus === RecordStatus.FINALIZED ? (existing?.finalizedAt ?? new Date()) : null };
+   const row = existing ? await db.machineCheckup.update({ where: { id: existing.id }, data }) : await db.machineCheckup.create({ data: { ...data, operatorId: user.id } });
+   if (data.hasBreakdown && data.breakdownDescription) {
+     const incident = await db.incident.upsert({ where: { checkupId: row.id }, update: { description: data.breakdownDescription, stoppedMachine: data.breakdownStoppedMachine }, create: { machineId, checkupId: row.id, type: IncidentType.BREAKDOWN, occurredAt: new Date(), description: data.breakdownDescription, stoppedMachine: data.breakdownStoppedMachine, createdById: user.id } });
+@@ -54,11 +55,12 @@ export async function saveGeneralCheck(formData: FormData) {
+   const chillerLargeC = n(formData.get("chillerLargeC")), chillerSmallC = n(formData.get("chillerSmallC")), ambientTempC = n(formData.get("ambientTempC"));
+   checkOptional(chillerLargeC, -30, 80, "A temperatura do refrigerador grande"); checkOptional(chillerSmallC, -30, 80, "A temperatura do refrigerador pequeno"); checkOptional(ambientTempC, -10, 60, "A temperatura ambiente");
+   if (finalize && (chillerLargeC === null || chillerSmallC === null || ambientTempC === null)) throw new Error("Preencha as temperaturas dos refrigeradores antes de finalizar.");
+-  const data = { shiftCode: getShift().code, status, chillerLargeC, chillerSmallC, ambientTempC,
++  const existing = id ? await db.shiftGeneralCheck.findUnique({ where: { id }, select: { id: true, status: true, observedAt: true, finalizedAt: true } }) : null;
++  if (existing?.status === RecordStatus.FINALIZED && new Date() >= getShiftWindow(existing.observedAt).end) throw new Error("Esta verificação só pode ser alterada até ao fim do turno em que foi registada.");
++  const effectiveStatus = existing?.status === RecordStatus.FINALIZED ? RecordStatus.FINALIZED : status;
++  const data = { shiftCode: getShift(existing?.observedAt).code, status: effectiveStatus, chillerLargeC, chillerSmallC, ambientTempC,
+     cleanDispatch: formData.get("cleanDispatch") === "on", cleanStorage: formData.get("cleanStorage") === "on", cleanProduction: formData.get("cleanProduction") === "on",
+-    notes: String(formData.get("generalNotes") || "").trim().slice(0, 500) || null, finalizedAt: finalize ? new Date() : null };
+-  const existing = id ? await db.shiftGeneralCheck.findUnique({ where: { id }, select: { id: true, status: true } }) : null;
+-  if (existing && existing.status !== RecordStatus.DRAFT) throw new Error("Este verificação de turno já foi finalizado.");
++    notes: String(formData.get("generalNotes") || "").trim().slice(0, 500) || null, finalizedAt: effectiveStatus === RecordStatus.FINALIZED ? (existing?.finalizedAt ?? new Date()) : null };
+   const row = existing ? await db.shiftGeneralCheck.update({ where: { id: existing.id }, data }) : await db.shiftGeneralCheck.create({ data: { ...data, operatorId: user.id } });
+   await db.auditLog.create({ data: { userId: user.id, action: finalize ? "FINALIZE" : existing ? "EDIT" : "CREATE", entity: "ShiftGeneralCheck", entityId: String(row.id), details: { status } } });
+   revalidatePath("/checkups"); revalidatePath("/admin/checkups"); return { ok: true, id: row.id, finalized: finalize };
+diff --git a/app/actions/production.ts b/app/actions/production.ts
+index 9a72c22..784da01 100644
+--- a/app/actions/production.ts
++++ b/app/actions/production.ts
+@@ -35,9 +35,17 @@ export async function saveProduction(formData: FormData) {
+   const initialWeightG = asNum(formData.get("initialWeightG"));
+   const midWeightG = asNum(formData.get("midWeightG"));
+   const quantityProduced = asNum(formData.get("quantityProduced"));
++  const initialWeightLeftG = asNum(formData.get("initialWeightLeftG"));
++  const midWeightLeftG = asNum(formData.get("midWeightLeftG"));
++  const initialWeightRightG = asNum(formData.get("initialWeightRightG"));
++  const midWeightRightG = asNum(formData.get("midWeightRightG"));
+   finiteInRange(initialWeightG, 1, 100000, "O peso inicial", true);
+   finiteInRange(midWeightG, 1, 100000, "O peso intermédio", true);
+   finiteInRange(quantityProduced, 0, 10000000, "A quantidade produzida", true);
++  finiteInRange(initialWeightLeftG, 1, 100000, "O peso inicial da cavidade esquerda", true);
++  finiteInRange(midWeightLeftG, 1, 100000, "O peso intermédio da cavidade esquerda", true);
++  finiteInRange(initialWeightRightG, 1, 100000, "O peso inicial da cavidade direita", true);
++  finiteInRange(midWeightRightG, 1, 100000, "O peso intermédio da cavidade direita", true);
+ 
+   const materials: { rawMaterialLotId: number; percentage: number | null; quantityKg: number | null }[] = [];
+   for (let i = 0; i < 8; i++) {
+@@ -59,7 +67,6 @@ export async function saveProduction(formData: FormData) {
+     if (materials.some((row) => row.percentage === null || row.percentage! < 5 || row.percentage! % 5 !== 0)) throw new Error("As percentagens devem variar de 5% em 5%.");
+     if (materials.reduce((sum, row) => sum + (row.percentage ?? 0), 0) !== 100) throw new Error("A soma das percentagens da mistura tem de ser 100%.");
+     if (materials.some((row) => row.quantityKg === null || row.quantityKg! <= 0)) throw new Error("Introduza a quantidade total de matéria-prima para calcular as quantidades da mistura.");
+-    if (initialWeightG === null || midWeightG === null) throw new Error("Preencha os pesos do início e do meio do turno.");
+     if (quantityProduced === null) throw new Error("Introduza a quantidade produzida.");
+   }
+ 
+@@ -73,6 +80,11 @@ export async function saveProduction(formData: FormData) {
+   const machine = await db.machine.findFirst({ where: { id: machineId, active: true } });
+   const product = await db.product.findFirst({ where: { id: productId, active: true } });
+   if (!machine || !product) throw new Error("A máquina ou o produto selecionado já não está ativo.");
++  const isMachine7 = machine.code === "7";
++  if (finalize) {
++    if (isMachine7 && [initialWeightLeftG, midWeightLeftG, initialWeightRightG, midWeightRightG].some((v) => v === null)) throw new Error("Preencha os pesos das cavidades esquerda e direita.");
++    if (!isMachine7 && (initialWeightG === null || midWeightG === null)) throw new Error("Preencha os pesos do início e do meio do turno.");
++  }
+   if (finalize && (!product.unitsPerPackage || product.unitsPerPackage <= 0)) throw new Error("Defina as unidades por embalagem deste produto antes de finalizar a produção.");
+   await assertMachineRunning(machineId);
+ 
+@@ -105,7 +117,9 @@ export async function saveProduction(formData: FormData) {
+   const status = finalize || existing?.status === RecordStatus.FINALIZED ? RecordStatus.FINALIZED : RecordStatus.DRAFT;
+   const data = {
+     machineId, productId, shiftCode: shift.code, status,
+-    initialWeightG, midWeightG, quantityProduced,
++    initialWeightG: isMachine7 ? null : initialWeightG, midWeightG: isMachine7 ? null : midWeightG,
++    initialWeightLeftG: isMachine7 ? initialWeightLeftG : null, midWeightLeftG: isMachine7 ? midWeightLeftG : null,
++    initialWeightRightG: isMachine7 ? initialWeightRightG : null, midWeightRightG: isMachine7 ? midWeightRightG : null, quantityProduced,
+     observations: String(formData.get("observations") || "").trim().slice(0, 500) || null,
+     exceptionReason: otherProductionsInShift > 0 ? (exceptionReason || null) : null,
+     exceptionNotes: otherProductionsInShift > 0 ? (exceptionNotes || null) : null,
+@@ -119,14 +133,19 @@ export async function saveProduction(formData: FormData) {
+   if (materials.length) await db.productionMaterial.createMany({ data: materials.map((row) => ({ productionId: production.id, ...row })) });
+ 
+   await db.qualityTest.deleteMany({ where: { productionId: production.id } });
+-  const tests: [TestType, TestMoment, string][] = [
+-    [TestType.LEAK, TestMoment.START, "leakStart"], [TestType.LEAK, TestMoment.MID, "leakMid"],
+-    [TestType.DROP, TestMoment.START, "dropStart"], [TestType.DROP, TestMoment.MID, "dropMid"],
++  const tests: [TestType, TestMoment, string, string][] = isMachine7 ? [
++    [TestType.LEAK, TestMoment.START, "leakStartLeft", "LEFT"], [TestType.LEAK, TestMoment.MID, "leakMidLeft", "LEFT"],
++    [TestType.DROP, TestMoment.START, "dropStartLeft", "LEFT"], [TestType.DROP, TestMoment.MID, "dropMidLeft", "LEFT"],
++    [TestType.LEAK, TestMoment.START, "leakStartRight", "RIGHT"], [TestType.LEAK, TestMoment.MID, "leakMidRight", "RIGHT"],
++    [TestType.DROP, TestMoment.START, "dropStartRight", "RIGHT"], [TestType.DROP, TestMoment.MID, "dropMidRight", "RIGHT"],
++  ] : [
++    [TestType.LEAK, TestMoment.START, "leakStart", "SINGLE"], [TestType.LEAK, TestMoment.MID, "leakMid", "SINGLE"],
++    [TestType.DROP, TestMoment.START, "dropStart", "SINGLE"], [TestType.DROP, TestMoment.MID, "dropMid", "SINGLE"],
+   ];
+   const validResults = [TestResult.CONFORMING, TestResult.NON_CONFORMING, TestResult.NOT_PERFORMED];
+-  for (const [type, moment, key] of tests) {
++  for (const [type, moment, key, cavity] of tests) {
+     const value = String(formData.get(key) || "");
+-    if (value && validResults.includes(value as TestResult)) await db.qualityTest.create({ data: { productionId: production.id, type, moment, result: value as TestResult } });
++    if (value && validResults.includes(value as TestResult)) await db.qualityTest.create({ data: { productionId: production.id, type, moment, result: value as TestResult, cavity } });
+     else if (finalize) throw new Error("Preencha todos os testes antes de finalizar.");
+   }
+ 
+diff --git a/app/globals.css b/app/globals.css
+index 3ac90b5..0f95287 100644
+--- a/app/globals.css
++++ b/app/globals.css
+@@ -52,3 +52,8 @@ html.dark body{background:#0f1720;color:#e8eef7}html.dark .login-shell,html.dark
+ 
+ /* v0.9.5 */
+ .check-grid{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:8px 18px}.record-card{display:flex;justify-content:space-between;gap:20px;padding:18px 0;border-bottom:1px solid #e3e8f0}.record-card p{margin:6px 0}.machine-kpis{display:grid;grid-template-columns:repeat(4,1fr);gap:18px;margin-bottom:24px}.machine-kpis .panel{display:flex;flex-direction:column;gap:8px}.machine-kpis strong{font-size:24px}.uptime-bar{height:22px;background:#dbe4ef;border-radius:999px;overflow:hidden}.uptime-bar span{display:block;height:100%;background:linear-gradient(90deg,#17a34a,#64cf83)}.timeline{position:relative;margin-left:12px}.timeline:before{content:"";position:absolute;left:8px;top:8px;bottom:8px;width:2px;background:#cbd7e5}.timeline article{display:grid;grid-template-columns:170px 1fr;gap:24px;position:relative;padding:0 0 24px 28px}.timeline article:before{content:"";position:absolute;left:1px;top:6px;width:16px;height:16px;border-radius:50%;background:#075ed9;border:3px solid #fff;box-shadow:0 0 0 2px #075ed9}.timeline p{margin:5px 0}.trace-card h2{margin-top:0}.breakdown-panel{border-color:#e9a7a7;background:#fff8f8}html.dark .breakdown-panel{background:#26191b;border-color:#70424a}@media(max-width:900px){.check-grid,.machine-kpis{grid-template-columns:1fr 1fr}.timeline article{grid-template-columns:1fr;gap:4px}}@media(max-width:560px){.check-grid,.machine-kpis{grid-template-columns:1fr}}
++
++/* v0.9.6 bug fixes */
++html,body{min-height:100%;background:#f6f8fc}body{min-height:100vh}body>div{min-height:100vh}.app-frame{min-height:100vh;display:flex;flex-direction:column;background:#f6f8fc}.app-frame main{flex:1;width:100%}.app-frame footer{margin-top:auto;background:transparent}.machine-option{position:relative;overflow:hidden}.machine-option input{position:absolute!important;inset:0;width:100%;height:100%;margin:0;opacity:0;cursor:pointer;z-index:2}.machine-option img,.machine-option strong{pointer-events:none}.machine-option:has(input:checked){outline:3px solid #0a60dd;outline-offset:2px;box-shadow:0 0 0 4px rgba(10,96,221,.18)}
++html.dark,html.dark body,html.dark .app-frame{background:#07111f;color:#e8eef8}html.dark footer{background:#07111f;color:#aebbd0}html.dark .machine-option:has(input:checked){outline:3px solid #62a8ff;outline-offset:3px;background:#17345d!important;border-color:#62a8ff!important;box-shadow:0 0 0 5px rgba(98,168,255,.28)}html.dark input:focus,html.dark select:focus,html.dark textarea:focus,html.dark button:focus-visible,html.dark a:focus-visible{outline:3px solid #62a8ff;outline-offset:2px}
++.cavity-grid{display:grid;grid-template-columns:1fr 1fr;gap:20px}.cavity-card{border:1px solid #dbe4f0;border-radius:12px;padding:18px}.cavity-card h3{margin-top:0}@media(max-width:800px){.cavity-grid{grid-template-columns:1fr}}
+diff --git a/components/AdminPage.tsx b/components/AdminPage.tsx
+index 3a04721..17834d5 100644
+--- a/components/AdminPage.tsx
++++ b/components/AdminPage.tsx
+@@ -1 +1,9 @@
+-import { PageIntro } from "@/components/PageIntro";export function AdminPage({title,subtitle,children}:{title:string;subtitle:string;children:React.ReactNode}){return <><PageIntro title={title} subtitle={subtitle} back="/admin"/><section className="panel">{children}</section></>}
++"use client";
++import { usePathname } from "next/navigation";
++import { PageIntro } from "@/components/PageIntro";
++export function AdminPage({title,subtitle,children,back}:{title:string;subtitle:string;children:React.ReactNode;back?:string}){
++ const pathname=usePathname();
++ const querySections=["/admin/productions","/admin/checkups","/admin/turnos","/admin/startups","/admin/shutdowns","/admin/raw-material-lots"];
++ const resolvedBack=back ?? (querySections.some((path)=>pathname===path) ? "/admin/queries" : "/admin");
++ return <><PageIntro title={title} subtitle={subtitle} back={resolvedBack}/><section className="panel">{children}</section></>;
++}
+diff --git a/components/CheckupForms.tsx b/components/CheckupForms.tsx
+index 876b990..228ee34 100644
+--- a/components/CheckupForms.tsx
++++ b/components/CheckupForms.tsx
+@@ -18,11 +18,12 @@ export function CheckupForms({ machines, machineRecords, generalRecord }: { mach
+       router.refresh();
+     } catch (e) { setError(e instanceof Error ? e.message : "Erro ao guardar."); }
+   };
++  const submit=(general=false)=>(e:React.FormEvent<HTMLFormElement>)=>{e.preventDefault();const submitter=(e.nativeEvent as SubmitEvent).submitter as HTMLButtonElement|null;const fd=new FormData(e.currentTarget);if(submitter?.name)fd.set(submitter.name,submitter.value);void run(fd,general)};
+   return <div className="machine-forms-stack">
+-    <form action={(fd) => run(fd, true)} className="panel form-stack">
+-      <input type="hidden" name="generalId" value={generalRecord?.status === "DRAFT" ? generalRecord.id : ""}/>
++    <form onSubmit={submit(true)} className="panel form-stack">
++      <input type="hidden" name="generalId" value={generalRecord?.id ?? ""}/>
+       <h2>Verificação geral do turno</h2>
+-      {generalRecord?.status === "FINALIZED" ? <div className="notice">A verificação geral deste turno já foi finalizada.</div> : <>
++      {generalRecord?.status === "FINALIZED" && <div className="notice">Verificação finalizada. Pode atualizá-la até ao fim deste turno.</div>}<>
+         <div className="two-col">
+           <label>Refrigerador grande (°C)<input name="chillerLargeC" type="number" step="0.1" defaultValue={generalRecord?.chillerLargeC ?? ""}/></label>
+           <label>Refrigerador pequeno (°C)<input name="chillerSmallC" type="number" step="0.1" defaultValue={generalRecord?.chillerSmallC ?? ""}/></label>
+@@ -31,16 +32,16 @@ export function CheckupForms({ machines, machineRecords, generalRecord }: { mach
+         <section className="subpanel"><label className="check"><input type="checkbox" name="cleanDispatch" defaultChecked={generalRecord?.cleanDispatch}/>Limpeza da zona de expedição</label><label className="check"><input type="checkbox" name="cleanStorage" defaultChecked={generalRecord?.cleanStorage}/>Limpeza da zona de armazenamento</label><label className="check"><input type="checkbox" name="cleanProduction" defaultChecked={generalRecord?.cleanProduction}/>Limpeza da zona de produção</label></section>
+         <label>Observações<textarea name="generalNotes" defaultValue={generalRecord?.notes ?? ""}/></label>
+         <div className="button-row"><button className="btn secondary" name="intent" value="draft" formNoValidate>Gravar rascunho</button><button className="btn primary" name="intent" value="finalize">Finalizar verificação geral</button></div>
+-      </>}
++      </>
+     </form>
+ 
+     {machines.map((machine) => {
+       const record = machineRecords.find((row) => row.machineId === machine.id);
+-      return <form key={machine.id} action={(fd) => run(fd)} className="panel form-stack">
++      return <form key={machine.id} onSubmit={submit(false)} className="panel form-stack">
+         <input type="hidden" name="machineId" value={machine.id}/>
+-        <input type="hidden" name="checkupId" value={record?.status === "DRAFT" ? record.id : ""}/>
++        <input type="hidden" name="checkupId" value={record?.id ?? ""}/>
+         <div className="machine-form-heading"><img src={["5", "6"].includes(machine.code) ? "/maq-tampas.png" : "/maq-garrafoes.png"} alt=""/><div><h2>Máquina {machine.code}</h2><p>{machine.name}</p></div></div>
+-        {record?.status === "FINALIZED" ? <div className="notice">A verificação desta máquina já foi finalizada neste turno.</div> : <>
++        {record?.status === "FINALIZED" && <div className="notice">Verificação finalizada. Pode atualizá-la até ao fim deste turno, por exemplo para registar uma avaria posterior.</div>}<>
+           <section className="subpanel"><div className="two-col">
+             <label>Temperatura do óleo hidráulico (°C)<input name="oilTempC" type="number" step="0.1" defaultValue={record?.oilTempC ?? ""}/></label>
+             <label>Nível do óleo hidráulico<select name="oilLevel" defaultValue={record?.oilLevel ?? ""}><option value="">Selecione</option><option value="LOW">Baixo</option><option value="NORMAL">Normal</option><option value="HIGH">Alto</option></select></label>
+@@ -49,7 +50,7 @@ export function CheckupForms({ machines, machineRecords, generalRecord }: { mach
+           </div><label className="check"><input type="checkbox" name="cleanMachineArea" defaultChecked={record?.cleanMachineArea}/>Limpeza de aparadeiras, tapetes e mesa de embalamento</label></section>
+           <section className="subpanel breakdown-panel"><h3>Avarias / paragens</h3><label className="check"><input type="checkbox" name="hasBreakdown" defaultChecked={record?.hasBreakdown}/>Foi detetada uma avaria ou paragem</label><label className="check"><input type="checkbox" name="breakdownStoppedMachine" defaultChecked={record?.breakdownStoppedMachine}/>A máquina ficou parada</label><label>Descrição da avaria<textarea name="breakdownDescription" defaultValue={record?.breakdownDescription ?? ""} placeholder="Descreva o problema, quando ocorreu e o que foi observado."/></label></section><label>Observações<textarea name="notes" defaultValue={record?.notes ?? ""}/></label>
+           <div className="button-row"><button className="btn secondary" name="intent" value="draft" formNoValidate>Gravar rascunho</button><button className="btn primary" name="intent" value="finalize">Finalizar verificação</button></div>
+-        </>}
++        </>
+       </form>;
+     })}
+     {error && <div className="alert error">{error}</div>}{msg && <div className="alert success">{msg}</div>}
+diff --git a/components/ProductionForm.tsx b/components/ProductionForm.tsx
+index f4c3b78..5ee5a85 100644
+--- a/components/ProductionForm.tsx
++++ b/components/ProductionForm.tsx
+@@ -16,6 +16,10 @@ type InitialProduction = {
+   productionLot: string;
+   initialWeightG: string;
+   midWeightG: string;
++  initialWeightLeftG?: string;
++  midWeightLeftG?: string;
++  initialWeightRightG?: string;
++  midWeightRightG?: string;
+   quantityProduced: string;
+   observations: string;
+   totalMaterialKg: string;
+@@ -63,6 +67,10 @@ export function ProductionForm({ machines, products, rawMaterials, lots, initial
+   const [productId, setProductId] = useState(String(initial?.productId ?? ""));
+   const [initialWeight, setInitialWeight] = useState(initial?.initialWeightG ?? "");
+   const [midWeight, setMidWeight] = useState(initial?.midWeightG ?? "");
++  const [initialWeightLeft, setInitialWeightLeft] = useState(initial?.initialWeightLeftG ?? "");
++  const [midWeightLeft, setMidWeightLeft] = useState(initial?.midWeightLeftG ?? "");
++  const [initialWeightRight, setInitialWeightRight] = useState(initial?.initialWeightRightG ?? "");
++  const [midWeightRight, setMidWeightRight] = useState(initial?.midWeightRightG ?? "");
+   const [packageCount, setPackageCount] = useState(initial?.quantityProduced ?? "");
+   const [message, setMessage] = useState("");
+   const [error, setError] = useState("");
+@@ -71,7 +79,10 @@ export function ProductionForm({ machines, products, rawMaterials, lots, initial
+   const percentageTotal = useMemo(() => rows.reduce((sum, row) => sum + row.percentage, 0), [rows]);
+   const product = products.find((p) => String(p.id) === productId);
+   const unitsPerPackage = product?.unitsPerPackage ?? 0;
+-  const averageWeightG = initialWeight && midWeight ? (Number(initialWeight) + Number(midWeight)) / 2 : 0;
++  const isMachine7 = fixedMachine?.code === "7" || (!fixedMachine && machines.find((m) => String(m.id) === String(initial?.machineId))?.code === "7");
++  const averageWeightG = isMachine7
++    ? (initialWeightLeft && midWeightLeft && initialWeightRight && midWeightRight ? ((Number(initialWeightLeft)+Number(midWeightLeft))/2 + (Number(initialWeightRight)+Number(midWeightRight))/2) / 2 : 0)
++    : (initialWeight && midWeight ? (Number(initialWeight) + Number(midWeight)) / 2 : 0);
+   const suggestedTotalKg = averageWeightG > 0 && Number(packageCount) > 0 && unitsPerPackage > 0 ? (averageWeightG * Number(packageCount) * unitsPerPackage) / 1000 : 0;
+ 
+   useEffect(() => {
+@@ -125,8 +136,13 @@ export function ProductionForm({ machines, products, rawMaterials, lots, initial
+       if (!Number.isFinite(quantity) || quantity <= 0) return "Introduza as quantidades efetivamente consumidas de todas as matérias-primas.";
+       if (lot && quantity > Number(lot.quantityAvailable)) return `A quantidade calculada excede o stock disponível do lote ${lot.supplierLot}.`;
+     }
+-    if (!formData.get("initialWeightG") || !formData.get("midWeightG")) return "Preencha os pesos do início e do meio do turno.";
+-    if (!formData.get("leakStart") || !formData.get("leakMid") || !formData.get("dropStart") || !formData.get("dropMid")) return "Preencha todos os testes de vedação e de queda.";
++    if (isMachine7) {
++      if (!formData.get("initialWeightLeftG") || !formData.get("midWeightLeftG") || !formData.get("initialWeightRightG") || !formData.get("midWeightRightG")) return "Preencha os pesos das cavidades esquerda e direita.";
++      for (const key of ["leakStartLeft","leakMidLeft","dropStartLeft","dropMidLeft","leakStartRight","leakMidRight","dropStartRight","dropMidRight"]) if (!formData.get(key)) return "Preencha todos os testes das duas cavidades.";
++    } else {
++      if (!formData.get("initialWeightG") || !formData.get("midWeightG")) return "Preencha os pesos do início e do meio do turno.";
++      if (!formData.get("leakStart") || !formData.get("leakMid") || !formData.get("dropStart") || !formData.get("dropMid")) return "Preencha todos os testes de vedação e de queda.";
++    }
+     if (formData.get("quantityProduced") === "") return "Introduza a quantidade produzida.";
+     return "";
+   };
+@@ -158,7 +174,9 @@ export function ProductionForm({ machines, products, rawMaterials, lots, initial
+     }
+   };
+ 
+-  return <form action={submit} className="panel form-stack machine-production-form">
++  const handleSubmit=async(e:React.FormEvent<HTMLFormElement>)=>{e.preventDefault();const submitter=(e.nativeEvent as SubmitEvent).submitter as HTMLButtonElement|null;const fd=new FormData(e.currentTarget);if(submitter?.name)fd.set(submitter.name,submitter.value);await submit(fd)};
++
++  return <form onSubmit={handleSubmit} className="panel form-stack machine-production-form">
+     {initial?.id && <input type="hidden" name="productionId" value={initial.id}/>} 
+     <div className="notice"><strong>Lote do produto produzido:</strong> {initial?.productionLot ?? "Será gerado automaticamente ao gravar"}</div>
+     <div className="notice muted"><strong>Rascunhos:</strong> pode gravar o registo mesmo incompleto. A validação integral só é aplicada ao finalizar.</div>
+@@ -181,15 +199,18 @@ export function ProductionForm({ machines, products, rawMaterials, lots, initial
+       </div>
+     </section>
+ 
+-    <section className="subpanel"><h3>Peso da embalagem (g)</h3><div className="two-col">
+-      <label>Início do turno<input className="no-spinner" name="initialWeightG" value={initialWeight} onChange={(e)=>setInitialWeight(e.target.value)} type="number" step="1" min="1" max="100000" inputMode="numeric" placeholder="Ex.: 1250"/></label>
+-      <label>Meio do turno<input className="no-spinner" name="midWeightG" value={midWeight} onChange={(e)=>setMidWeight(e.target.value)} type="number" step="1" min="1" max="100000" inputMode="numeric" placeholder="Ex.: 1250"/></label>
+-    </div></section>
+-
+-    <div className="two-col">
+-      <section className="subpanel"><h3>Teste de vedação</h3><div className="two-col compact"><label>Início<select name="leakStart" defaultValue={initial?.tests.leakStart ?? ""}><option value="">Selecione</option>{results.map((x) => <option key={x} value={x}>{labelResult(x)}</option>)}</select></label><label>Meio<select name="leakMid" defaultValue={initial?.tests.leakMid ?? ""}><option value="">Selecione</option>{results.map((x) => <option key={x} value={x}>{labelResult(x)}</option>)}</select></label></div></section>
+-      <section className="subpanel"><h3>Teste de queda</h3><div className="two-col compact"><label>Início<select name="dropStart" defaultValue={initial?.tests.dropStart ?? ""}><option value="">Selecione</option>{results.map((x) => <option key={x} value={x}>{labelResult(x)}</option>)}</select></label><label>Meio<select name="dropMid" defaultValue={initial?.tests.dropMid ?? ""}><option value="">Selecione</option>{results.map((x) => <option key={x} value={x}>{labelResult(x)}</option>)}</select></label></div></section>
+-    </div>
++    {isMachine7 ? <>
++      <section className="subpanel"><h3>Peso da embalagem por cavidade (g)</h3><div className="cavity-grid">
++        <div className="cavity-card"><h3>Cavidade esquerda</h3><div className="two-col compact"><label>Início do turno<input className="no-spinner" name="initialWeightLeftG" value={initialWeightLeft} onChange={(e)=>setInitialWeightLeft(e.target.value)} type="number" step="1" min="1" max="100000" inputMode="numeric"/></label><label>Meio do turno<input className="no-spinner" name="midWeightLeftG" value={midWeightLeft} onChange={(e)=>setMidWeightLeft(e.target.value)} type="number" step="1" min="1" max="100000" inputMode="numeric"/></label></div></div>
++        <div className="cavity-card"><h3>Cavidade direita</h3><div className="two-col compact"><label>Início do turno<input className="no-spinner" name="initialWeightRightG" value={initialWeightRight} onChange={(e)=>setInitialWeightRight(e.target.value)} type="number" step="1" min="1" max="100000" inputMode="numeric"/></label><label>Meio do turno<input className="no-spinner" name="midWeightRightG" value={midWeightRight} onChange={(e)=>setMidWeightRight(e.target.value)} type="number" step="1" min="1" max="100000" inputMode="numeric"/></label></div></div>
++      </div></section>
++      <div className="cavity-grid">
++        {([['Left','esquerda'],['Right','direita']] as const).map(([suffix,label])=><section className="subpanel cavity-card" key={suffix}><h3>Testes — cavidade {label}</h3><div className="two-col"><div><h4>Vedação</h4><label>Início<select name={`leakStart${suffix}`} defaultValue={initial?.tests[`leakStart${suffix}`] ?? ""}><option value="">Selecione</option>{results.map(x=><option key={x} value={x}>{labelResult(x)}</option>)}</select></label><label>Meio<select name={`leakMid${suffix}`} defaultValue={initial?.tests[`leakMid${suffix}`] ?? ""}><option value="">Selecione</option>{results.map(x=><option key={x} value={x}>{labelResult(x)}</option>)}</select></label></div><div><h4>Queda</h4><label>Início<select name={`dropStart${suffix}`} defaultValue={initial?.tests[`dropStart${suffix}`] ?? ""}><option value="">Selecione</option>{results.map(x=><option key={x} value={x}>{labelResult(x)}</option>)}</select></label><label>Meio<select name={`dropMid${suffix}`} defaultValue={initial?.tests[`dropMid${suffix}`] ?? ""}><option value="">Selecione</option>{results.map(x=><option key={x} value={x}>{labelResult(x)}</option>)}</select></label></div></div></section>)}
++      </div>
++    </> : <>
++      <section className="subpanel"><h3>Peso da embalagem (g)</h3><div className="two-col"><label>Início do turno<input className="no-spinner" name="initialWeightG" value={initialWeight} onChange={(e)=>setInitialWeight(e.target.value)} type="number" step="1" min="1" max="100000" inputMode="numeric" placeholder="Ex.: 1250"/></label><label>Meio do turno<input className="no-spinner" name="midWeightG" value={midWeight} onChange={(e)=>setMidWeight(e.target.value)} type="number" step="1" min="1" max="100000" inputMode="numeric" placeholder="Ex.: 1250"/></label></div></section>
++      <div className="two-col"><section className="subpanel"><h3>Teste de vedação</h3><div className="two-col compact"><label>Início<select name="leakStart" defaultValue={initial?.tests.leakStart ?? ""}><option value="">Selecione</option>{results.map((x)=><option key={x} value={x}>{labelResult(x)}</option>)}</select></label><label>Meio<select name="leakMid" defaultValue={initial?.tests.leakMid ?? ""}><option value="">Selecione</option>{results.map((x)=><option key={x} value={x}>{labelResult(x)}</option>)}</select></label></div></section><section className="subpanel"><h3>Teste de queda</h3><div className="two-col compact"><label>Início<select name="dropStart" defaultValue={initial?.tests.dropStart ?? ""}><option value="">Selecione</option>{results.map((x)=><option key={x} value={x}>{labelResult(x)}</option>)}</select></label><label>Meio<select name="dropMid" defaultValue={initial?.tests.dropMid ?? ""}><option value="">Selecione</option>{results.map((x)=><option key={x} value={x}>{labelResult(x)}</option>)}</select></label></div></section></div>
++    </>}
+ 
+     <label>Quantidade produzida (embalagens: sacos ou paletes)<input className="no-spinner" name="quantityProduced" value={packageCount} onChange={(e)=>setPackageCount(e.target.value)} type="number" step="1" min="0" max="10000000" inputMode="numeric" placeholder="Ex.: 40"/></label>
+     <label>Observações / Comentários<textarea name="observations" maxLength={500} placeholder="Escreva aqui observações ou comentários..." defaultValue={initial?.observations}/></label>
+diff --git a/components/WeeklyStartupForm.tsx b/components/WeeklyStartupForm.tsx
+index a1ed08f..6029f2f 100644
+--- a/components/WeeklyStartupForm.tsx
++++ b/components/WeeklyStartupForm.tsx
+@@ -15,7 +15,8 @@ export function WeeklyStartupForm({machines,initial}:{machines:Machine[];initial
+  const setAll=(id:number)=>setValues(v=>({...v,...Object.fromEntries(keys.map(k=>[`m${id}_${k}`,"CONFORMING"]))}));
+  const setAllGeneral=()=>setGeneralValues(Object.fromEntries(generalKeys.map(k=>[k,"CONFORMING"])));
+  const action=async(fd:FormData)=>{setMsg("");setError("");if(fd.get("intent")==="finalize"&&!confirm("Finalizar o arranque semanal?"))return;try{const r=await saveWeeklyStartup(fd);setMsg(r.finalized?"Arranque semanal finalizado.":"Rascunho do arranque gravado.");}catch(e){setError(e instanceof Error?e.message:"Não foi possível guardar.")}};
+- return <form action={action} className="panel form-stack"><input type="hidden" name="startupId" value={initial?.id??""}/>
++ const submit=async(e:React.FormEvent<HTMLFormElement>)=>{e.preventDefault();const submitter=(e.nativeEvent as SubmitEvent).submitter as HTMLButtonElement|null;const fd=new FormData(e.currentTarget);if(submitter?.name)fd.set(submitter.name,submitter.value);await action(fd)};
++ return <form onSubmit={submit} className="panel form-stack"><input type="hidden" name="startupId" value={initial?.id??""}/>
+  <section className="subpanel"><h2>Máquinas a arrancar</h2><div className="machine-grid">{machines.map(m=><label className="machine-option" key={m.id}><input type="checkbox" name="machineIds" value={m.id} checked={selected.includes(m.id)} onChange={e=>setSelected(v=>e.target.checked?[...v,m.id]:v.filter(id=>id!==m.id))}/><img src={['5','6'].includes(m.code)?'/maq-tampas.png':'/maq-garrafoes.png'} alt=""/><strong>{m.code}</strong></label>)}</div></section>
+  <section className="subpanel"><h2>Equipamentos de apoio</h2><div className="two-col">{[["chillerSmall","Refrigerador pequeno"],["chillerLarge","Refrigerador grande"],["coolingPump","Bomba de refrigeração"],["compressor","Compressor"],["airDryers","Secadores de ar"],["airDemolecularizer","Desmoleculizador de ar"]].map(([k,l])=><label className="check" key={k}><input type="checkbox" name={k} defaultChecked={initial?.[k]}/>{l}</label>)}</div></section>
+  <section className="subpanel"><div className="section-heading"><h2>Verificações gerais</h2><button type="button" className="btn secondary" onClick={setAllGeneral}>Conforme em tudo</button></div><div className="two-col">{[["productionWindows","Acrílicos e janelas da produção"],["storageWindows","Janelas do armazenamento"],["dispatchWindows","Janelas da expedição"],["forkliftIntegrity","Integridade do empilhador"],["emergencyLighting","Iluminárias de emergência"]].map(([k,l])=><label key={k}>{l}<select name={k} value={generalValues[k]??""} onChange={e=>setGeneralValues(v=>({...v,[k]:e.target.value}))}>{options}</select></label>)}</div></section>
+diff --git a/lib/production-initial.ts b/lib/production-initial.ts
+index 0080349..c2b4944 100644
+--- a/lib/production-initial.ts
++++ b/lib/production-initial.ts
+@@ -1,5 +1,5 @@
+ export function productionToInitial(production: any) {
+-  const testMap = new Map(production.tests.map((test: any) => [`${test.type}_${test.moment}`, test.result]));
++  const testMap = new Map(production.tests.map((test: any) => [`${test.type}_${test.moment}_${test.cavity ?? "SINGLE"}`, test.result]));
+   return {
+     id: production.id,
+     machineId: production.machineId,
+@@ -7,6 +7,10 @@ export function productionToInitial(production: any) {
+     productionLot: production.productionLot,
+     initialWeightG: production.initialWeightG ? String(Number(production.initialWeightG)) : "",
+     midWeightG: production.midWeightG ? String(Number(production.midWeightG)) : "",
++    initialWeightLeftG: production.initialWeightLeftG ? String(Number(production.initialWeightLeftG)) : "",
++    midWeightLeftG: production.midWeightLeftG ? String(Number(production.midWeightLeftG)) : "",
++    initialWeightRightG: production.initialWeightRightG ? String(Number(production.initialWeightRightG)) : "",
++    midWeightRightG: production.midWeightRightG ? String(Number(production.midWeightRightG)) : "",
+     quantityProduced: production.quantityProduced === null ? "" : String(production.quantityProduced),
+     observations: production.observations ?? "",
+     exceptionReason: production.exceptionReason ?? "",
+@@ -20,10 +24,14 @@ export function productionToInitial(production: any) {
+       quantityKg: material.quantityKg ? String(Number(material.quantityKg)) : "",
+     })),
+     tests: {
+-      leakStart: testMap.get("LEAK_START") ?? "",
+-      leakMid: testMap.get("LEAK_MID") ?? "",
+-      dropStart: testMap.get("DROP_START") ?? "",
+-      dropMid: testMap.get("DROP_MID") ?? "",
++      leakStart: testMap.get("LEAK_START_SINGLE") ?? "",
++      leakMid: testMap.get("LEAK_MID_SINGLE") ?? "",
++      dropStart: testMap.get("DROP_START_SINGLE") ?? "",
++      dropMid: testMap.get("DROP_MID_SINGLE") ?? "",
++      leakStartLeft: testMap.get("LEAK_START_LEFT") ?? "", leakMidLeft: testMap.get("LEAK_MID_LEFT") ?? "",
++      dropStartLeft: testMap.get("DROP_START_LEFT") ?? "", dropMidLeft: testMap.get("DROP_MID_LEFT") ?? "",
++      leakStartRight: testMap.get("LEAK_START_RIGHT") ?? "", leakMidRight: testMap.get("LEAK_MID_RIGHT") ?? "",
++      dropStartRight: testMap.get("DROP_START_RIGHT") ?? "", dropMidRight: testMap.get("DROP_MID_RIGHT") ?? "",
+     },
+   };
+ }
+diff --git a/prisma/schema.prisma b/prisma/schema.prisma
+index 5ef33e0..edff25c 100644
+--- a/prisma/schema.prisma
++++ b/prisma/schema.prisma
+@@ -192,6 +192,10 @@ model Production {
+   finalizedAt      DateTime?
+   initialWeightG   Decimal?             @db.Decimal(10, 2)
+   midWeightG       Decimal?             @db.Decimal(10, 2)
++  initialWeightLeftG Decimal?            @db.Decimal(10, 2)
++  midWeightLeftG     Decimal?            @db.Decimal(10, 2)
++  initialWeightRightG Decimal?           @db.Decimal(10, 2)
++  midWeightRightG     Decimal?           @db.Decimal(10, 2)
+   quantityProduced Int?
+   observations     String?              @db.Text
+   exceptionReason  String?
+@@ -219,10 +223,11 @@ model QualityTest {
+   type         TestType
+   moment       TestMoment
+   result       TestResult
++  cavity       String     @default("SINGLE")
+   notes        String?
+   measuredAt   DateTime   @default(now())
+ 
+-  @@unique([productionId, type, moment])
++  @@unique([productionId, type, moment, cavity])
+ }
+ 
+ model MachineCheckup {
