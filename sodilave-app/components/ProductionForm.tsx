@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 import { saveProduction } from "@/app/actions/production";
 
@@ -25,6 +25,18 @@ type InitialProduction = {
   tests: Record<string, string>;
   exceptionReason?: string;
   exceptionNotes?: string;
+};
+type StoredDraft = {
+  selectedMachineId: string;
+  productId: string;
+  initialWeight: string;
+  midWeight: string;
+  rightInitialWeight: string;
+  rightMidWeight: string;
+  packageCount: string;
+  rows: MaterialRowState[];
+  fields: Record<string, string | boolean>;
+  savedAt: number;
 };
 
 const results = ["CONFORMING", "NON_CONFORMING", "NOT_PERFORMED"];
@@ -61,6 +73,11 @@ export function ProductionForm({ machines, products, rawMaterials, lots, initial
   additional?: boolean;
 }) {
   const router = useRouter();
+  const formRef = useRef<HTMLFormElement>(null);
+  const restoredRef = useRef(false);
+  const saveTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const storageKey = useMemo(() => `sodilave:production-draft:${initial?.id ?? `new-${fixedMachine?.id ?? "free"}-${additional ? "additional" : "normal"}`}`, [initial?.id, fixedMachine?.id, additional]);
+
   const [rows, setRows] = useState<MaterialRowState[]>(initial?.materials?.length ? initial.materials : [{ key: 0, materialId: "", lotId: "", percentage: 100, quantityKg: "" }]);
   const [selectedMachineId, setSelectedMachineId] = useState(String(fixedMachine?.id ?? initial?.machineId ?? ""));
   const [productId, setProductId] = useState(String(initial?.productId ?? ""));
@@ -72,6 +89,7 @@ export function ProductionForm({ machines, products, rawMaterials, lots, initial
   const [message, setMessage] = useState("");
   const [error, setError] = useState("");
   const [saving, setSaving] = useState(false);
+  const [draftRecovered, setDraftRecovered] = useState(false);
 
   const selectedMachine = fixedMachine ?? machines.find((machine) => String(machine.id) === selectedMachineId);
   const isMachine7 = selectedMachine?.code === "7";
@@ -82,6 +100,80 @@ export function ProductionForm({ machines, products, rawMaterials, lots, initial
   const rightAverage = rightInitialWeight && rightMidWeight ? (Number(rightInitialWeight) + Number(rightMidWeight)) / 2 : 0;
   const averageWeightG = isMachine7 && leftAverage > 0 && rightAverage > 0 ? (leftAverage + rightAverage) / 2 : leftAverage;
   const suggestedTotalKg = averageWeightG > 0 && Number(packageCount) > 0 && unitsPerPackage > 0 ? (averageWeightG * Number(packageCount) * unitsPerPackage) / 1000 : 0;
+
+  const readFormFields = () => {
+    const fields: Record<string, string | boolean> = {};
+    if (!formRef.current) return fields;
+    formRef.current.querySelectorAll<HTMLInputElement | HTMLSelectElement | HTMLTextAreaElement>("input[name], select[name], textarea[name]").forEach((element) => {
+      if (["productionId", "machineId", "productId"].includes(element.name) || element.name.startsWith("materialLotId_") || element.name.startsWith("percentage_") || element.name.startsWith("quantityKg_")) return;
+      fields[element.name] = element instanceof HTMLInputElement && (element.type === "checkbox" || element.type === "radio") ? element.checked : element.value;
+    });
+    return fields;
+  };
+
+  const saveLocalDraft = () => {
+    if (typeof window === "undefined" || !restoredRef.current) return;
+    const payload: StoredDraft = {
+      selectedMachineId,
+      productId,
+      initialWeight,
+      midWeight,
+      rightInitialWeight,
+      rightMidWeight,
+      packageCount,
+      rows,
+      fields: readFormFields(),
+      savedAt: Date.now(),
+    };
+    window.localStorage.setItem(storageKey, JSON.stringify(payload));
+  };
+
+  const queueLocalSave = () => {
+    if (saveTimerRef.current) clearTimeout(saveTimerRef.current);
+    saveTimerRef.current = setTimeout(saveLocalDraft, 250);
+  };
+
+  const clearLocalDraft = () => {
+    if (typeof window !== "undefined") window.localStorage.removeItem(storageKey);
+    setDraftRecovered(false);
+  };
+
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+    const raw = window.localStorage.getItem(storageKey);
+    if (!raw) { restoredRef.current = true; return; }
+    try {
+      const draft = JSON.parse(raw) as StoredDraft;
+      if (draft.selectedMachineId) setSelectedMachineId(draft.selectedMachineId);
+      if (draft.productId !== undefined) setProductId(draft.productId);
+      setInitialWeight(draft.initialWeight ?? "");
+      setMidWeight(draft.midWeight ?? "");
+      setRightInitialWeight(draft.rightInitialWeight ?? "");
+      setRightMidWeight(draft.rightMidWeight ?? "");
+      setPackageCount(draft.packageCount ?? "");
+      if (Array.isArray(draft.rows) && draft.rows.length) setRows(draft.rows);
+      requestAnimationFrame(() => {
+        if (!formRef.current) return;
+        Object.entries(draft.fields ?? {}).forEach(([name, value]) => {
+          const elements = formRef.current!.querySelectorAll<HTMLInputElement | HTMLSelectElement | HTMLTextAreaElement>(`[name="${CSS.escape(name)}"]`);
+          elements.forEach((element) => {
+            if (element instanceof HTMLInputElement && (element.type === "checkbox" || element.type === "radio")) element.checked = Boolean(value);
+            else element.value = String(value ?? "");
+          });
+        });
+      });
+      setDraftRecovered(true);
+    } catch {
+      window.localStorage.removeItem(storageKey);
+    } finally {
+      restoredRef.current = true;
+    }
+  }, [storageKey]);
+
+  useEffect(() => {
+    queueLocalSave();
+    return () => { if (saveTimerRef.current) clearTimeout(saveTimerRef.current); };
+  }, [selectedMachineId, productId, initialWeight, midWeight, rightInitialWeight, rightMidWeight, packageCount, rows]);
 
   useEffect(() => {
     if (!suggestedTotalKg) return;
@@ -136,6 +228,7 @@ export function ProductionForm({ machines, products, rawMaterials, lots, initial
 
   const submit = async (formData: FormData) => {
     setMessage(""); setError("");
+    saveLocalDraft();
     const finalize = formData.get("intent") === "finalize";
     if (finalize) {
       const finalizationError = validateForFinalization(formData);
@@ -145,11 +238,13 @@ export function ProductionForm({ machines, products, rawMaterials, lots, initial
     setSaving(true);
     try {
       const result = await saveProduction(formData);
+      clearLocalDraft();
       if (result.finalized) { router.push("/production"); router.refresh(); return; }
       setMessage(`Produção ${result.lot || `#${result.id}`} guardada como rascunho. Os campos em falta podem ser preenchidos mais tarde.`);
       if (!initial?.id && !fixedMachine) router.replace(`/production/${result.id}`);
       router.refresh();
     } catch (e) {
+      saveLocalDraft();
       setError(e instanceof Error ? e.message : "Não foi possível guardar a produção.");
     } finally { setSaving(false); }
   };
@@ -162,10 +257,11 @@ export function ProductionForm({ machines, products, rawMaterials, lots, initial
     </div>
   </section>;
 
-  return <form action={submit} className="panel form-stack machine-production-form">
+  return <form ref={formRef} action={submit} onInput={queueLocalSave} onChange={queueLocalSave} className="panel form-stack machine-production-form">
     {initial?.id && <input type="hidden" name="productionId" value={initial.id}/>} 
     <div className="notice"><strong>Lote do produto produzido:</strong> {initial?.productionLot ?? "Será gerado automaticamente ao gravar"}</div>
-    <div className="notice muted"><strong>Rascunhos:</strong> pode gravar o registo mesmo incompleto. A validação integral só é aplicada ao finalizar.</div>
+    <div className="notice muted"><strong>Proteção de dados preenchidos:</strong> o formulário é guardado automaticamente neste dispositivo. Erros de validação, refresh ou saída acidental não apagam os campos.</div>
+    {draftRecovered && <div className="alert success">Foi recuperada a informação que estava preenchida neste formulário. <button type="button" className="icon-btn" onClick={clearLocalDraft}>Descartar cópia local</button></div>}
     {fixedMachine ? <><input type="hidden" name="machineId" value={fixedMachine.id}/><div className="machine-form-heading"><img src={["5","6"].includes(fixedMachine.code)?"/maq-tampas.png":"/maq-garrafoes.png"} alt=""/><div><h2>Máquina {fixedMachine.code}</h2><p>{fixedMachine.name}</p></div></div></> : <fieldset><legend>Selecione a máquina *</legend><div className="machine-grid">{machines.map((m) => <label className="machine-option" key={m.id}><input type="radio" name="machineId" value={m.id} checked={selectedMachineId === String(m.id)} onChange={() => setSelectedMachineId(String(m.id))}/><img src={["5","6"].includes(m.code)?"/maq-tampas.png":"/maq-garrafoes.png"} alt=""/><strong>{m.code}</strong></label>)}</div></fieldset>}
     {additional && <section className="subpanel exception-panel"><h3>Motivo da produção adicional *</h3><div className="two-col"><label>Motivo<select name="exceptionReason" defaultValue={initial?.exceptionReason ?? ""}><option value="">Selecione</option><option value="MOULD_CHANGE">Alteração de molde / modelo</option><option value="RAW_MATERIAL_CHANGE">Alteração de matérias-primas</option><option value="OTHER">Outra</option></select></label><label>Explicação<textarea name="exceptionNotes" placeholder="Obrigatório quando selecionar Outra" defaultValue={initial?.exceptionNotes ?? ""}/></label></div></section>}
     <div className="two-col"><label>Tipo de embalagem produzido *<select name="productId" value={productId} onChange={(e) => setProductId(e.target.value)}><option value="">Selecione o tipo de embalagem</option>{products.map((p) => <option key={p.id} value={p.id}>{p.code} — {p.name}</option>)}</select></label><div><label>Lotes de matérias-primas consumidas *</label><button type="button" className="btn secondary" onClick={addRow}>+ Adicionar lote</button></div></div>
