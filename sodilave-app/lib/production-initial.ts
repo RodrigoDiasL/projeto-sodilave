@@ -1,5 +1,6 @@
-export function productionToInitial(production: any) {
+export function productionToInitial(production: any, cavityData?: any, cavityTests: any[] = []) {
   const testMap = new Map(production.tests.map((test: any) => [`${test.type}_${test.moment}`, test.result]));
+  const cavityTestMap = new Map(cavityTests.map((test: any) => [`${test.type}_${test.moment}`, test.result]));
   return {
     id: production.id,
     machineId: production.machineId,
@@ -7,6 +8,8 @@ export function productionToInitial(production: any) {
     productionLot: production.productionLot,
     initialWeightG: production.initialWeightG ? String(Number(production.initialWeightG)) : "",
     midWeightG: production.midWeightG ? String(Number(production.midWeightG)) : "",
+    rightInitialWeightG: cavityData?.rightInitialWeightG ? String(Number(cavityData.rightInitialWeightG)) : "",
+    rightMidWeightG: cavityData?.rightMidWeightG ? String(Number(cavityData.rightMidWeightG)) : "",
     quantityProduced: production.quantityProduced === null ? "" : String(production.quantityProduced),
     observations: production.observations ?? "",
     exceptionReason: production.exceptionReason ?? "",
@@ -24,6 +27,10 @@ export function productionToInitial(production: any) {
       leakMid: testMap.get("LEAK_MID") ?? "",
       dropStart: testMap.get("DROP_START") ?? "",
       dropMid: testMap.get("DROP_MID") ?? "",
+      leakStartRight: cavityTestMap.get("LEAK_START") ?? "",
+      leakMidRight: cavityTestMap.get("LEAK_MID") ?? "",
+      dropStartRight: cavityTestMap.get("DROP_START") ?? "",
+      dropMidRight: cavityTestMap.get("DROP_MID") ?? "",
     },
   };
 }
