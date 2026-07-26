@@ -1,7 +1,7 @@
 import Link from "next/link";
 import { notFound } from "next/navigation";
 import { db } from "@/lib/db";
-import { requireAdmin } from "@/lib/auth";
+import { requireAuditAccess } from "@/lib/auth";
 import { AdminPage } from "@/components/AdminPage";
 
 const statusLabel=(s:string)=>({DRAFT:"Em aberto",FINALIZED:"Finalizada",CANCELLED:"Cancelada"}[s]||s);
@@ -11,7 +11,7 @@ type CavityDataRow={productionId:number;rightInitialWeightG:unknown;rightMidWeig
 type CavityTestRow={productionId:number;type:string;moment:string;result:string};
 
 export default async function Page({params}:{params:Promise<{id:string}>}){
-  await requireAdmin();
+  const user=await requireAuditAccess();
   const {id}=await params;
   const base=await db.production.findUnique({where:{id:Number(id)}});
   if(!base)notFound();
@@ -36,7 +36,7 @@ export default async function Page({params}:{params:Promise<{id:string}>}){
         <div className="detail-grid"><p><b>Lote produzido:</b> {r.productionLot}</p><p><b>Operador:</b> {r.operator.name}</p><p><b>Estado:</b> {statusLabel(r.status)}</p><p><b>Embalagens produzidas:</b> {r.quantityProduced??"—"}</p><p><b>Unidades por embalagem:</b> {r.product.unitsPerPackage??"—"}</p><p><b>Total de unidades:</b> {r.quantityProduced&&r.product.unitsPerPackage?r.quantityProduced*r.product.unitsPerPackage:"—"}</p></div>
         {r.machine.code==="7"?<div className="two-col"><section className="subpanel"><h3>Embalagem da cavidade esquerda</h3><p><b>Peso inicial:</b> {n(r.initialWeightG)} g</p><p><b>Peso intermédio:</b> {n(r.midWeightG)} g</p><p><b>Testes:</b> {leftTests}</p></section><section className="subpanel"><h3>Embalagem da cavidade direita</h3><p><b>Peso inicial:</b> {n(cavity?.rightInitialWeightG)} g</p><p><b>Peso intermédio:</b> {n(cavity?.rightMidWeightG)} g</p><p><b>Testes:</b> {rightTestsText}</p></section></div>:<><div className="detail-grid"><p><b>Peso inicial:</b> {n(r.initialWeightG)} g</p><p><b>Peso intermédio:</b> {n(r.midWeightG)} g</p></div><h3>Testes</h3><p>{leftTests}</p></>}
         <h3>Matérias-primas</h3><div className="responsive-table"><table><thead><tr><th>Matéria-prima</th><th>Lote</th><th>%</th><th>Quantidade real</th></tr></thead><tbody>{r.materials.map(m=><tr key={m.id}><td>{m.rawMaterialLot.rawMaterial.name}</td><td>{m.rawMaterialLot.supplierLot}</td><td>{n(m.percentage)}%</td><td>{n(m.quantityKg)} kg</td></tr>)}</tbody></table></div>
-        <h3>Observações</h3><p>{r.observations||"Sem observações."}</p>{r.status==="DRAFT"&&<Link className="btn primary" href={`/production/${r.id}`}>Continuar esta produção</Link>}
+        <h3>Observações</h3><p>{r.observations||"Sem observações."}</p>{user.role==="ADMIN"&&r.status==="DRAFT"&&<Link className="btn primary" href={`/production/${r.id}`}>Continuar esta produção</Link>}
       </section>})}</div>
     <div className="button-row"><Link className="btn secondary" href="/admin/productions">Voltar às produções</Link></div>
   </AdminPage>;
