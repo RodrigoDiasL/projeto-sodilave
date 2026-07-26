@@ -10,6 +10,7 @@ datasource db {
 enum UserRole {
   OPERATOR
   PRODUCTION_MANAGER
+  AUDITOR
   ADMIN
 }
 
@@ -279,7 +280,6 @@ model AuditLog {
   createdAt DateTime @default(now())
 }
 
-
 model WeeklyStartup {
   id                    Int                    @id @default(autoincrement())
   operatorId            Int
@@ -361,7 +361,6 @@ model WeeklyShutdownMachine {
 
   @@unique([weeklyShutdownId, machineId])
 }
-
 
 model Maintenance {
   id Int @id @default(autoincrement())
