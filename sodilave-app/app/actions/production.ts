@@ -34,9 +34,13 @@ export async function saveProduction(formData: FormData) {
 
   const initialWeightG = asNum(formData.get("initialWeightG"));
   const midWeightG = asNum(formData.get("midWeightG"));
+  const rightInitialWeightG = asNum(formData.get("rightInitialWeightG"));
+  const rightMidWeightG = asNum(formData.get("rightMidWeightG"));
   const quantityProduced = asNum(formData.get("quantityProduced"));
-  finiteInRange(initialWeightG, 1, 100000, "O peso inicial", true);
-  finiteInRange(midWeightG, 1, 100000, "O peso intermédio", true);
+  finiteInRange(initialWeightG, 1, 100000, "O peso inicial da cavidade esquerda", true);
+  finiteInRange(midWeightG, 1, 100000, "O peso intermédio da cavidade esquerda", true);
+  finiteInRange(rightInitialWeightG, 1, 100000, "O peso inicial da cavidade direita", true);
+  finiteInRange(rightMidWeightG, 1, 100000, "O peso intermédio da cavidade direita", true);
   finiteInRange(quantityProduced, 0, 10000000, "A quantidade produzida", true);
 
   const materials: { rawMaterialLotId: number; percentage: number | null; quantityKg: number | null }[] = [];
@@ -73,6 +77,8 @@ export async function saveProduction(formData: FormData) {
   const machine = await db.machine.findFirst({ where: { id: machineId, active: true } });
   const product = await db.product.findFirst({ where: { id: productId, active: true } });
   if (!machine || !product) throw new Error("A máquina ou o produto selecionado já não está ativo.");
+  const isMachine7 = machine.code === "7";
+  if (finalize && isMachine7 && (rightInitialWeightG === null || rightMidWeightG === null)) throw new Error("Preencha os pesos das cavidades esquerda e direita da máquina 7.");
   if (finalize && (!product.unitsPerPackage || product.unitsPerPackage <= 0)) throw new Error("Defina as unidades por embalagem deste produto antes de finalizar a produção.");
   await assertMachineRunning(machineId);
 
@@ -85,9 +91,7 @@ export async function saveProduction(formData: FormData) {
       ...(productionId ? { id: { not: productionId } } : {}),
     },
   });
-  if (finalize && otherProductionsInShift > 0 && !exceptionReason) {
-    throw new Error("Já existe uma produção desta máquina neste turno. Indique o motivo da produção adicional.");
-  }
+  if (finalize && otherProductionsInShift > 0 && !exceptionReason) throw new Error("Já existe uma produção desta máquina neste turno. Indique o motivo da produção adicional.");
 
   let existing: { id: number; status: RecordStatus; operatorId: number; productionLot: string; startedAt: Date } | null = null;
   if (productionId) {
@@ -119,15 +123,29 @@ export async function saveProduction(formData: FormData) {
   if (materials.length) await db.productionMaterial.createMany({ data: materials.map((row) => ({ productionId: production.id, ...row })) });
 
   await db.qualityTest.deleteMany({ where: { productionId: production.id } });
-  const tests: [TestType, TestMoment, string][] = [
+  const leftTests: [TestType, TestMoment, string][] = [
     [TestType.LEAK, TestMoment.START, "leakStart"], [TestType.LEAK, TestMoment.MID, "leakMid"],
     [TestType.DROP, TestMoment.START, "dropStart"], [TestType.DROP, TestMoment.MID, "dropMid"],
   ];
   const validResults = [TestResult.CONFORMING, TestResult.NON_CONFORMING, TestResult.NOT_PERFORMED];
-  for (const [type, moment, key] of tests) {
+  for (const [type, moment, key] of leftTests) {
     const value = String(formData.get(key) || "");
     if (value && validResults.includes(value as TestResult)) await db.qualityTest.create({ data: { productionId: production.id, type, moment, result: value as TestResult } });
     else if (finalize) throw new Error("Preencha todos os testes antes de finalizar.");
+  }
+
+  if (isMachine7) {
+    await db.$executeRaw`INSERT INTO ProductionCavityData (productionId, rightInitialWeightG, rightMidWeightG) VALUES (${production.id}, ${rightInitialWeightG}, ${rightMidWeightG}) ON DUPLICATE KEY UPDATE rightInitialWeightG = VALUES(rightInitialWeightG), rightMidWeightG = VALUES(rightMidWeightG)`;
+    await db.$executeRaw`DELETE FROM ProductionCavityTest WHERE productionId = ${production.id}`;
+    const rightTests: [string, string, string][] = [["LEAK","START","leakStartRight"],["LEAK","MID","leakMidRight"],["DROP","START","dropStartRight"],["DROP","MID","dropMidRight"]];
+    for (const [type, moment, key] of rightTests) {
+      const value = String(formData.get(key) || "");
+      if (value && validResults.includes(value as TestResult)) await db.$executeRaw`INSERT INTO ProductionCavityTest (productionId, cavity, type, moment, result) VALUES (${production.id}, 'RIGHT', ${type}, ${moment}, ${value})`;
+      else if (finalize) throw new Error("Preencha todos os testes das duas cavidades antes de finalizar.");
+    }
+  } else {
+    await db.$executeRaw`DELETE FROM ProductionCavityData WHERE productionId = ${production.id}`;
+    await db.$executeRaw`DELETE FROM ProductionCavityTest WHERE productionId = ${production.id}`;
   }
 
   const action = finalize ? "FINALIZE" : existing ? "EDIT" : "CREATE";
