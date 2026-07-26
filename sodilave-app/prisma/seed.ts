@@ -13,6 +13,7 @@ const users = [
   { name: "Hugo", pin: "1115", role: UserRole.OPERATOR },
   { name: "Luís", pin: "1116", role: UserRole.PRODUCTION_MANAGER },
   { name: "Claudio", pin: "1117", role: UserRole.OPERATOR },
+  { name: "Olga", pin: "0000", role: UserRole.AUDITOR },
 ];
 
 async function disableOrRemoveDemoUser(name: string) {
