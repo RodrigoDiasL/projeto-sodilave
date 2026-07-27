@@ -17,6 +17,19 @@ const positiveId = (fd: FormData) => {
   return id;
 };
 const requireText = (value: string, label: string) => { if (!value) throw new Error(`${label} é obrigatório.`); return value; };
+const machineIds = (fd: FormData) => {
+  const ids = fd.getAll("machineIds").map(Number).filter(id => Number.isInteger(id) && id > 0);
+  if (!ids.length) throw new Error("Selecione pelo menos uma máquina que possa produzir este produto.");
+  return [...new Set(ids)];
+};
+async function replaceProductMachines(productId:number, ids:number[]){
+  const valid = await db.machine.findMany({where:{id:{in:ids},active:true},select:{id:true}});
+  if(valid.length!==ids.length) throw new Error("Uma das máquinas selecionadas é inválida ou está inativa.");
+  await db.$transaction(async tx=>{
+    await tx.$executeRaw`DELETE FROM ProductMachine WHERE productId=${productId}`;
+    for(const machineId of ids) await tx.$executeRaw`INSERT INTO ProductMachine (productId,machineId) VALUES (${productId},${machineId})`;
+  });
+}
 
 export async function createUser(formData: FormData) {
   const admin = await requireAdmin();
@@ -29,7 +42,6 @@ export async function createUser(formData: FormData) {
   await db.auditLog.create({ data: { userId: admin.id, action: "CREATE", entity: "User", entityId: String(row.id) } });
   revalidatePath("/admin/users");
 }
-
 
 export async function updateUser(formData: FormData) {
   const admin = await requireAdmin();
@@ -54,15 +66,19 @@ export async function createMachine(formData: FormData) {
   revalidatePath("/admin/machines");
 }
 export async function createProduct(formData: FormData) {
-  await requireAdmin();
+  const admin=await requireAdmin();
+  const ids=machineIds(formData);
   const unitsPerPackage = positiveNumber(formData, "unitsPerPackage", "As unidades por embalagem", 100000);
-  await db.product.create({ data: { code: requireText(text(formData, "code", 40), "O código"), name: requireText(text(formData, "name"), "A designação"), unitsPerPackage, active: true } });
-  revalidatePath("/admin/products");
+  const row=await db.product.create({ data: { code: requireText(text(formData, "code", 40), "O código"), name: requireText(text(formData, "name"), "A designação"), unitsPerPackage, active: true } });
+  await replaceProductMachines(row.id,ids);
+  await db.auditLog.create({data:{userId:admin.id,action:"CREATE",entity:"Product",entityId:String(row.id),details:{machineIds:ids}}});
+  revalidatePath("/admin/products"); revalidatePath("/production");
 }
 
 export async function updateProduct(formData: FormData) {
-  await requireAdmin();
+  const admin=await requireAdmin();
   const id = positiveId(formData);
+  const ids=machineIds(formData);
   const unitsPerPackage = positiveNumber(formData, "unitsPerPackage", "As unidades por embalagem", 100000);
   await db.product.update({ where: { id }, data: {
     code: requireText(text(formData, "code", 40), "O código"),
@@ -70,7 +86,9 @@ export async function updateProduct(formData: FormData) {
     unitsPerPackage,
     active: formData.get("active") === "on",
   }});
-  revalidatePath("/admin/products"); revalidatePath("/production");
+  await replaceProductMachines(id,ids);
+  await db.auditLog.create({data:{userId:admin.id,action:"EDIT",entity:"Product",entityId:String(id),details:{machineIds:ids}}});
+  revalidatePath("/admin/products"); revalidatePath(`/admin/products/${id}`); revalidatePath("/production");
 }
 
 export async function setProductActive(formData: FormData) {
