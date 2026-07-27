@@ -36,6 +36,7 @@ export function productionToInitial(production: any, cavityData?: any, cavityTes
 }
 
 export function previousProductionToDefaults(production:any){
+  const availableMaterials=production.materials.filter((material:any)=>material.rawMaterialLot.status==="ACTIVE"&&Number(material.rawMaterialLot.quantityAvailable)>0);
   return {
     machineId:production.machineId,
     productId:production.productId,
@@ -49,8 +50,8 @@ export function previousProductionToDefaults(production:any){
     exceptionReason:"",
     exceptionNotes:"",
     totalMaterialKg:"",
-    materials:production.materials.map((material:any,index:number)=>({
-      key:`previous-${production.id}-${index}`,
+    materials:availableMaterials.map((material:any,index:number)=>({
+      key:-(production.id*10+index+1),
       materialId:String(material.rawMaterialLot.rawMaterialId),
       lotId:String(material.rawMaterialLotId),
       percentage:Number(material.percentage??0),
