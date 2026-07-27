@@ -104,6 +104,19 @@ CREATE TABLE IF NOT EXISTS `RecordConfirmation` (
   CONSTRAINT `RecordConfirmation_confirmedById_fkey` FOREIGN KEY (`confirmedById`) REFERENCES `User`(`id`) ON DELETE RESTRICT ON UPDATE CASCADE
 ) DEFAULT CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci;
 
+CREATE TABLE IF NOT EXISTS `ProductMachine` (
+  `productId` INT NOT NULL,
+  `machineId` INT NOT NULL,
+  `createdAt` DATETIME(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3),
+  PRIMARY KEY (`productId`,`machineId`),
+  KEY `ProductMachine_machineId_idx` (`machineId`),
+  CONSTRAINT `ProductMachine_productId_fkey` FOREIGN KEY (`productId`) REFERENCES `Product`(`id`) ON DELETE CASCADE ON UPDATE CASCADE,
+  CONSTRAINT `ProductMachine_machineId_fkey` FOREIGN KEY (`machineId`) REFERENCES `Machine`(`id`) ON DELETE CASCADE ON UPDATE CASCADE
+) DEFAULT CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci;
+
 INSERT INTO `MachineLotConfig` (`machineId`,`majorLetter`,`minorLetter`)
 SELECT `id`,'A','A' FROM `Machine`
 ON DUPLICATE KEY UPDATE `machineId` = VALUES(`machineId`);
+
+INSERT IGNORE INTO `ProductMachine` (`productId`,`machineId`)
+SELECT p.`id`,m.`id` FROM `Product` p CROSS JOIN `Machine` m WHERE m.`active` = 1;
