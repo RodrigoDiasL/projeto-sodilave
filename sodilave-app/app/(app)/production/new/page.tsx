@@ -6,8 +6,10 @@ import { getProductionFormData } from "@/lib/production-form-data";
 import { getShiftWindow } from "@/lib/shift";
 import { db } from "@/lib/db";
 import { productionToInitial } from "@/lib/production-initial";
+import { requireUser } from "@/lib/auth";
 
 export default async function NewProductionPage({ searchParams }: { searchParams: Promise<{ extraMachine?: string }> }) {
+  const user = await requireUser();
   const q = await searchParams;
   const data = await getProductionFormData();
   const window = getShiftWindow();
@@ -34,6 +36,6 @@ export default async function NewProductionPage({ searchParams }: { searchParams
         </section>;
       })}
     </div>
-    <SecondWorkerConfirmationPortals workers={data.workers} selector="form.machine-production-form" />
+    <SecondWorkerConfirmationPortals workers={data.workers} selector="form.machine-production-form" disabled={user.role === "ADMIN"} />
   </>;
 }
