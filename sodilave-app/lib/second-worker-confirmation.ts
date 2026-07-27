@@ -7,7 +7,7 @@ export async function getConfirmationWorkers(currentUserId?: number): Promise<Co
   const users = await db.user.findMany({
     where: {
       active: true,
-      role: { in: ["OPERATOR", "PRODUCTION_MANAGER", "ADMIN"] },
+      role: { in: ["OPERATOR", "PRODUCTION_MANAGER"] },
       ...(currentUserId ? { id: { not: currentUserId } } : {}),
     },
     select: { id: true, name: true },
@@ -24,11 +24,11 @@ export async function verifySecondWorker(formData: FormData, currentUserId: numb
   if (!/^\d{4,8}$/.test(secondWorkerPin)) throw new Error("O segundo trabalhador deve introduzir um PIN válido.");
 
   const worker = await db.user.findFirst({
-    where: { id: secondWorkerId, active: true, role: { in: ["OPERATOR", "PRODUCTION_MANAGER", "ADMIN"] } },
+    where: { id: secondWorkerId, active: true, role: { in: ["OPERATOR", "PRODUCTION_MANAGER"] } },
     select: { id: true, name: true, pinHash: true },
   });
   if (!worker || !(await bcrypt.compare(secondWorkerPin, worker.pinHash))) {
-    throw new Error("O PIN do segundo trabalhador está incorreto.");
+    throw new Error("O PIN do segundo trabalhador está incorreto ou esta conta não pode confirmar como colega de turno.");
   }
   return { id: worker.id, name: worker.name };
 }
