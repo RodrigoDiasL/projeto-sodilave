@@ -1,6 +1,7 @@
 import Link from "next/link";
 import { PageIntro } from "@/components/PageIntro";
 import { ProductionForm } from "@/components/ProductionForm";
+import { SecondWorkerConfirmationPortals } from "@/components/SecondWorkerConfirmationPortals";
 import { getProductionFormData } from "@/lib/production-form-data";
 import { getShiftWindow } from "@/lib/shift";
 import { db } from "@/lib/db";
@@ -33,5 +34,6 @@ export default async function NewProductionPage({ searchParams }: { searchParams
         </section>;
       })}
     </div>
+    <SecondWorkerConfirmationPortals workers={data.workers} selector="form.machine-production-form" />
   </>;
 }
