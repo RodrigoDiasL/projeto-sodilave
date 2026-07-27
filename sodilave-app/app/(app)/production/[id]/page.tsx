@@ -1,6 +1,7 @@
 import { notFound } from "next/navigation";
 import { PageIntro } from "@/components/PageIntro";
 import { ProductionForm } from "@/components/ProductionForm";
+import { SecondWorkerConfirmationPortals } from "@/components/SecondWorkerConfirmationPortals";
 import { db } from "@/lib/db";
 import { requireUser } from "@/lib/auth";
 import { getProductionFormData } from "@/lib/production-form-data";
@@ -39,5 +40,6 @@ export default async function EditProductionPage({ params }: { params: Promise<{
   return <>
     <PageIntro title={`${production.status === "FINALIZED" ? "Corrigir" : "Continuar"} produção ${displayLot}`} subtitle="As correções de produções finalizadas só são permitidas até ao fim do respetivo turno." />
     <ProductionForm {...data} initial={initial} />
+    <SecondWorkerConfirmationPortals workers={data.workers} selector="form.machine-production-form" />
   </>;
 }
