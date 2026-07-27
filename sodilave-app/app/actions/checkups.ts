@@ -5,6 +5,7 @@ import { requireUser } from "@/lib/auth";
 import { getShift, getShiftWindow } from "@/lib/shift";
 import { OilLevel, RecordStatus } from "@prisma/client";
 import { assertMachineRunning } from "@/lib/active-machines";
+import { saveRecordConfirmation, verifySecondWorker } from "@/lib/second-worker-confirmation";
 
 const n = (v: FormDataEntryValue | null) => v === null || v === "" ? null : Number(v);
 const checkOptional = (v: number | null, min: number, max: number, label: string) => {
@@ -17,6 +18,7 @@ export async function saveMachineCheckup(formData: FormData) {
   const intent = String(formData.get("intent") || "draft");
   const finalize = intent === "finalize";
   if (!["draft", "finalize"].includes(intent)) throw new Error("Ação inválida.");
+  const secondWorker = finalize ? await verifySecondWorker(formData, user.id) : null;
   const id = n(formData.get("checkupId"));
   const machineId = n(formData.get("machineId"));
   if (machineId === null || !Number.isInteger(machineId) || machineId <= 0) throw new Error("Selecione uma máquina para guardar a verificação de turno.");
@@ -35,7 +37,8 @@ export async function saveMachineCheckup(formData: FormData) {
     hasBreakdown:false,breakdownStoppedMachine:false,breakdownDescription:null,
     notes: String(formData.get("notes") || "").trim().slice(0, 500) || null, finalizedAt: effectiveStatus===RecordStatus.FINALIZED ? (existing?.finalizedAt??new Date()) : null };
   const row = existing ? await db.machineCheckup.update({ where: { id: existing.id }, data }) : await db.machineCheckup.create({ data: { ...data, shiftCode:getShift().code, operatorId: user.id } });
-  await db.auditLog.create({ data: { userId: user.id, action: existing ? "EDIT" : finalize ? "FINALIZE" : "CREATE", entity: "MachineCheckup", entityId: String(row.id), details: { status:effectiveStatus } } });
+  if (finalize && secondWorker) await saveRecordConfirmation("MachineCheckup", row.id, secondWorker.id);
+  await db.auditLog.create({ data: { userId: user.id, action: existing ? "EDIT" : finalize ? "FINALIZE" : "CREATE", entity: "MachineCheckup", entityId: String(row.id), details: { status:effectiveStatus, secondWorkerId: secondWorker?.id ?? null, secondWorkerName: secondWorker?.name ?? null } } });
   revalidatePath("/checkups"); revalidatePath("/admin/checkups"); return { ok: true, id: row.id, finalized: effectiveStatus===RecordStatus.FINALIZED };
 }
 
@@ -44,6 +47,7 @@ export async function saveGeneralCheck(formData: FormData) {
   const intent = String(formData.get("intent") || "draft");
   const finalize = intent === "finalize";
   if (!["draft", "finalize"].includes(intent)) throw new Error("Ação inválida.");
+  const secondWorker = finalize ? await verifySecondWorker(formData, user.id) : null;
   const id = n(formData.get("generalId"));
   const existing = id ? await db.shiftGeneralCheck.findUnique({ where: { id }, select: { id: true, status: true, observedAt:true, finalizedAt:true } }) : null;
   if(existing?.status===RecordStatus.CANCELLED)throw new Error("Esta verificação foi cancelada.");
@@ -56,6 +60,7 @@ export async function saveGeneralCheck(formData: FormData) {
     cleanDispatch: formData.get("cleanDispatch") === "on", cleanStorage: formData.get("cleanStorage") === "on", cleanProduction: formData.get("cleanProduction") === "on",
     notes: String(formData.get("generalNotes") || "").trim().slice(0, 500) || null, finalizedAt: effectiveStatus===RecordStatus.FINALIZED ? (existing?.finalizedAt??new Date()) : null };
   const row = existing ? await db.shiftGeneralCheck.update({ where: { id: existing.id }, data }) : await db.shiftGeneralCheck.create({ data: { ...data, shiftCode:getShift().code, operatorId: user.id } });
-  await db.auditLog.create({ data: { userId: user.id, action: existing ? "EDIT" : finalize ? "FINALIZE" : "CREATE", entity: "ShiftGeneralCheck", entityId: String(row.id), details: { status:effectiveStatus } } });
+  if (finalize && secondWorker) await saveRecordConfirmation("ShiftGeneralCheck", row.id, secondWorker.id);
+  await db.auditLog.create({ data: { userId: user.id, action: existing ? "EDIT" : finalize ? "FINALIZE" : "CREATE", entity: "ShiftGeneralCheck", entityId: String(row.id), details: { status:effectiveStatus, secondWorkerId: secondWorker?.id ?? null, secondWorkerName: secondWorker?.name ?? null } } });
   revalidatePath("/checkups"); revalidatePath("/admin/checkups"); return { ok: true, id: row.id, finalized: effectiveStatus===RecordStatus.FINALIZED };
 }
