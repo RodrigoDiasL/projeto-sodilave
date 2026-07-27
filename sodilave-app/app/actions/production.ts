@@ -3,7 +3,7 @@ import { revalidatePath } from "next/cache";
 import { db } from "@/lib/db";
 import { requireUser } from "@/lib/auth";
 import { getShift, getShiftWindow } from "@/lib/shift";
-import { generateProductionLot } from "@/lib/lot";
+import { generateProductionLot, getActiveCommercialLotForProduct, validateCommercialLotMixture } from "@/lib/lot";
 import { RecordStatus, TestMoment, TestResult, TestType } from "@prisma/client";
 import { assertMachineRunning } from "@/lib/active-machines";
 
@@ -49,10 +49,7 @@ export async function saveProduction(formData: FormData) {
     const percentage = asNum(formData.get(`percentage_${i}`));
     const quantityKg = asNum(formData.get(`quantityKg_${i}`));
     if (!rawMaterialLotId) continue;
-    if (!Number.isInteger(rawMaterialLotId) || rawMaterialLotId <= 0) {
-      if (finalize) throw new Error("Um dos lotes selecionados é inválido.");
-      continue;
-    }
+    if (!Number.isInteger(rawMaterialLotId) || rawMaterialLotId <= 0) { if (finalize) throw new Error("Um dos lotes selecionados é inválido."); continue; }
     if (percentage !== null) finiteInRange(percentage, 0, 100, "A percentagem");
     if (quantityKg !== null) finiteInRange(quantityKg, 0, 999999, "A quantidade de matéria-prima");
     materials.push({ rawMaterialLotId, percentage, quantityKg });
@@ -82,15 +79,12 @@ export async function saveProduction(formData: FormData) {
   if (finalize && (!product.unitsPerPackage || product.unitsPerPackage <= 0)) throw new Error("Defina as unidades por embalagem deste produto antes de finalizar a produção.");
   await assertMachineRunning(machineId);
 
+  const commercialLot = await getActiveCommercialLotForProduct(productId);
+  if (finalize && !commercialLot) throw new Error("Não existe um lote comercial ativo para este produto. Peça a um administrador ou ao responsável de produção para o criar.");
+  if (finalize && commercialLot && !(await validateCommercialLotMixture(commercialLot.id, materials))) throw new Error(`A mistura introduzida não corresponde à mistura definida no lote comercial ${commercialLot.code}.`);
+
   const shiftWindow = getShiftWindow();
-  const otherProductionsInShift = await db.production.count({
-    where: {
-      machineId,
-      startedAt: { gte: shiftWindow.start, lt: shiftWindow.end },
-      status: { not: RecordStatus.CANCELLED },
-      ...(productionId ? { id: { not: productionId } } : {}),
-    },
-  });
+  const otherProductionsInShift = await db.production.count({ where: { machineId, startedAt: { gte: shiftWindow.start, lt: shiftWindow.end }, status: { not: RecordStatus.CANCELLED }, ...(productionId ? { id: { not: productionId } } : {}) } });
   if (finalize && otherProductionsInShift > 0 && !exceptionReason) throw new Error("Já existe uma produção desta máquina neste turno. Indique o motivo da produção adicional.");
 
   let existing: { id: number; status: RecordStatus; operatorId: number; productionLot: string; startedAt: Date } | null = null;
@@ -98,58 +92,36 @@ export async function saveProduction(formData: FormData) {
     existing = await db.production.findUnique({ where: { id: productionId }, select: { id: true, status: true, operatorId: true, productionLot: true, startedAt: true } });
     if (!existing) throw new Error("A produção em aberto já não existe.");
     if (existing.status === RecordStatus.CANCELLED) throw new Error("Esta produção foi cancelada.");
-    if (existing.status === RecordStatus.FINALIZED) {
-      const window = getShiftWindow(existing.startedAt);
-      if (new Date() >= window.end) throw new Error("Esta produção só podia ser alterada até ao fim do turno em que foi registada.");
-    }
+    if (existing.status === RecordStatus.FINALIZED) { const window = getShiftWindow(existing.startedAt); if (new Date() >= window.end) throw new Error("Esta produção só podia ser alterada até ao fim do turno em que foi registada."); }
   }
 
   const shift = getShift();
-  const lot = existing?.productionLot ?? await generateProductionLot(machine.code, shift.code);
+  const internalCode = existing?.productionLot ?? await generateProductionLot(machine.code, shift.code);
   const status = finalize || existing?.status === RecordStatus.FINALIZED ? RecordStatus.FINALIZED : RecordStatus.DRAFT;
-  const data = {
-    machineId, productId, shiftCode: shift.code, status,
-    initialWeightG, midWeightG, quantityProduced,
-    observations: String(formData.get("observations") || "").trim().slice(0, 500) || null,
-    exceptionReason: otherProductionsInShift > 0 ? (exceptionReason || null) : null,
-    exceptionNotes: otherProductionsInShift > 0 ? (exceptionNotes || null) : null,
-    finalizedAt: status === RecordStatus.FINALIZED ? (existing?.status === RecordStatus.FINALIZED ? undefined : new Date()) : null,
-  };
-  const production = existing
-    ? await db.production.update({ where: { id: existing.id }, data })
-    : await db.production.create({ data: { ...data, operatorId: user.id, productionLot: lot } });
+  const data = { machineId, productId, shiftCode: shift.code, status, initialWeightG, midWeightG, quantityProduced, observations: String(formData.get("observations") || "").trim().slice(0, 500) || null, exceptionReason: otherProductionsInShift > 0 ? (exceptionReason || null) : null, exceptionNotes: otherProductionsInShift > 0 ? (exceptionNotes || null) : null, finalizedAt: status === RecordStatus.FINALIZED ? (existing?.status === RecordStatus.FINALIZED ? undefined : new Date()) : null };
+  const production = existing ? await db.production.update({ where: { id: existing.id }, data }) : await db.production.create({ data: { ...data, operatorId: user.id, productionLot: internalCode } });
+
+  if (commercialLot) {
+    const labelCode = `${commercialLot.code} / ${internalCode}`;
+    await db.$executeRaw`INSERT INTO ProductionLotAssociation (productionId, commercialLotId, internalCode, labelCode) VALUES (${production.id}, ${commercialLot.id}, ${internalCode}, ${labelCode}) ON DUPLICATE KEY UPDATE commercialLotId=VALUES(commercialLotId), internalCode=VALUES(internalCode), labelCode=VALUES(labelCode)`;
+  }
 
   await db.productionMaterial.deleteMany({ where: { productionId: production.id } });
   if (materials.length) await db.productionMaterial.createMany({ data: materials.map((row) => ({ productionId: production.id, ...row })) });
-
   await db.qualityTest.deleteMany({ where: { productionId: production.id } });
-  const leftTests: [TestType, TestMoment, string][] = [
-    [TestType.LEAK, TestMoment.START, "leakStart"], [TestType.LEAK, TestMoment.MID, "leakMid"],
-    [TestType.DROP, TestMoment.START, "dropStart"], [TestType.DROP, TestMoment.MID, "dropMid"],
-  ];
+  const leftTests: [TestType, TestMoment, string][] = [[TestType.LEAK, TestMoment.START, "leakStart"], [TestType.LEAK, TestMoment.MID, "leakMid"], [TestType.DROP, TestMoment.START, "dropStart"], [TestType.DROP, TestMoment.MID, "dropMid"]];
   const validResults = [TestResult.CONFORMING, TestResult.NON_CONFORMING, TestResult.NOT_PERFORMED];
-  for (const [type, moment, key] of leftTests) {
-    const value = String(formData.get(key) || "");
-    if (value && validResults.includes(value as TestResult)) await db.qualityTest.create({ data: { productionId: production.id, type, moment, result: value as TestResult } });
-    else if (finalize) throw new Error("Preencha todos os testes antes de finalizar.");
-  }
+  for (const [type, moment, key] of leftTests) { const value = String(formData.get(key) || ""); if (value && validResults.includes(value as TestResult)) await db.qualityTest.create({ data: { productionId: production.id, type, moment, result: value as TestResult } }); else if (finalize) throw new Error("Preencha todos os testes antes de finalizar."); }
 
   if (isMachine7) {
     await db.$executeRaw`INSERT INTO ProductionCavityData (productionId, rightInitialWeightG, rightMidWeightG) VALUES (${production.id}, ${rightInitialWeightG}, ${rightMidWeightG}) ON DUPLICATE KEY UPDATE rightInitialWeightG = VALUES(rightInitialWeightG), rightMidWeightG = VALUES(rightMidWeightG)`;
     await db.$executeRaw`DELETE FROM ProductionCavityTest WHERE productionId = ${production.id}`;
     const rightTests: [string, string, string][] = [["LEAK","START","leakStartRight"],["LEAK","MID","leakMidRight"],["DROP","START","dropStartRight"],["DROP","MID","dropMidRight"]];
-    for (const [type, moment, key] of rightTests) {
-      const value = String(formData.get(key) || "");
-      if (value && validResults.includes(value as TestResult)) await db.$executeRaw`INSERT INTO ProductionCavityTest (productionId, cavity, type, moment, result) VALUES (${production.id}, 'RIGHT', ${type}, ${moment}, ${value})`;
-      else if (finalize) throw new Error("Preencha todos os testes das duas cavidades antes de finalizar.");
-    }
-  } else {
-    await db.$executeRaw`DELETE FROM ProductionCavityData WHERE productionId = ${production.id}`;
-    await db.$executeRaw`DELETE FROM ProductionCavityTest WHERE productionId = ${production.id}`;
-  }
+    for (const [type, moment, key] of rightTests) { const value = String(formData.get(key) || ""); if (value && validResults.includes(value as TestResult)) await db.$executeRaw`INSERT INTO ProductionCavityTest (productionId, cavity, type, moment, result) VALUES (${production.id}, 'RIGHT', ${type}, ${moment}, ${value})`; else if (finalize) throw new Error("Preencha todos os testes das duas cavidades antes de finalizar."); }
+  } else { await db.$executeRaw`DELETE FROM ProductionCavityData WHERE productionId = ${production.id}`; await db.$executeRaw`DELETE FROM ProductionCavityTest WHERE productionId = ${production.id}`; }
 
   const action = finalize ? "FINALIZE" : existing ? "EDIT" : "CREATE";
-  await db.auditLog.create({ data: { userId: user.id, action, entity: "Production", entityId: String(production.id), details: { status } } });
-  revalidatePath("/production"); revalidatePath("/admin/productions");
-  return { ok: true, id: production.id, lot: production.productionLot, finalized: finalize };
+  await db.auditLog.create({ data: { userId: user.id, action, entity: "Production", entityId: String(production.id), details: { status, commercialLot: commercialLot?.code ?? null, internalCode } } });
+  revalidatePath("/production"); revalidatePath("/admin/productions"); revalidatePath("/commercial-lots");
+  return { ok: true, id: production.id, lot: commercialLot ? `${commercialLot.code} / ${internalCode}` : internalCode, finalized: finalize };
 }
