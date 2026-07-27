@@ -19,7 +19,7 @@ export async function saveProduction(formData: FormData) {
   const intent = String(formData.get("intent") || "draft");
   const finalize = intent === "finalize";
   if (!["draft", "finalize"].includes(intent)) throw new Error("Ação inválida.");
-  const secondWorker = finalize ? await verifySecondWorker(formData, user.id) : null;
+  const secondWorker = finalize && user.role !== "ADMIN" ? await verifySecondWorker(formData, user.id) : null;
 
   const productionId = asNum(formData.get("productionId"));
   if (productionId !== null && (!Number.isInteger(productionId) || productionId <= 0)) throw new Error("Identificador da produção inválido.");
@@ -76,6 +76,8 @@ export async function saveProduction(formData: FormData) {
   const machine = await db.machine.findFirst({ where: { id: machineId, active: true } });
   const product = await db.product.findFirst({ where: { id: productId, active: true } });
   if (!machine || !product) throw new Error("A máquina ou o produto selecionado já não está ativo.");
+  const productMachine = await db.$queryRaw<{ok:number}[]>`SELECT 1 AS ok FROM ProductMachine WHERE productId=${productId} AND machineId=${machineId} LIMIT 1`;
+  if (!productMachine.length) throw new Error("O produto selecionado não está autorizado para esta máquina.");
   const isMachine7 = machine.code === "7";
   if (finalize && isMachine7 && (rightInitialWeightG === null || rightMidWeightG === null)) throw new Error("Preencha os pesos das cavidades esquerda e direita da máquina 7.");
   if (finalize && (!product.unitsPerPackage || product.unitsPerPackage <= 0)) throw new Error("Defina as unidades por embalagem deste produto antes de finalizar a produção.");
@@ -94,14 +96,14 @@ export async function saveProduction(formData: FormData) {
     existing = await db.production.findUnique({ where: { id: productionId }, select: { id: true, status: true, operatorId: true, productionLot: true, startedAt: true } });
     if (!existing) throw new Error("A produção em aberto já não existe.");
     if (existing.status === RecordStatus.CANCELLED) throw new Error("Esta produção foi cancelada.");
-    if (existing.status === RecordStatus.FINALIZED) { const window = getShiftWindow(existing.startedAt); if (new Date() >= window.end) throw new Error("Esta produção só podia ser alterada até ao fim do turno em que foi registada."); }
+    if (existing.status === RecordStatus.FINALIZED && user.role !== "ADMIN") { const window = getShiftWindow(existing.startedAt); if (new Date() >= window.end) throw new Error("Esta produção só podia ser alterada até ao fim do turno em que foi registada."); }
   }
 
   const shift = getShift();
   const internalCode = existing?.productionLot ?? await generateProductionLot(machine.code, shift.code);
   const status = finalize || existing?.status === RecordStatus.FINALIZED ? RecordStatus.FINALIZED : RecordStatus.DRAFT;
-  const data = { machineId, productId, shiftCode: shift.code, status, initialWeightG, midWeightG, quantityProduced, observations: String(formData.get("observations") || "").trim().slice(0, 500) || null, exceptionReason: otherProductionsInShift > 0 ? (exceptionReason || null) : null, exceptionNotes: otherProductionsInShift > 0 ? (exceptionNotes || null) : null, finalizedAt: status === RecordStatus.FINALIZED ? (existing?.status === RecordStatus.FINALIZED ? undefined : new Date()) : null };
-  const production = existing ? await db.production.update({ where: { id: existing.id }, data }) : await db.production.create({ data: { ...data, operatorId: user.id, productionLot: internalCode } });
+  const data = { machineId, productId, shiftCode: existing?.status===RecordStatus.FINALIZED?undefined:shift.code, status, initialWeightG, midWeightG, quantityProduced, observations: String(formData.get("observations") || "").trim().slice(0, 500) || null, exceptionReason: otherProductionsInShift > 0 ? (exceptionReason || null) : null, exceptionNotes: otherProductionsInShift > 0 ? (exceptionNotes || null) : null, finalizedAt: status === RecordStatus.FINALIZED ? (existing?.status === RecordStatus.FINALIZED ? undefined : new Date()) : null };
+  const production = existing ? await db.production.update({ where: { id: existing.id }, data }) : await db.production.create({ data: { ...data, shiftCode:shift.code, operatorId: user.id, productionLot: internalCode } });
 
   if (commercialLot) {
     const labelCode = `${commercialLot.code} / ${internalCode}`;
