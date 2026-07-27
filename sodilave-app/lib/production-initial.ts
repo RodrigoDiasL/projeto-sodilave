@@ -34,3 +34,30 @@ export function productionToInitial(production: any, cavityData?: any, cavityTes
     },
   };
 }
+
+export function previousProductionToDefaults(production:any){
+  return {
+    machineId:production.machineId,
+    productId:production.productId,
+    productionLot:"",
+    initialWeightG:"",
+    midWeightG:"",
+    rightInitialWeightG:"",
+    rightMidWeightG:"",
+    quantityProduced:"",
+    observations:"",
+    exceptionReason:"",
+    exceptionNotes:"",
+    totalMaterialKg:"",
+    materials:production.materials.map((material:any,index:number)=>({
+      key:`previous-${production.id}-${index}`,
+      materialId:String(material.rawMaterialLot.rawMaterialId),
+      lotId:String(material.rawMaterialLotId),
+      percentage:Number(material.percentage??0),
+      quantityKg:"",
+      manualQuantity:false,
+    })),
+    tests:{},
+    inheritedFromPreviousShift:true,
+  };
+}
