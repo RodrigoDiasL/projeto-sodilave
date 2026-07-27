@@ -8,31 +8,51 @@ function isoWeek(date: Date) {
   return Math.ceil((((d.getTime() - yearStart.getTime()) / 86400000) + 1) / 7);
 }
 
+type MachineConfigRow = { majorLetter: string; minorLetter: string };
+
 export async function generateProductionLot(machineCode: string, shiftCode: string, date = new Date()) {
-  const rule = await db.productionLotRule.findFirst({ where: { active: true }, orderBy: { id: "asc" } });
-  const prefix = rule?.prefix ?? "SD";
-  const template = rule?.template ?? "{PREFIX}-{YY}{WW}-{SHIFT}-{MACHINE}-{SEQ}";
-  const dayStart = new Date(date); dayStart.setHours(0, 0, 0, 0);
-  const dayEnd = new Date(date); dayEnd.setHours(23, 59, 59, 999);
-  const count = await db.production.count({ where: { createdAt: { gte: dayStart, lte: dayEnd } } });
+  const rows = await db.$queryRaw<MachineConfigRow[]>`
+    SELECT majorLetter, minorLetter
+    FROM MachineLotConfig
+    WHERE machineId = (SELECT id FROM Machine WHERE code = ${machineCode} LIMIT 1)
+    LIMIT 1
+  `;
+  const config = rows[0] ?? { majorLetter: "A", minorLetter: "A" };
+  const weekday = date.getDay();
+  const week = String(isoWeek(date)).padStart(2, "0");
+  const year = String(date.getFullYear()).slice(-2);
+  const candidate = `${config.majorLetter}${config.minorLetter}${shiftCode}${weekday}${week}${year}m${machineCode}`;
 
-  for (let offset = 1; offset <= 9999; offset++) {
-    const sequence = count + offset;
-    const tokens: Record<string, string> = {
-      PREFIX: prefix,
-      YYYY: String(date.getFullYear()),
-      YY: String(date.getFullYear()).slice(-2),
-      MM: String(date.getMonth() + 1).padStart(2, "0"),
-      DD: String(date.getDate()).padStart(2, "0"),
-      WW: String(isoWeek(date)).padStart(2, "0"),
-      SHIFT: shiftCode,
-      MACHINE: machineCode,
-      SEQ: String(sequence).padStart(3, "0"),
-    };
-    const candidate = template.replace(/\{(\w+)\}/g, (_, key) => tokens[key] ?? key);
-    const exists = await db.production.findUnique({ where: { productionLot: candidate }, select: { id: true } });
-    if (!exists) return candidate;
+  const exists = await db.production.findUnique({ where: { productionLot: candidate }, select: { id: true } });
+  if (exists) {
+    throw new Error("Já existe uma produção com este código interno. Atualize a configuração de lote da máquina antes de criar uma nova produção.");
   }
+  return candidate;
+}
 
-  throw new Error("Não foi possível gerar um lote de produção único.");
+export async function getActiveCommercialLotForProduct(productId: number) {
+  const rows = await db.$queryRaw<{ id: number; code: string }[]>`
+    SELECT id, code FROM CommercialLot
+    WHERE productId = ${productId} AND status = 'ACTIVE'
+    ORDER BY openedAt DESC, id DESC
+    LIMIT 1
+  `;
+  return rows[0] ?? null;
+}
+
+export async function validateCommercialLotMixture(commercialLotId: number, materials: { rawMaterialLotId: number; percentage: number | null }[]) {
+  const expected = await db.$queryRaw<{ rawMaterialId: number; percentage: unknown }[]>`
+    SELECT rawMaterialId, percentage FROM CommercialLotMaterial
+    WHERE commercialLotId = ${commercialLotId}
+    ORDER BY rawMaterialId ASC
+  `;
+  const actualLots = await db.rawMaterialLot.findMany({
+    where: { id: { in: materials.map((m) => m.rawMaterialLotId) } },
+    select: { id: true, rawMaterialId: true },
+  });
+  const actual = materials
+    .map((m) => ({ rawMaterialId: actualLots.find((lot) => lot.id === m.rawMaterialLotId)?.rawMaterialId ?? 0, percentage: Number(m.percentage ?? 0) }))
+    .sort((a, b) => a.rawMaterialId - b.rawMaterialId);
+  if (expected.length !== actual.length) return false;
+  return expected.every((row, index) => row.rawMaterialId === actual[index].rawMaterialId && Number(row.percentage) === actual[index].percentage);
 }
