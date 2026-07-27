@@ -17,6 +17,13 @@ export async function getConfirmationWorkers(currentUserId?: number): Promise<Co
 }
 
 export async function verifySecondWorker(formData: FormData, currentUserId: number) {
+  const currentUser = await db.user.findUnique({
+    where: { id: currentUserId },
+    select: { role: true, active: true },
+  });
+  if (!currentUser?.active) throw new Error("O utilizador atual já não está ativo.");
+  if (currentUser.role === "ADMIN") return null;
+
   const secondWorkerId = Number(formData.get("secondWorkerId") || 0);
   const secondWorkerPin = String(formData.get("secondWorkerPin") || "").trim();
   if (!secondWorkerId) throw new Error("Selecione o colega que está a trabalhar no turno.");
