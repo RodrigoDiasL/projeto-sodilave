@@ -119,4 +119,8 @@ SELECT `id`,'A','A' FROM `Machine`
 ON DUPLICATE KEY UPDATE `machineId` = VALUES(`machineId`);
 
 INSERT IGNORE INTO `ProductMachine` (`productId`,`machineId`)
-SELECT p.`id`,m.`id` FROM `Product` p CROSS JOIN `Machine` m WHERE m.`active` = 1;
+SELECT p.`id`,m.`id`
+FROM `Product` p
+CROSS JOIN `Machine` m
+WHERE m.`active` = 1
+  AND NOT EXISTS (SELECT 1 FROM `ProductMachine` pm WHERE pm.`productId` = p.`id`);
