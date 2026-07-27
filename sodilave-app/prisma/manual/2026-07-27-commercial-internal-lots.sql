@@ -94,6 +94,16 @@ CREATE TABLE IF NOT EXISTS `ProductionLotAssociation` (
   CONSTRAINT `ProductionLotAssociation_commercialLotId_fkey` FOREIGN KEY (`commercialLotId`) REFERENCES `CommercialLot`(`id`) ON DELETE RESTRICT ON UPDATE CASCADE
 ) DEFAULT CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci;
 
+CREATE TABLE IF NOT EXISTS `RecordConfirmation` (
+  `entity` VARCHAR(64) NOT NULL,
+  `entityId` INT NOT NULL,
+  `confirmedById` INT NOT NULL,
+  `confirmedAt` DATETIME(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3),
+  PRIMARY KEY (`entity`,`entityId`),
+  KEY `RecordConfirmation_confirmedById_idx` (`confirmedById`),
+  CONSTRAINT `RecordConfirmation_confirmedById_fkey` FOREIGN KEY (`confirmedById`) REFERENCES `User`(`id`) ON DELETE RESTRICT ON UPDATE CASCADE
+) DEFAULT CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci;
+
 INSERT INTO `MachineLotConfig` (`machineId`,`majorLetter`,`minorLetter`)
 SELECT `id`,'A','A' FROM `Machine`
 ON DUPLICATE KEY UPDATE `machineId` = VALUES(`machineId`);
