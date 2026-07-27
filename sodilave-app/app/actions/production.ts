@@ -6,6 +6,7 @@ import { getShift, getShiftWindow } from "@/lib/shift";
 import { generateProductionLot, getActiveCommercialLotForProduct, validateCommercialLotMixture } from "@/lib/lot";
 import { RecordStatus, TestMoment, TestResult, TestType } from "@prisma/client";
 import { assertMachineRunning } from "@/lib/active-machines";
+import { saveRecordConfirmation, verifySecondWorker } from "@/lib/second-worker-confirmation";
 
 const asNum = (v: FormDataEntryValue | null) => v === null || v === "" ? null : Number(v);
 const finiteInRange = (value: number | null, min: number, max: number, label: string, integer = false) => {
@@ -18,6 +19,7 @@ export async function saveProduction(formData: FormData) {
   const intent = String(formData.get("intent") || "draft");
   const finalize = intent === "finalize";
   if (!["draft", "finalize"].includes(intent)) throw new Error("Ação inválida.");
+  const secondWorker = finalize ? await verifySecondWorker(formData, user.id) : null;
 
   const productionId = asNum(formData.get("productionId"));
   if (productionId !== null && (!Number.isInteger(productionId) || productionId <= 0)) throw new Error("Identificador da produção inválido.");
@@ -120,8 +122,9 @@ export async function saveProduction(formData: FormData) {
     for (const [type, moment, key] of rightTests) { const value = String(formData.get(key) || ""); if (value && validResults.includes(value as TestResult)) await db.$executeRaw`INSERT INTO ProductionCavityTest (productionId, cavity, type, moment, result) VALUES (${production.id}, 'RIGHT', ${type}, ${moment}, ${value})`; else if (finalize) throw new Error("Preencha todos os testes das duas cavidades antes de finalizar."); }
   } else { await db.$executeRaw`DELETE FROM ProductionCavityData WHERE productionId = ${production.id}`; await db.$executeRaw`DELETE FROM ProductionCavityTest WHERE productionId = ${production.id}`; }
 
+  if (finalize && secondWorker) await saveRecordConfirmation("Production", production.id, secondWorker.id);
   const action = finalize ? "FINALIZE" : existing ? "EDIT" : "CREATE";
-  await db.auditLog.create({ data: { userId: user.id, action, entity: "Production", entityId: String(production.id), details: { status, commercialLot: commercialLot?.code ?? null, internalCode } } });
+  await db.auditLog.create({ data: { userId: user.id, action, entity: "Production", entityId: String(production.id), details: { status, commercialLot: commercialLot?.code ?? null, internalCode, secondWorkerId: secondWorker?.id ?? null, secondWorkerName: secondWorker?.name ?? null } } });
   revalidatePath("/production"); revalidatePath("/admin/productions"); revalidatePath("/commercial-lots");
   return { ok: true, id: production.id, lot: commercialLot ? `${commercialLot.code} / ${internalCode}` : internalCode, finalized: finalize };
 }
