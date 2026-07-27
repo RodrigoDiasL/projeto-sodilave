@@ -1,9 +1,10 @@
 import { db } from "@/lib/db";
 import { getActiveWeeklyMachineIds } from "@/lib/active-machines";
+import { getConfirmationWorkers } from "@/lib/second-worker-confirmation";
 
 export async function getProductionFormData() {
   const runningMachineIds = await getActiveWeeklyMachineIds();
-  const [machineRows, productRows, rawMaterialRows, lotRows] = await Promise.all([
+  const [machineRows, productRows, rawMaterialRows, lotRows, workers] = await Promise.all([
     db.machine.findMany({ where: { active: true, id: { in: runningMachineIds } }, orderBy: { code: "asc" } }),
     db.product.findMany({ where: { active: true }, orderBy: { name: "asc" } }),
     db.rawMaterial.findMany({ where: { active: true }, orderBy: { name: "asc" } }),
@@ -12,6 +13,7 @@ export async function getProductionFormData() {
       include: { rawMaterial: true },
       orderBy: { receivedAt: "asc" },
     }),
+    getConfirmationWorkers(),
   ]);
 
   return {
@@ -24,5 +26,6 @@ export async function getProductionFormData() {
       quantityAvailable: String(lot.quantityAvailable),
       rawMaterial: { id: lot.rawMaterial.id, name: lot.rawMaterial.name },
     })),
+    workers,
   };
 }
