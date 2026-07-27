@@ -11,14 +11,14 @@ type CavityDataRow = { rightInitialWeightG: unknown; rightMidWeightG: unknown };
 type CavityTestRow = { type: string; moment: string; result: string };
 
 export default async function EditProductionPage({ params }: { params: Promise<{ id: string }> }) {
-  await requireUser();
+  const user = await requireUser();
   const { id } = await params;
   const production = await db.production.findUnique({
     where: { id: Number(id) },
     include: { machine: true, materials: { include: { rawMaterialLot: true } }, tests: true },
   });
   if (!production || production.status === "CANCELLED") notFound();
-  if (production.status === "FINALIZED") {
+  if (production.status === "FINALIZED" && user.role !== "ADMIN") {
     const { getShiftWindow } = await import("@/lib/shift");
     if (new Date() >= getShiftWindow(production.startedAt).end) notFound();
   }
@@ -38,8 +38,8 @@ export default async function EditProductionPage({ params }: { params: Promise<{
   const displayLot = association[0]?.labelCode ?? production.productionLot;
 
   return <>
-    <PageIntro title={`${production.status === "FINALIZED" ? "Corrigir" : "Continuar"} produção ${displayLot}`} subtitle="As correções de produções finalizadas só são permitidas até ao fim do respetivo turno." />
+    <PageIntro title={`${production.status === "FINALIZED" ? "Corrigir" : "Continuar"} produção ${displayLot}`} subtitle={user.role === "ADMIN" ? "O administrador pode concluir ou corrigir este registo sem confirmação de um colega." : "As correções de produções finalizadas só são permitidas até ao fim do respetivo turno."} />
     <ProductionForm {...data} initial={initial} />
-    <SecondWorkerConfirmationPortals workers={data.workers} selector="form.machine-production-form" />
+    <SecondWorkerConfirmationPortals workers={data.workers} selector="form.machine-production-form" disabled={user.role === "ADMIN"} />
   </>;
 }
