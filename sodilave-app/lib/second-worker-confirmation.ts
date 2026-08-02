@@ -3,6 +3,7 @@ import { Prisma } from "@prisma/client";
 import { db } from "@/lib/db";
 
 export type ConfirmationWorker = { id: number; name: string };
+type ConfirmationClient = Pick<Prisma.TransactionClient, "$executeRaw">;
 
 export async function getConfirmationWorkers(currentUserId?: number): Promise<ConfirmationWorker[]> {
   const users = await db.user.findMany({
@@ -41,7 +42,7 @@ export async function verifySecondWorker(formData: FormData, currentUserId: numb
   return { id: worker.id, name: worker.name };
 }
 
-export async function saveRecordConfirmation(entity: string, entityId: number, confirmedById: number, client: Prisma.TransactionClient | typeof db = db) {
+export async function saveRecordConfirmation(entity: string, entityId: number, confirmedById: number, client: ConfirmationClient = db) {
   await client.$executeRaw`
     INSERT INTO RecordConfirmation (entity, entityId, confirmedById, confirmedAt)
     VALUES (${entity}, ${entityId}, ${confirmedById}, NOW(3))
