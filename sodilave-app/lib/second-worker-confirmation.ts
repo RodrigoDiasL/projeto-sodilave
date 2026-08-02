@@ -1,4 +1,5 @@
 import bcrypt from "bcryptjs";
+import { Prisma } from "@prisma/client";
 import { db } from "@/lib/db";
 
 export type ConfirmationWorker = { id: number; name: string };
@@ -40,8 +41,8 @@ export async function verifySecondWorker(formData: FormData, currentUserId: numb
   return { id: worker.id, name: worker.name };
 }
 
-export async function saveRecordConfirmation(entity: string, entityId: number, confirmedById: number) {
-  await db.$executeRaw`
+export async function saveRecordConfirmation(entity: string, entityId: number, confirmedById: number, client: Prisma.TransactionClient | typeof db = db) {
+  await client.$executeRaw`
     INSERT INTO RecordConfirmation (entity, entityId, confirmedById, confirmedAt)
     VALUES (${entity}, ${entityId}, ${confirmedById}, NOW(3))
     ON DUPLICATE KEY UPDATE confirmedById = VALUES(confirmedById), confirmedAt = VALUES(confirmedAt)
