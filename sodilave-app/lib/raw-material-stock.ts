@@ -1,7 +1,7 @@
 import { LotStatus, Prisma } from "@prisma/client";
 
 type StockClient = Prisma.TransactionClient;
-type Consumption = { rawMaterialLotId: number; quantityKg: number | Prisma.Decimal | null };
+export type Consumption = { rawMaterialLotId: number; quantityKg: number | Prisma.Decimal | null };
 type LockedLot = { id: number; quantityAvailable: unknown; status: LotStatus; supplierLot: string };
 
 function roundKg(value: number) {
@@ -16,6 +16,27 @@ function aggregate(rows: Consumption[]) {
     totals.set(row.rawMaterialLotId, roundKg((totals.get(row.rawMaterialLotId) ?? 0) + quantity));
   }
   return totals;
+}
+
+export async function getRecordedProductionStock(tx: StockClient, productionId: number) {
+  return tx.$queryRaw<Consumption[]>(Prisma.sql`
+    SELECT rawMaterialLotId, quantityKg
+    FROM ProductionStockConsumption
+    WHERE productionId=${productionId}
+    FOR UPDATE
+  `);
+}
+
+export async function replaceRecordedProductionStock(tx: StockClient, productionId: number, rows: Consumption[]) {
+  const totals = aggregate(rows);
+  await tx.$executeRaw`DELETE FROM ProductionStockConsumption WHERE productionId=${productionId}`;
+  for (const [rawMaterialLotId, quantityKg] of totals) {
+    if (quantityKg <= 0) continue;
+    await tx.$executeRaw`
+      INSERT INTO ProductionStockConsumption (productionId, rawMaterialLotId, quantityKg)
+      VALUES (${productionId}, ${rawMaterialLotId}, ${quantityKg})
+    `;
+  }
 }
 
 export async function reconcileProductionStock(tx: StockClient, previousRows: Consumption[], nextRows: Consumption[]) {
