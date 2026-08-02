@@ -4,14 +4,24 @@ import { redirect } from "next/navigation";
 import { db } from "@/lib/db";
 
 const COOKIE = "sodilave_session";
-const secret = new TextEncoder().encode(process.env.SESSION_SECRET || "dev-only-change-me");
+const configuredSecret = process.env.SESSION_SECRET;
+if (process.env.NODE_ENV === "production" && (!configuredSecret || configuredSecret.length < 32)) {
+  throw new Error("SESSION_SECRET é obrigatório em produção e deve ter pelo menos 32 caracteres.");
+}
+const secret = new TextEncoder().encode(configuredSecret || "dev-only-change-me");
 
 type SessionPayload = { userId: number; role: "ADMIN" | "PRODUCTION_MANAGER" | "AUDITOR" | "OPERATOR"; name: string };
 
 export async function createSession(payload: SessionPayload) {
   const token = await new SignJWT(payload).setProtectedHeader({ alg: "HS256" }).setIssuedAt().setExpirationTime("12h").sign(secret);
   const jar = await cookies();
-  jar.set(COOKIE, token, { httpOnly: true, sameSite: "lax", secure: process.env.NODE_ENV === "production", path: "/", maxAge: 60 * 60 * 12 });
+  jar.set(COOKIE, token, {
+    httpOnly: true,
+    sameSite: "lax",
+    secure: process.env.NODE_ENV === "production",
+    path: "/",
+    maxAge: 60 * 60 * 12,
+  });
 }
 
 export async function destroySession() {
@@ -23,9 +33,12 @@ export async function getSession(): Promise<SessionPayload | null> {
   try {
     const token = (await cookies()).get(COOKIE)?.value;
     if (!token) return null;
-    const { payload } = await jwtVerify(token, secret);
+    const { payload } = await jwtVerify(token, secret, { algorithms: ["HS256"] });
+    if (!Number.isInteger(payload.userId) || typeof payload.role !== "string" || typeof payload.name !== "string") return null;
     return payload as SessionPayload;
-  } catch { return null; }
+  } catch {
+    return null;
+  }
 }
 
 export async function requireUser() {
