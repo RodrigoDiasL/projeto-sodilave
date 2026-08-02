@@ -35,24 +35,44 @@ export async function getActiveCommercialLotForProduct(productId: number) {
     SELECT id, code FROM CommercialLot
     WHERE productId = ${productId} AND status = 'ACTIVE'
     ORDER BY openedAt DESC, id DESC
-    LIMIT 1
+    LIMIT 2
   `;
+  if (rows.length > 1) {
+    throw new Error("Existem vários lotes comerciais ativos para este produto. Feche os lotes duplicados antes de finalizar a produção.");
+  }
   return rows[0] ?? null;
 }
 
 export async function validateCommercialLotMixture(commercialLotId: number, materials: { rawMaterialLotId: number; percentage: number | null }[]) {
-  const expected = await db.$queryRaw<{ rawMaterialId: number; percentage: unknown }[]>`
+  const expectedRows = await db.$queryRaw<{ rawMaterialId: number; percentage: unknown }[]>`
     SELECT rawMaterialId, percentage FROM CommercialLotMaterial
     WHERE commercialLotId = ${commercialLotId}
     ORDER BY rawMaterialId ASC
   `;
+
+  const lotIds = [...new Set(materials.map((m) => m.rawMaterialLotId))];
   const actualLots = await db.rawMaterialLot.findMany({
-    where: { id: { in: materials.map((m) => m.rawMaterialLotId) } },
+    where: { id: { in: lotIds } },
     select: { id: true, rawMaterialId: true },
   });
-  const actual = materials
-    .map((m) => ({ rawMaterialId: actualLots.find((lot) => lot.id === m.rawMaterialLotId)?.rawMaterialId ?? 0, percentage: Number(m.percentage ?? 0) }))
-    .sort((a, b) => a.rawMaterialId - b.rawMaterialId);
-  if (expected.length !== actual.length) return false;
-  return expected.every((row, index) => row.rawMaterialId === actual[index].rawMaterialId && Number(row.percentage) === actual[index].percentage);
+  if (actualLots.length !== lotIds.length) return false;
+
+  const expected = new Map<number, number>();
+  for (const row of expectedRows) {
+    expected.set(row.rawMaterialId, (expected.get(row.rawMaterialId) ?? 0) + Number(row.percentage));
+  }
+
+  const actual = new Map<number, number>();
+  for (const material of materials) {
+    const lot = actualLots.find((row) => row.id === material.rawMaterialLotId);
+    if (!lot) return false;
+    actual.set(lot.rawMaterialId, (actual.get(lot.rawMaterialId) ?? 0) + Number(material.percentage ?? 0));
+  }
+
+  if (expected.size !== actual.size) return false;
+  for (const [rawMaterialId, percentage] of expected) {
+    const actualPercentage = actual.get(rawMaterialId);
+    if (actualPercentage === undefined || Math.abs(actualPercentage - percentage) > 0.0001) return false;
+  }
+  return true;
 }
