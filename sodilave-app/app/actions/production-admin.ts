@@ -4,7 +4,7 @@ import { Prisma, RecordStatus } from "@prisma/client";
 import { revalidatePath } from "next/cache";
 import { requireAdmin } from "@/lib/auth";
 import { db } from "@/lib/db";
-import { reconcileProductionStock } from "@/lib/raw-material-stock";
+import { getRecordedProductionStock, reconcileProductionStock, replaceRecordedProductionStock } from "@/lib/raw-material-stock";
 
 export async function cancelProduction(formData: FormData) {
   const admin = await requireAdmin();
@@ -19,14 +19,12 @@ export async function cancelProduction(formData: FormData) {
     if (!production) throw new Error("A produção já não existe.");
     if (production.status === RecordStatus.CANCELLED) throw new Error("A produção já se encontra cancelada.");
 
-    const materials = production.status === RecordStatus.FINALIZED
-      ? await tx.productionMaterial.findMany({
-          where: { productionId: id },
-          select: { rawMaterialLotId: true, quantityKg: true },
-        })
-      : [];
+    const recordedStock = await getRecordedProductionStock(tx, id);
+    if (recordedStock.length) {
+      await reconcileProductionStock(tx, recordedStock, []);
+      await replaceRecordedProductionStock(tx, id, []);
+    }
 
-    if (materials.length) await reconcileProductionStock(tx, materials, []);
     await tx.production.update({
       where: { id },
       data: { status: RecordStatus.CANCELLED, finalizedAt: null },
@@ -37,7 +35,7 @@ export async function cancelProduction(formData: FormData) {
         action: "CANCEL",
         entity: "Production",
         entityId: String(id),
-        details: { stockRestored: materials.length > 0 },
+        details: { stockRestored: recordedStock.length > 0 },
       },
     });
   });
