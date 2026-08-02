@@ -32,11 +32,13 @@ export function ValidFieldHighlighter() {
   useEffect(() => {
     const onFieldChange = (event: Event) => refreshField(event.target as Element);
     const onInvalid = (event: Event) => refreshField(event.target as Element);
+    const onClick = () => window.setTimeout(() => refreshAll(), 0);
 
     refreshAll();
     document.addEventListener("input", onFieldChange, true);
     document.addEventListener("change", onFieldChange, true);
     document.addEventListener("invalid", onInvalid, true);
+    document.addEventListener("click", onClick, true);
 
     const observer = new MutationObserver((mutations) => {
       for (const mutation of mutations) {
@@ -53,6 +55,7 @@ export function ValidFieldHighlighter() {
       document.removeEventListener("input", onFieldChange, true);
       document.removeEventListener("change", onFieldChange, true);
       document.removeEventListener("invalid", onInvalid, true);
+      document.removeEventListener("click", onClick, true);
       observer.disconnect();
     };
   }, []);
