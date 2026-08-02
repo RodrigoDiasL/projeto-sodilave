@@ -1,32 +1,108 @@
 "use server";
+
+import { Prisma, RecordStatus, TestMoment, TestResult, TestType } from "@prisma/client";
 import { revalidatePath } from "next/cache";
 import { db } from "@/lib/db";
 import { requireUser } from "@/lib/auth";
 import { getShift, getShiftWindow } from "@/lib/shift";
 import { generateProductionLot, getActiveCommercialLotForProduct, validateCommercialLotMixture } from "@/lib/lot";
-import { RecordStatus, TestMoment, TestResult, TestType } from "@prisma/client";
 import { assertMachineRunning } from "@/lib/active-machines";
 import { saveRecordConfirmation, verifySecondWorker } from "@/lib/second-worker-confirmation";
+import { reconcileProductionStock } from "@/lib/raw-material-stock";
 
-const asNum = (v: FormDataEntryValue | null) => v === null || v === "" ? null : Number(v);
+const asNum = (value: FormDataEntryValue | null) => value === null || value === "" ? null : Number(value);
+const validResults = [TestResult.CONFORMING, TestResult.NON_CONFORMING, TestResult.NOT_PERFORMED];
+
 const finiteInRange = (value: number | null, min: number, max: number, label: string, integer = false) => {
   if (value === null) return;
-  if (!Number.isFinite(value) || value < min || value > max || (integer && !Number.isInteger(value))) throw new Error(`${label} tem um valor inválido.`);
+  if (!Number.isFinite(value) || value < min || value > max || (integer && !Number.isInteger(value))) {
+    throw new Error(`${label} tem um valor inválido.`);
+  }
 };
+
+type ExistingProduction = {
+  id: number;
+  status: RecordStatus;
+  operatorId: number;
+  productionLot: string;
+  startedAt: Date;
+  shiftCode: string;
+  productId: number;
+};
+
+type TestInput = { type: TestType; moment: TestMoment; key: string };
+type ParsedTest = { type: TestType; moment: TestMoment; result: TestResult };
+type ParsedRightTest = { type: string; moment: string; result: TestResult };
+
+function parseTests(formData: FormData, inputs: TestInput[], required: boolean) {
+  const rows: ParsedTest[] = [];
+  for (const input of inputs) {
+    const value = String(formData.get(input.key) || "");
+    if (validResults.includes(value as TestResult)) {
+      rows.push({ type: input.type, moment: input.moment, result: value as TestResult });
+    } else if (required) {
+      throw new Error("Preencha todos os testes antes de finalizar.");
+    }
+  }
+  return rows;
+}
+
+function parseRightTests(formData: FormData, required: boolean) {
+  const inputs = [
+    { type: "LEAK", moment: "START", key: "leakStartRight" },
+    { type: "LEAK", moment: "MID", key: "leakMidRight" },
+    { type: "DROP", moment: "START", key: "dropStartRight" },
+    { type: "DROP", moment: "MID", key: "dropMidRight" },
+  ];
+  const rows: ParsedRightTest[] = [];
+  for (const input of inputs) {
+    const value = String(formData.get(input.key) || "");
+    if (validResults.includes(value as TestResult)) {
+      rows.push({ type: input.type, moment: input.moment, result: value as TestResult });
+    } else if (required) {
+      throw new Error("Preencha todos os testes das duas cavidades antes de finalizar.");
+    }
+  }
+  return rows;
+}
 
 export async function saveProduction(formData: FormData) {
   const user = await requireUser();
   const intent = String(formData.get("intent") || "draft");
   const finalize = intent === "finalize";
   if (!["draft", "finalize"].includes(intent)) throw new Error("Ação inválida.");
-  const secondWorker = finalize && user.role !== "ADMIN" ? await verifySecondWorker(formData, user.id) : null;
 
   const productionId = asNum(formData.get("productionId"));
-  if (productionId !== null && (!Number.isInteger(productionId) || productionId <= 0)) throw new Error("Identificador da produção inválido.");
+  if (productionId !== null && (!Number.isInteger(productionId) || productionId <= 0)) {
+    throw new Error("Identificador da produção inválido.");
+  }
+
+  let existing: ExistingProduction | null = null;
+  if (productionId) {
+    existing = await db.production.findUnique({
+      where: { id: productionId },
+      select: { id: true, status: true, operatorId: true, productionLot: true, startedAt: true, shiftCode: true, productId: true },
+    });
+    if (!existing) throw new Error("A produção em aberto já não existe.");
+    if (existing.status === RecordStatus.CANCELLED) throw new Error("Esta produção foi cancelada.");
+    if (existing.status === RecordStatus.FINALIZED && !finalize) {
+      throw new Error("Uma produção finalizada só pode ser corrigida através de ‘Finalizar e registar produção’.");
+    }
+    if (existing.status === RecordStatus.FINALIZED && user.role !== "ADMIN") {
+      const window = getShiftWindow(existing.startedAt);
+      if (new Date() >= window.end) throw new Error("Esta produção só podia ser alterada até ao fim do turno em que foi registada.");
+    }
+  }
+
+  const secondWorker = finalize && user.role !== "ADMIN" ? await verifySecondWorker(formData, user.id) : null;
   const machineId = asNum(formData.get("machineId"));
   const productId = asNum(formData.get("productId"));
-  if (machineId === null || productId === null) throw new Error("Para guardar o rascunho, selecione pelo menos a máquina e o produto.");
-  if (!Number.isInteger(machineId) || machineId <= 0 || !Number.isInteger(productId) || productId <= 0) throw new Error("Máquina e produto têm valores inválidos.");
+  if (machineId === null || productId === null) {
+    throw new Error("Para guardar o rascunho, selecione pelo menos a máquina e o produto.");
+  }
+  if (!Number.isInteger(machineId) || machineId <= 0 || !Number.isInteger(productId) || productId <= 0) {
+    throw new Error("Máquina e produto têm valores inválidos.");
+  }
 
   const exceptionReason = String(formData.get("exceptionReason") || "").trim();
   const exceptionNotes = String(formData.get("exceptionNotes") || "").trim().slice(0, 500);
@@ -46,87 +122,228 @@ export async function saveProduction(formData: FormData) {
   finiteInRange(quantityProduced, 0, 10000000, "A quantidade produzida", true);
 
   const materials: { rawMaterialLotId: number; percentage: number | null; quantityKg: number | null }[] = [];
-  for (let i = 0; i < 8; i++) {
-    const rawMaterialLotId = asNum(formData.get(`materialLotId_${i}`));
-    const percentage = asNum(formData.get(`percentage_${i}`));
-    const quantityKg = asNum(formData.get(`quantityKg_${i}`));
+  for (let index = 0; index < 8; index++) {
+    const rawMaterialLotId = asNum(formData.get(`materialLotId_${index}`));
+    const percentage = asNum(formData.get(`percentage_${index}`));
+    const quantityKg = asNum(formData.get(`quantityKg_${index}`));
     if (!rawMaterialLotId) continue;
-    if (!Number.isInteger(rawMaterialLotId) || rawMaterialLotId <= 0) { if (finalize) throw new Error("Um dos lotes selecionados é inválido."); continue; }
+    if (!Number.isInteger(rawMaterialLotId) || rawMaterialLotId <= 0) {
+      if (finalize) throw new Error("Um dos lotes selecionados é inválido.");
+      continue;
+    }
     if (percentage !== null) finiteInRange(percentage, 0, 100, "A percentagem");
     if (quantityKg !== null) finiteInRange(quantityKg, 0, 999999, "A quantidade de matéria-prima");
     materials.push({ rawMaterialLotId, percentage, quantityKg });
   }
 
+  if (new Set(materials.map((row) => row.rawMaterialLotId)).size !== materials.length) {
+    throw new Error("O mesmo lote de matéria-prima não pode ser selecionado mais do que uma vez.");
+  }
+
   if (finalize) {
     if (materials.length === 0) throw new Error("Adicione pelo menos um lote de matéria-prima.");
-    if (materials.some((row) => row.percentage === null || row.percentage! < 5 || row.percentage! % 5 !== 0)) throw new Error("As percentagens devem variar de 5% em 5%.");
-    if (materials.reduce((sum, row) => sum + (row.percentage ?? 0), 0) !== 100) throw new Error("A soma das percentagens da mistura tem de ser 100%.");
-    if (materials.some((row) => row.quantityKg === null || row.quantityKg! <= 0)) throw new Error("Introduza a quantidade total de matéria-prima para calcular as quantidades da mistura.");
+    if (materials.some((row) => row.percentage === null || row.percentage < 5 || row.percentage % 5 !== 0)) {
+      throw new Error("As percentagens devem variar de 5% em 5%.");
+    }
+    if (materials.reduce((sum, row) => sum + (row.percentage ?? 0), 0) !== 100) {
+      throw new Error("A soma das percentagens da mistura tem de ser 100%.");
+    }
+    if (materials.some((row) => row.quantityKg === null || row.quantityKg <= 0)) {
+      throw new Error("Introduza a quantidade total de matéria-prima para calcular as quantidades da mistura.");
+    }
     if (initialWeightG === null || midWeightG === null) throw new Error("Preencha os pesos do início e do meio do turno.");
     if (quantityProduced === null) throw new Error("Introduza a quantidade produzida.");
   }
 
-  const lotRows = materials.length ? await db.rawMaterialLot.findMany({ where: { id: { in: materials.map((row) => row.rawMaterialLotId) }, status: "ACTIVE" } }) : [];
-  if (finalize && lotRows.length !== materials.length) throw new Error("Um dos lotes selecionados já não está disponível.");
-  for (const material of materials) {
-    const lotRow = lotRows.find((lot) => lot.id === material.rawMaterialLotId);
-    if (finalize && lotRow && material.quantityKg !== null && material.quantityKg > Number(lotRow.quantityAvailable)) throw new Error(`A quantidade excede o stock disponível do lote ${lotRow.supplierLot}.`);
-  }
+  const uniqueLotIds = [...new Set(materials.map((row) => row.rawMaterialLotId))];
+  const lotRows = uniqueLotIds.length ? await db.rawMaterialLot.findMany({ where: { id: { in: uniqueLotIds } } }) : [];
+  if (lotRows.length !== uniqueLotIds.length) throw new Error("Um dos lotes selecionados já não existe.");
 
   const machine = await db.machine.findFirst({ where: { id: machineId, active: true } });
   const product = await db.product.findFirst({ where: { id: productId, active: true } });
   if (!machine || !product) throw new Error("A máquina ou o produto selecionado já não está ativo.");
-  const productMachine = await db.$queryRaw<{ok:number}[]>`SELECT 1 AS ok FROM ProductMachine WHERE productId=${productId} AND machineId=${machineId} LIMIT 1`;
+  const productMachine = await db.$queryRaw<{ ok: number }[]>`
+    SELECT 1 AS ok FROM ProductMachine WHERE productId=${productId} AND machineId=${machineId} LIMIT 1
+  `;
   if (!productMachine.length) throw new Error("O produto selecionado não está autorizado para esta máquina.");
+
   const isMachine7 = machine.code === "7";
-  if (finalize && isMachine7 && (rightInitialWeightG === null || rightMidWeightG === null)) throw new Error("Preencha os pesos das cavidades esquerda e direita da máquina 7.");
-  if (finalize && (!product.unitsPerPackage || product.unitsPerPackage <= 0)) throw new Error("Defina as unidades por embalagem deste produto antes de finalizar a produção.");
-  await assertMachineRunning(machineId);
-
-  const commercialLot = await getActiveCommercialLotForProduct(productId);
-  if (finalize && !commercialLot) throw new Error("Não existe um lote comercial ativo para este produto. Peça a um administrador ou ao responsável de produção para o criar.");
-  if (finalize && commercialLot && !(await validateCommercialLotMixture(commercialLot.id, materials))) throw new Error(`A mistura introduzida não corresponde à mistura definida no lote comercial ${commercialLot.code}.`);
-
-  const shiftWindow = getShiftWindow();
-  const otherProductionsInShift = await db.production.count({ where: { machineId, startedAt: { gte: shiftWindow.start, lt: shiftWindow.end }, status: { not: RecordStatus.CANCELLED }, ...(productionId ? { id: { not: productionId } } : {}) } });
-  if (finalize && otherProductionsInShift > 0 && !exceptionReason) throw new Error("Já existe uma produção desta máquina neste turno. Indique o motivo da produção adicional.");
-
-  let existing: { id: number; status: RecordStatus; operatorId: number; productionLot: string; startedAt: Date } | null = null;
-  if (productionId) {
-    existing = await db.production.findUnique({ where: { id: productionId }, select: { id: true, status: true, operatorId: true, productionLot: true, startedAt: true } });
-    if (!existing) throw new Error("A produção em aberto já não existe.");
-    if (existing.status === RecordStatus.CANCELLED) throw new Error("Esta produção foi cancelada.");
-    if (existing.status === RecordStatus.FINALIZED && user.role !== "ADMIN") { const window = getShiftWindow(existing.startedAt); if (new Date() >= window.end) throw new Error("Esta produção só podia ser alterada até ao fim do turno em que foi registada."); }
+  if (finalize && isMachine7 && (rightInitialWeightG === null || rightMidWeightG === null)) {
+    throw new Error("Preencha os pesos das cavidades esquerda e direita da máquina 7.");
+  }
+  if (finalize && (!product.unitsPerPackage || product.unitsPerPackage <= 0)) {
+    throw new Error("Defina as unidades por embalagem deste produto antes de finalizar a produção.");
   }
 
-  const shift = getShift();
+  if (!existing || (user.role !== "ADMIN" && existing.status !== RecordStatus.FINALIZED)) {
+    await assertMachineRunning(machineId);
+  }
+
+  const previousAssociation = productionId ? await db.$queryRaw<{ commercialLotId: number; code: string; productId: number }[]>`
+    SELECT pla.commercialLotId, cl.code, cl.productId
+    FROM ProductionLotAssociation pla
+    INNER JOIN CommercialLot cl ON cl.id=pla.commercialLotId
+    WHERE pla.productionId=${productionId}
+    LIMIT 1
+  ` : [];
+  const associatedLot = previousAssociation[0];
+  const commercialLot = associatedLot && associatedLot.productId === productId
+    ? { id: associatedLot.commercialLotId, code: associatedLot.code }
+    : await getActiveCommercialLotForProduct(productId);
+
+  if (finalize && !commercialLot) {
+    throw new Error("Não existe um lote comercial ativo para este produto. Peça a um administrador ou ao responsável de produção para o criar.");
+  }
+  if (finalize && commercialLot && !(await validateCommercialLotMixture(commercialLot.id, materials))) {
+    throw new Error(`A mistura introduzida não corresponde à mistura definida no lote comercial ${commercialLot.code}.`);
+  }
+
+  const recordWindow = existing ? getShiftWindow(existing.startedAt) : getShiftWindow();
+  const otherProductionsInShift = await db.production.count({
+    where: {
+      machineId,
+      startedAt: { gte: recordWindow.start, lt: recordWindow.end },
+      status: { not: RecordStatus.CANCELLED },
+      ...(productionId ? { id: { not: productionId } } : {}),
+    },
+  });
+  if (finalize && otherProductionsInShift > 0 && !exceptionReason) {
+    throw new Error("Já existe uma produção desta máquina neste turno. Indique o motivo da produção adicional.");
+  }
+
+  const leftTests = parseTests(formData, [
+    { type: TestType.LEAK, moment: TestMoment.START, key: "leakStart" },
+    { type: TestType.LEAK, moment: TestMoment.MID, key: "leakMid" },
+    { type: TestType.DROP, moment: TestMoment.START, key: "dropStart" },
+    { type: TestType.DROP, moment: TestMoment.MID, key: "dropMid" },
+  ], finalize);
+  const rightTests = isMachine7 ? parseRightTests(formData, finalize) : [];
+
+  const shift = existing ? { code: existing.shiftCode } : getShift();
   const internalCode = existing?.productionLot ?? await generateProductionLot(machine.code, shift.code);
   const status = finalize || existing?.status === RecordStatus.FINALIZED ? RecordStatus.FINALIZED : RecordStatus.DRAFT;
-  const data = { machineId, productId, shiftCode: existing?.status===RecordStatus.FINALIZED?undefined:shift.code, status, initialWeightG, midWeightG, quantityProduced, observations: String(formData.get("observations") || "").trim().slice(0, 500) || null, exceptionReason: otherProductionsInShift > 0 ? (exceptionReason || null) : null, exceptionNotes: otherProductionsInShift > 0 ? (exceptionNotes || null) : null, finalizedAt: status === RecordStatus.FINALIZED ? (existing?.status === RecordStatus.FINALIZED ? undefined : new Date()) : null };
-  const production = existing ? await db.production.update({ where: { id: existing.id }, data }) : await db.production.create({ data: { ...data, shiftCode:shift.code, operatorId: user.id, productionLot: internalCode } });
 
-  if (commercialLot) {
-    const labelCode = `${commercialLot.code} / ${internalCode}`;
-    await db.$executeRaw`INSERT INTO ProductionLotAssociation (productionId, commercialLotId, internalCode, labelCode) VALUES (${production.id}, ${commercialLot.id}, ${internalCode}, ${labelCode}) ON DUPLICATE KEY UPDATE commercialLotId=VALUES(commercialLotId), internalCode=VALUES(internalCode), labelCode=VALUES(labelCode)`;
-  }
+  const production = await db.$transaction(async (tx) => {
+    let lockedExisting: ExistingProduction | null = existing;
+    if (productionId) {
+      const locked = await tx.$queryRaw<ExistingProduction[]>(Prisma.sql`
+        SELECT id, status, operatorId, productionLot, startedAt, shiftCode, productId
+        FROM Production
+        WHERE id=${productionId}
+        FOR UPDATE
+      `);
+      lockedExisting = locked[0] ?? null;
+      if (!lockedExisting) throw new Error("A produção já não existe.");
+      if (lockedExisting.status === RecordStatus.CANCELLED) throw new Error("Esta produção foi cancelada.");
+    }
 
-  await db.productionMaterial.deleteMany({ where: { productionId: production.id } });
-  if (materials.length) await db.productionMaterial.createMany({ data: materials.map((row) => ({ productionId: production.id, ...row })) });
-  await db.qualityTest.deleteMany({ where: { productionId: production.id } });
-  const leftTests: [TestType, TestMoment, string][] = [[TestType.LEAK, TestMoment.START, "leakStart"], [TestType.LEAK, TestMoment.MID, "leakMid"], [TestType.DROP, TestMoment.START, "dropStart"], [TestType.DROP, TestMoment.MID, "dropMid"]];
-  const validResults = [TestResult.CONFORMING, TestResult.NON_CONFORMING, TestResult.NOT_PERFORMED];
-  for (const [type, moment, key] of leftTests) { const value = String(formData.get(key) || ""); if (value && validResults.includes(value as TestResult)) await db.qualityTest.create({ data: { productionId: production.id, type, moment, result: value as TestResult } }); else if (finalize) throw new Error("Preencha todos os testes antes de finalizar."); }
+    const previousMaterials = lockedExisting?.status === RecordStatus.FINALIZED
+      ? await tx.productionMaterial.findMany({
+          where: { productionId: lockedExisting.id },
+          select: { rawMaterialLotId: true, quantityKg: true },
+        })
+      : [];
 
-  if (isMachine7) {
-    await db.$executeRaw`INSERT INTO ProductionCavityData (productionId, rightInitialWeightG, rightMidWeightG) VALUES (${production.id}, ${rightInitialWeightG}, ${rightMidWeightG}) ON DUPLICATE KEY UPDATE rightInitialWeightG = VALUES(rightInitialWeightG), rightMidWeightG = VALUES(rightMidWeightG)`;
-    await db.$executeRaw`DELETE FROM ProductionCavityTest WHERE productionId = ${production.id}`;
-    const rightTests: [string, string, string][] = [["LEAK","START","leakStartRight"],["LEAK","MID","leakMidRight"],["DROP","START","dropStartRight"],["DROP","MID","dropMidRight"]];
-    for (const [type, moment, key] of rightTests) { const value = String(formData.get(key) || ""); if (value && validResults.includes(value as TestResult)) await db.$executeRaw`INSERT INTO ProductionCavityTest (productionId, cavity, type, moment, result) VALUES (${production.id}, 'RIGHT', ${type}, ${moment}, ${value})`; else if (finalize) throw new Error("Preencha todos os testes das duas cavidades antes de finalizar."); }
-  } else { await db.$executeRaw`DELETE FROM ProductionCavityData WHERE productionId = ${production.id}`; await db.$executeRaw`DELETE FROM ProductionCavityTest WHERE productionId = ${production.id}`; }
+    if (status === RecordStatus.FINALIZED) {
+      await reconcileProductionStock(tx, previousMaterials, materials);
+    }
 
-  if (finalize && secondWorker) await saveRecordConfirmation("Production", production.id, secondWorker.id);
-  const action = finalize ? "FINALIZE" : existing ? "EDIT" : "CREATE";
-  await db.auditLog.create({ data: { userId: user.id, action, entity: "Production", entityId: String(production.id), details: { status, commercialLot: commercialLot?.code ?? null, internalCode, secondWorkerId: secondWorker?.id ?? null, secondWorkerName: secondWorker?.name ?? null } } });
-  revalidatePath("/production"); revalidatePath("/admin/productions"); revalidatePath("/commercial-lots");
-  return { ok: true, id: production.id, lot: commercialLot ? `${commercialLot.code} / ${internalCode}` : internalCode, finalized: finalize };
+    const data = {
+      machineId,
+      productId,
+      shiftCode: shift.code,
+      status,
+      initialWeightG,
+      midWeightG,
+      quantityProduced,
+      observations: String(formData.get("observations") || "").trim().slice(0, 500) || null,
+      exceptionReason: otherProductionsInShift > 0 ? (exceptionReason || null) : null,
+      exceptionNotes: otherProductionsInShift > 0 ? (exceptionNotes || null) : null,
+      finalizedAt: status === RecordStatus.FINALIZED
+        ? (lockedExisting?.status === RecordStatus.FINALIZED ? lockedExisting.startedAt && undefined : new Date())
+        : null,
+    };
+
+    const saved = lockedExisting
+      ? await tx.production.update({ where: { id: lockedExisting.id }, data })
+      : await tx.production.create({ data: { ...data, operatorId: user.id, productionLot: internalCode } });
+
+    if (commercialLot) {
+      const labelCode = `${commercialLot.code} / ${internalCode}`;
+      await tx.$executeRaw`
+        INSERT INTO ProductionLotAssociation (productionId, commercialLotId, internalCode, labelCode)
+        VALUES (${saved.id}, ${commercialLot.id}, ${internalCode}, ${labelCode})
+        ON DUPLICATE KEY UPDATE commercialLotId=VALUES(commercialLotId), internalCode=VALUES(internalCode), labelCode=VALUES(labelCode)
+      `;
+    } else {
+      await tx.$executeRaw`DELETE FROM ProductionLotAssociation WHERE productionId=${saved.id}`;
+    }
+
+    await tx.productionMaterial.deleteMany({ where: { productionId: saved.id } });
+    if (materials.length) {
+      await tx.productionMaterial.createMany({
+        data: materials.map((row) => ({ productionId: saved.id, ...row })),
+      });
+    }
+
+    await tx.qualityTest.deleteMany({ where: { productionId: saved.id } });
+    if (leftTests.length) {
+      await tx.qualityTest.createMany({
+        data: leftTests.map((row) => ({ productionId: saved.id, ...row })),
+      });
+    }
+
+    if (isMachine7) {
+      await tx.$executeRaw`
+        INSERT INTO ProductionCavityData (productionId, rightInitialWeightG, rightMidWeightG)
+        VALUES (${saved.id}, ${rightInitialWeightG}, ${rightMidWeightG})
+        ON DUPLICATE KEY UPDATE rightInitialWeightG=VALUES(rightInitialWeightG), rightMidWeightG=VALUES(rightMidWeightG)
+      `;
+      await tx.$executeRaw`DELETE FROM ProductionCavityTest WHERE productionId=${saved.id}`;
+      for (const row of rightTests) {
+        await tx.$executeRaw`
+          INSERT INTO ProductionCavityTest (productionId, cavity, type, moment, result)
+          VALUES (${saved.id}, 'RIGHT', ${row.type}, ${row.moment}, ${row.result})
+        `;
+      }
+    } else {
+      await tx.$executeRaw`DELETE FROM ProductionCavityData WHERE productionId=${saved.id}`;
+      await tx.$executeRaw`DELETE FROM ProductionCavityTest WHERE productionId=${saved.id}`;
+    }
+
+    if (finalize && secondWorker) {
+      await saveRecordConfirmation("Production", saved.id, secondWorker.id, tx);
+    }
+
+    const action = finalize ? "FINALIZE" : lockedExisting ? "EDIT" : "CREATE";
+    await tx.auditLog.create({
+      data: {
+        userId: user.id,
+        action,
+        entity: "Production",
+        entityId: String(saved.id),
+        details: {
+          status,
+          commercialLot: commercialLot?.code ?? null,
+          internalCode,
+          secondWorkerId: secondWorker?.id ?? null,
+          secondWorkerName: secondWorker?.name ?? null,
+          stockReconciled: status === RecordStatus.FINALIZED,
+        },
+      },
+    });
+
+    return saved;
+  });
+
+  revalidatePath("/production");
+  revalidatePath("/admin/productions");
+  revalidatePath("/admin/raw-material-lots");
+  revalidatePath("/commercial-lots");
+  return {
+    ok: true,
+    id: production.id,
+    lot: commercialLot ? `${commercialLot.code} / ${internalCode}` : internalCode,
+    finalized: finalize,
+  };
 }
