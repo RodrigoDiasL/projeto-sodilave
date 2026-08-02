@@ -8,7 +8,7 @@ import { getShift, getShiftWindow } from "@/lib/shift";
 import { generateProductionLot, getActiveCommercialLotForProduct, validateCommercialLotMixture } from "@/lib/lot";
 import { assertMachineRunning } from "@/lib/active-machines";
 import { saveRecordConfirmation, verifySecondWorker } from "@/lib/second-worker-confirmation";
-import { reconcileProductionStock } from "@/lib/raw-material-stock";
+import { getRecordedProductionStock, reconcileProductionStock, replaceRecordedProductionStock } from "@/lib/raw-material-stock";
 
 const asNum = (value: FormDataEntryValue | null) => value === null || value === "" ? null : Number(value);
 const validResults = [TestResult.CONFORMING, TestResult.NON_CONFORMING, TestResult.NOT_PERFORMED];
@@ -237,15 +237,9 @@ export async function saveProduction(formData: FormData) {
       if (lockedExisting.status === RecordStatus.CANCELLED) throw new Error("Esta produção foi cancelada.");
     }
 
-    const previousMaterials = lockedExisting?.status === RecordStatus.FINALIZED
-      ? await tx.productionMaterial.findMany({
-          where: { productionId: lockedExisting.id },
-          select: { rawMaterialLotId: true, quantityKg: true },
-        })
-      : [];
-
+    const previousStock = lockedExisting ? await getRecordedProductionStock(tx, lockedExisting.id) : [];
     if (status === RecordStatus.FINALIZED) {
-      await reconcileProductionStock(tx, previousMaterials, materials);
+      await reconcileProductionStock(tx, previousStock, materials);
     }
 
     const data = {
@@ -260,7 +254,7 @@ export async function saveProduction(formData: FormData) {
       exceptionReason: otherProductionsInShift > 0 ? (exceptionReason || null) : null,
       exceptionNotes: otherProductionsInShift > 0 ? (exceptionNotes || null) : null,
       finalizedAt: status === RecordStatus.FINALIZED
-        ? (lockedExisting?.status === RecordStatus.FINALIZED ? lockedExisting.startedAt && undefined : new Date())
+        ? (lockedExisting?.status === RecordStatus.FINALIZED ? undefined : new Date())
         : null,
     };
 
@@ -309,6 +303,10 @@ export async function saveProduction(formData: FormData) {
     } else {
       await tx.$executeRaw`DELETE FROM ProductionCavityData WHERE productionId=${saved.id}`;
       await tx.$executeRaw`DELETE FROM ProductionCavityTest WHERE productionId=${saved.id}`;
+    }
+
+    if (status === RecordStatus.FINALIZED) {
+      await replaceRecordedProductionStock(tx, saved.id, materials);
     }
 
     if (finalize && secondWorker) {
