@@ -14,7 +14,8 @@ function hasUsableValue(field: HTMLInputElement | HTMLSelectElement | HTMLTextAr
 
 function refreshField(field: Element) {
   if (!(field instanceof HTMLInputElement || field instanceof HTMLSelectElement || field instanceof HTMLTextAreaElement)) return;
-  const excluded = field.disabled || field.readOnly || field.closest(".no-valid-highlight") !== null;
+  const readOnly = (field instanceof HTMLInputElement || field instanceof HTMLTextAreaElement) && field.readOnly;
+  const excluded = field.disabled || readOnly || field.closest(".no-valid-highlight") !== null;
   const valid = !excluded && hasUsableValue(field) && field.checkValidity();
   field.classList.toggle("field-valid", valid);
 
