@@ -43,10 +43,10 @@ function hasText(value: string | null | undefined) {
 }
 
 function productionTone(production: any, cavity?: CavitySummary): ActivityTone {
-  if (production.status === RecordStatus.DRAFT) return "yellow";
   const hasNonConforming = production.tests.some((test: any) => test.result === TestResult.NON_CONFORMING)
     || Number(cavity?.nonConformingCount ?? 0) > 0;
   if (hasNonConforming) return "red";
+  if (production.status === RecordStatus.DRAFT) return "yellow";
 
   const percentageTotal = production.materials.reduce(
     (sum: number, material: any) => sum + Number(material.percentage ?? 0),
