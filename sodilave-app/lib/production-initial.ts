@@ -1,6 +1,21 @@
 export function productionToInitial(production: any, cavityData?: any, cavityTests: any[] = []) {
-  const testMap = new Map(production.tests.map((test: any) => [`${test.type}_${test.moment}`, test.result]));
-  const cavityTestMap = new Map(cavityTests.map((test: any) => [`${test.type}_${test.moment}`, test.result]));
+  const testMap = new Map<string, string>(
+    production.tests.map((test: any): [string, string] => [`${test.type}_${test.moment}`, String(test.result)]),
+  );
+  const cavityTestMap = new Map<string, string>(
+    cavityTests.map((test: any): [string, string] => [`${test.type}_${test.moment}`, String(test.result)]),
+  );
+  const tests: Record<string, string> = {
+    leakStart: testMap.get("LEAK_START") ?? "",
+    leakMid: testMap.get("LEAK_MID") ?? "",
+    dropStart: testMap.get("DROP_START") ?? "",
+    dropMid: testMap.get("DROP_MID") ?? "",
+    leakStartRight: cavityTestMap.get("LEAK_START") ?? "",
+    leakMidRight: cavityTestMap.get("LEAK_MID") ?? "",
+    dropStartRight: cavityTestMap.get("DROP_START") ?? "",
+    dropMidRight: cavityTestMap.get("DROP_MID") ?? "",
+  };
+
   return {
     id: production.id,
     machineId: production.machineId,
@@ -22,16 +37,7 @@ export function productionToInitial(production: any, cavityData?: any, cavityTes
       percentage: Number(material.percentage ?? 0),
       quantityKg: material.quantityKg ? String(Number(material.quantityKg)) : "",
     })),
-    tests: {
-      leakStart: testMap.get("LEAK_START") ?? "",
-      leakMid: testMap.get("LEAK_MID") ?? "",
-      dropStart: testMap.get("DROP_START") ?? "",
-      dropMid: testMap.get("DROP_MID") ?? "",
-      leakStartRight: cavityTestMap.get("LEAK_START") ?? "",
-      leakMidRight: cavityTestMap.get("LEAK_MID") ?? "",
-      dropStartRight: cavityTestMap.get("DROP_START") ?? "",
-      dropMidRight: cavityTestMap.get("DROP_MID") ?? "",
-    },
+    tests,
   };
 }
 
@@ -58,7 +64,7 @@ export function previousProductionToDefaults(production:any){
       quantityKg:"",
       manualQuantity:false,
     })),
-    tests:{},
+    tests:{} as Record<string,string>,
     inheritedFromPreviousShift:true,
   };
 }
