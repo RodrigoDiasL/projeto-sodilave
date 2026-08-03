@@ -7,15 +7,16 @@ import {
   Power,
   PowerOff,
   ScanSearch,
+  Search,
   Settings,
   ShieldCheck,
   Tags,
   Wrench,
 } from "lucide-react";
 import { logoutAction } from "@/app/actions/auth";
-import type { AdminDashboardData, MachineUptime } from "@/lib/admin-dashboard";
+import type { ActivityTone, AdminDashboardData, MachineUptime } from "@/lib/admin-dashboard";
 
-const activityLabels = {
+const activityLabels: Record<ActivityTone, string> = {
   green: "Concluído sem observações",
   blue: "Concluído com observações",
   yellow: "Em aberto",
@@ -80,7 +81,7 @@ export function AdminOperationsDashboard({
       <aside className="admin-activity-panel panel">
         <div className="admin-panel-title"><div><h2>Atividade recente</h2><p>Registos mais recentes primeiro</p></div></div>
         <div className="activity-legend">
-          {Object.entries(activityLabels).slice(0, 5).map(([tone, label]) => <span key={tone}><i className={`activity-dot ${tone}`} />{label}</span>)}
+          {(Object.entries(activityLabels) as [ActivityTone, string][]).slice(0, 5).map(([tone, label]) => <span key={tone}><i className={`activity-dot ${tone}`} />{label}</span>)}
         </div>
         <div className="activity-list">
           {data.activity.length ? data.activity.map((item) => <Link href={item.href} className={`activity-item ${item.tone}`} key={item.key}>
@@ -105,6 +106,7 @@ export function AdminOperationsDashboard({
         <nav className="admin-side-actions">
           <ActionLink href="/production" title="Registar produção" icon={<ClipboardList />} disabled={!hasStartup || !hasRunning} />
           <ActionLink href="/checkups" title="Verificações de turno" icon={<ShieldCheck />} disabled={!hasStartup || !hasRunning} />
+          <ActionLink href="/admin/queries" title="Consultas" icon={<Search />} />
           <ActionLink href="/commercial-lots" title="Lotes e controlo interno" icon={<Tags />} />
           <ActionLink href="/maintenance" title="Manutenções" icon={<Wrench />} />
           <ActionLink href="/traceability" title="Rastreabilidade" icon={<ScanSearch />} />
