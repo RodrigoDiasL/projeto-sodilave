@@ -5,6 +5,8 @@ import { getShift } from "@/lib/shift";
 import { logoutAction } from "@/app/actions/auth";
 import { getActiveWeeklyMachines, getActiveWeeklyStartup } from "@/lib/active-machines";
 import { db } from "@/lib/db";
+import { getAdminDashboardData } from "@/lib/admin-dashboard";
+import { AdminOperationsDashboard } from "@/components/AdminOperationsDashboard";
 
 const Card=({href,disabled,className,children}:{href:string;disabled?:boolean;className:string;children:React.ReactNode})=>disabled?<div className={`action-card ${className} disabled`} aria-disabled="true">{children}</div>:<Link className={`action-card ${className}`} href={href}>{children}</Link>;
 
@@ -19,6 +21,11 @@ export default async function Dashboard(){
   ]);
   const hasStartup=Boolean(startup);
   const hasRunning=machines.length>0;
+
+  if(user.role==="ADMIN"){
+    const data=await getAdminDashboardData(now);
+    return <AdminOperationsDashboard name={user.name} data={data} hasStartup={hasStartup} hasRunning={hasRunning} stoppedCount={stoppedCount}/>;
+  }
 
   if(user.role==="AUDITOR") return <>
     <section className="welcome"><h1>Bem-vinda, {user.name}.</h1><p>Perfil de auditoria: acesso apenas a consultas, sem registo ou alteração de operações.</p></section>
