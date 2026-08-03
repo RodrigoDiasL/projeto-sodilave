@@ -11,7 +11,7 @@ import { saveRecordConfirmation, verifySecondWorker } from "@/lib/second-worker-
 import { getRecordedProductionStock, reconcileProductionStock, replaceRecordedProductionStock } from "@/lib/raw-material-stock";
 
 const asNum = (value: FormDataEntryValue | null) => value === null || value === "" ? null : Number(value);
-const validResults = [TestResult.CONFORMING, TestResult.NON_CONFORMING, TestResult.NOT_PERFORMED];
+const validResults: TestResult[] = [TestResult.CONFORMING, TestResult.NON_CONFORMING, TestResult.NOT_PERFORMED];
 
 const finiteInRange = (value: number | null, min: number, max: number, label: string, integer = false) => {
   if (value === null) return;
