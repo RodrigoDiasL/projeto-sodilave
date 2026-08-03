@@ -1,1 +1,0 @@
-The final binary image is committed in the following commit.
