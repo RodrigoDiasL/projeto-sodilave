@@ -11,10 +11,14 @@ import {
   Settings,
   ShieldCheck,
   Tags,
+  Trophy,
   Wrench,
 } from "lucide-react";
 import { logoutAction } from "@/app/actions/auth";
 import type { ActivityTone, AdminDashboardData, MachineUptime } from "@/lib/admin-dashboard";
+import type { AdminProductionStats } from "@/lib/admin-production-stats";
+import { AdminProductionCounters } from "@/components/AdminProductionCounters";
+import { DashboardRefresh } from "@/components/DashboardRefresh";
 
 const activityLabels: Record<ActivityTone, string> = {
   green: "Concluído sem observações",
@@ -61,17 +65,20 @@ function ActionLink({ href, title, icon, disabled = false }: { href: string; tit
 export function AdminOperationsDashboard({
   name,
   data,
+  productionStats,
   hasStartup,
   hasRunning,
   stoppedCount,
 }: {
   name: string;
   data: AdminDashboardData;
+  productionStats: AdminProductionStats;
   hasStartup: boolean;
   hasRunning: boolean;
   stoppedCount: number;
 }) {
   return <>
+    <DashboardRefresh />
     <section className="admin-dashboard-heading">
       <div><h1>Painel operacional</h1><p>Visão consolidada da produção, verificações e disponibilidade das máquinas.</p></div>
       <strong>{name}</strong>
@@ -99,6 +106,7 @@ export function AdminOperationsDashboard({
         <div className="uptime-grid">
           {data.uptime.length ? data.uptime.map((machine) => <UptimeCard machine={machine} key={machine.id} />) : <p className="empty-state">Não existem dados das máquinas prioritárias.</p>}
         </div>
+        <AdminProductionCounters stats={productionStats} />
       </main>
 
       <aside className="admin-actions-panel panel">
@@ -106,6 +114,7 @@ export function AdminOperationsDashboard({
         <nav className="admin-side-actions">
           <ActionLink href="/production" title="Registar produção" icon={<ClipboardList />} disabled={!hasStartup || !hasRunning} />
           <ActionLink href="/checkups" title="Verificações de turno" icon={<ShieldCheck />} disabled={!hasStartup || !hasRunning} />
+          <ActionLink href="/scoreboards" title="Scoreboards" icon={<Trophy />} />
           <ActionLink href="/admin/queries" title="Consultas" icon={<Search />} />
           <ActionLink href="/commercial-lots" title="Lotes e controlo interno" icon={<Tags />} />
           <ActionLink href="/maintenance" title="Manutenções" icon={<Wrench />} />
