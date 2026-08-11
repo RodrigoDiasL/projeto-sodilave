@@ -42,12 +42,12 @@ export async function getAdminProductionStats(now = new Date()): Promise<AdminPr
     db.$queryRaw<AggregateRow[]>(Prisma.sql`
       SELECT
         machineId,
-        SUM(CASE WHEN finalizedAt >= ${periods.day} THEN COALESCE(quantityProduced, 0) ELSE 0 END) AS dayCount,
-        SUM(CASE WHEN finalizedAt >= ${periods.week} THEN COALESCE(quantityProduced, 0) ELSE 0 END) AS weekCount,
-        SUM(CASE WHEN finalizedAt >= ${periods.month} THEN COALESCE(quantityProduced, 0) ELSE 0 END) AS monthCount,
-        SUM(CASE WHEN finalizedAt >= ${periods.quarter} THEN COALESCE(quantityProduced, 0) ELSE 0 END) AS quarterCount,
-        SUM(CASE WHEN finalizedAt >= ${periods.semester} THEN COALESCE(quantityProduced, 0) ELSE 0 END) AS semesterCount,
-        SUM(CASE WHEN finalizedAt >= ${periods.year} THEN COALESCE(quantityProduced, 0) ELSE 0 END) AS yearCount,
+        SUM(CASE WHEN startedAt >= ${periods.day} THEN COALESCE(quantityProduced, 0) ELSE 0 END) AS dayCount,
+        SUM(CASE WHEN startedAt >= ${periods.week} THEN COALESCE(quantityProduced, 0) ELSE 0 END) AS weekCount,
+        SUM(CASE WHEN startedAt >= ${periods.month} THEN COALESCE(quantityProduced, 0) ELSE 0 END) AS monthCount,
+        SUM(CASE WHEN startedAt >= ${periods.quarter} THEN COALESCE(quantityProduced, 0) ELSE 0 END) AS quarterCount,
+        SUM(CASE WHEN startedAt >= ${periods.semester} THEN COALESCE(quantityProduced, 0) ELSE 0 END) AS semesterCount,
+        SUM(CASE WHEN startedAt >= ${periods.year} THEN COALESCE(quantityProduced, 0) ELSE 0 END) AS yearCount,
         SUM(COALESCE(quantityProduced, 0)) AS totalCount
       FROM Production
       WHERE status = 'FINALIZED'
