@@ -3,7 +3,7 @@
 import { Prisma, RecordStatus, TestMoment, TestResult, TestType } from "@prisma/client";
 import { revalidatePath } from "next/cache";
 import { db } from "@/lib/db";
-import { requireUser } from "@/lib/auth";
+import { requireOperationalUser } from "@/lib/auth";
 import { getShift, getShiftWindow } from "@/lib/shift";
 import { generateProductionLot, getActiveCommercialLotForProduct, validateCommercialLotMixture } from "@/lib/lot";
 import { assertMachineRunning } from "@/lib/active-machines";
@@ -67,7 +67,7 @@ function parseRightTests(formData: FormData, required: boolean) {
 }
 
 export async function saveProduction(formData: FormData) {
-  const user = await requireUser();
+  const user = await requireOperationalUser();
   const intent = String(formData.get("intent") || "draft");
   const finalize = intent === "finalize";
   if (!["draft", "finalize"].includes(intent)) throw new Error("Ação inválida.");
