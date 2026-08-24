@@ -15,11 +15,41 @@ Instalação local:
 npm install
 npx prisma generate
 npm run db:lots
-npm run db:seed
 npm run dev
 ```
 
-O `seed` é exclusivamente para desenvolvimento/testes. Os utilizadores criados pelo seed usam PINs iniciais de 8 algarismos.
+O `seed` é exclusivamente para desenvolvimento/testes:
+
+```bash
+npm run db:seed
+```
+
+## Transição para PINs de 8 dígitos
+
+A aplicação passou a exigir PINs de exatamente 8 algarismos e não permite PINs repetidos.
+
+Para converter apenas os PINs iniciais conhecidos de uma base de desenvolvimento já existente, sem voltar a correr o seed:
+
+```bash
+npm run pins:upgrade8
+```
+
+Se uma conta tiver um PIN diferente dos valores iniciais, o comando não a altera.
+
+Existe ainda um comando de recuperação administrativa por terminal:
+
+```bash
+RESET_USER_NAME="Nome" RESET_USER_PIN="12345678" npm run pins:reset
+```
+
+No PowerShell:
+
+```powershell
+$env:RESET_USER_NAME="Nome"
+$env:RESET_USER_PIN="12345678"
+npm run pins:reset
+Remove-Item Env:RESET_USER_PIN
+```
 
 ## Validação
 
@@ -74,6 +104,8 @@ npm run verify:production   Validar variáveis do servidor
 npm run db:lots             Aplicar tabelas auxiliares no desenvolvimento
 npm run db:production       Preparar/aplicar estrutura da BD em produção
 npm run backup:db           Criar backup comprimido da BD
+npm run pins:upgrade8       Converter PINs iniciais antigos para 8 dígitos
+npm run pins:reset          Recuperar um PIN por terminal
 npm start                   Arrancar através de app.js/server.cjs
 ```
 
