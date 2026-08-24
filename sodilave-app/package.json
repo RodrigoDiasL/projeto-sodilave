@@ -21,7 +21,8 @@
     "db:lots": "node scripts/apply-lot-schema.mjs",
     "db:production": "npm run verify:production && node scripts/prepare-production-db.mjs",
     "backup:db": "node scripts/backup-database.mjs",
-    "pins:upgrade8": "node scripts/upgrade-pins-to-8.mjs"
+    "pins:upgrade8": "node scripts/upgrade-pins-to-8.mjs",
+    "pins:reset": "node scripts/reset-user-pin.mjs"
   },
   "prisma": {
     "seed": "tsx prisma/seed.ts"
