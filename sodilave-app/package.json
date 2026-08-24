@@ -2,18 +2,25 @@
   "name": "sodilave-gestao-producao",
   "version": "0.9.8",
   "private": true,
+  "engines": {
+    "node": ">=22 <23"
+  },
   "scripts": {
     "dev": "next dev",
     "build": "prisma generate && next build",
-    "start": "next start",
+    "build:production": "npm run verify:production && npm run typecheck && npm run build",
+    "start": "node server.cjs",
     "typecheck": "prisma generate && tsc --noEmit",
     "lint": "next lint",
+    "verify:production": "node scripts/validate-production-env.mjs",
     "db:generate": "prisma generate",
     "db:migrate": "prisma migrate dev",
     "db:deploy": "prisma migrate deploy",
     "db:seed": "tsx prisma/seed.ts",
     "db:machine7": "node scripts/apply-machine7-schema.mjs",
-    "db:lots": "node scripts/apply-lot-schema.mjs"
+    "db:lots": "node scripts/apply-lot-schema.mjs",
+    "db:production": "npm run verify:production && node scripts/prepare-production-db.mjs",
+    "backup:db": "node scripts/backup-database.mjs"
   },
   "prisma": {
     "seed": "tsx prisma/seed.ts"
