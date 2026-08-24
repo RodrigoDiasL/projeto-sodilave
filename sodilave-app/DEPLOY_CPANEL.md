@@ -34,10 +34,10 @@ No **Database Wizard**:
 
 Não usar a password da conta cPanel como credencial da aplicação.
 
-A ligação terá a forma:
+Para alojamento partilhado, usar uma ligação com pool limitado:
 
 ```text
-mysql://UTILIZADOR:SENHA@localhost:3306/BASE_DE_DADOS
+mysql://UTILIZADOR:SENHA@localhost:3306/BASE_DE_DADOS?connection_limit=5&pool_timeout=10&connect_timeout=10
 ```
 
 Se a password tiver caracteres especiais, estes devem estar codificados no URL.
@@ -73,7 +73,7 @@ Adicionar no ecrã da aplicação Node.js:
 NODE_ENV=production
 APP_URL=https://producao.sodilave.pt
 APP_VERSION=0.9.8
-DATABASE_URL=mysql://UTILIZADOR:SENHA@localhost:3306/BASE_DE_DADOS
+DATABASE_URL=mysql://UTILIZADOR:SENHA@localhost:3306/BASE_DE_DADOS?connection_limit=5&pool_timeout=10&connect_timeout=10
 SESSION_SECRET=CHAVE_ALEATORIA_LONGA
 INITIAL_ADMIN_NAME=Rodrigo
 INITIAL_ADMIN_PIN=PIN_DE_8_DIGITOS
@@ -89,31 +89,37 @@ Não definir manualmente `PORT`; o Passenger gere a ligação da aplicação.
 
 ## 6. Instalar e validar
 
-Usar o botão **Run NPM Install** do cPanel ou abrir o Terminal. O cPanel mostra o comando de ativação do ambiente Node da aplicação; ativá-lo antes dos comandos seguintes.
+Usar o Terminal do cPanel. O cPanel mostra o comando de ativação do ambiente Node da aplicação; ativá-lo antes dos comandos seguintes.
 
-Na pasta `sodilave-app`:
+Como a aplicação está em modo `Production`, instalar explicitamente também as dependências de build. São necessárias para TypeScript e Prisma durante o deploy:
 
 ```bash
-npm ci
+npm ci --include=dev
 npm run verify:production
-npm run db:generate
 npm run db:production
 npm run build:production
 ```
+
+`db:production` já executa `prisma generate`, por isso não é necessário chamar `db:generate` separadamente.
 
 ### O que faz `db:production`
 
 Na primeira instalação, numa base vazia:
 
-1. cria o schema Prisma principal;
-2. cria uma tabela de controlo de migrações;
-3. aplica todos os ficheiros SQL de `prisma/manual` pela ordem do nome;
-4. guarda o checksum de cada migração;
-5. cria o primeiro administrador se ainda não existir qualquer utilizador.
+1. confirma que a base está realmente vazia;
+2. cria o schema Prisma principal;
+3. cria uma tabela de controlo de migrações;
+4. aplica todos os ficheiros SQL de `prisma/manual` pela ordem do nome;
+5. guarda o checksum de cada migração;
+6. cria o primeiro administrador se ainda não existir qualquer utilizador.
+
+Se a base tiver tabelas que não correspondam ao schema esperado da Sodilave, a instalação é interrompida em vez de tentar alterar uma base desconhecida.
 
 Em execuções posteriores não volta a executar `prisma db push` sobre uma base de produção existente. As migrações manuais já aplicadas são verificadas pelo checksum.
 
 Nunca executar `npm run db:seed` na base de produção. O seed é apenas para desenvolvimento/testes e altera os PINs dos utilizadores conhecidos.
+
+Qualquer futura alteração estrutural à base de produção deve ser acrescentada como nova migração SQL em `prisma/manual`; não alterar retroativamente ficheiros já aplicados.
 
 ## 7. Remover o PIN inicial
 
@@ -171,9 +177,10 @@ Confirmar, por esta ordem:
 10. desconto de stock;
 11. correção administrativa da produção e reconciliação do stock;
 12. cancelamento e reposição do stock;
-13. verificações de turno;
+13. verificações de turno e respetivo cancelamento auditável;
 14. dashboard, scoreboards e uptime;
-15. `/api/health`.
+15. registo de avaria/paragem e alteração do estado da máquina;
+16. `/api/health`.
 
 Só depois destes testes devem ser introduzidos dados reais de produção.
 
@@ -187,17 +194,11 @@ A aplicação inclui também:
 npm run backup:db
 ```
 
-Esse comando cria um `mysqldump` comprimido em `.sql.gz` e elimina automaticamente backups mais antigos que `BACKUP_RETENTION_DAYS`.
+O comando deteta `mysqldump` ou `mariadb-dump`, cria um dump comprimido em `.sql.gz` e elimina automaticamente backups mais antigos que `BACKUP_RETENTION_DAYS`.
 
-Para executar por Cron Job, criar um ficheiro de ambiente privado fora da pasta pública, por exemplo:
+Antes de automatizar o cron, executar manualmente `npm run backup:db` e confirmar que o ficheiro `.sql.gz` é criado e tem tamanho plausível.
 
-```text
-/home/sodilave/.sodilave-backup.env
-```
-
-com permissões `600` e apenas as variáveis necessárias ao backup. Nunca colocar a password da base diretamente numa linha de cron visível.
-
-Antes de automatizar o cron, executar manualmente `npm run backup:db` e confirmar que o ficheiro `.sql.gz` é criado.
+Para o Cron Job, não colocar a password da base diretamente na linha de cron. Usar um ficheiro de ambiente privado fora da pasta pública ou o mecanismo de ambiente disponibilizado pelo alojamento.
 
 ## 12. Atualizações futuras
 
@@ -206,7 +207,7 @@ Antes de atualizar:
 1. confirmar que o GitHub Actions está verde;
 2. fazer backup da base de dados;
 3. atualizar o repositório;
-4. instalar dependências apenas se necessário;
+4. instalar as dependências de build;
 5. executar as migrações;
 6. criar novo build;
 7. reiniciar Passenger;
@@ -216,7 +217,7 @@ Exemplo:
 
 ```bash
 git pull
-npm ci
+npm ci --include=dev
 npm run db:production
 npm run build:production
 mkdir -p tmp
@@ -230,7 +231,7 @@ Se uma versão nova tiver problemas:
 1. não apagar a base de dados;
 2. identificar o último commit estável;
 3. voltar o código para esse commit;
-4. executar novamente `npm ci` e `npm run build:production`;
+4. executar novamente `npm ci --include=dev` e `npm run build:production`;
 5. reiniciar Passenger;
 6. restaurar a base apenas se a atualização tiver alterado dados de forma incompatível e depois de confirmar o backup correto.
 
