@@ -1,12 +1,21 @@
 import { db } from "@/lib/db";
-import { MachineEventType, MachineStatus } from "@prisma/client";
+import { MachineEventType, MachineStatus, Prisma } from "@prisma/client";
 
-export async function changeMachineStatus({ machineId, toStatus, type, userId, reason, notes, maintenanceId, incidentId, occurredAt = new Date() }:{machineId:number;toStatus:MachineStatus;type:MachineEventType;userId:number;reason?:string|null;notes?:string|null;maintenanceId?:number|null;incidentId?:number|null;occurredAt?:Date}){
-  return db.$transaction(async tx => {
-    const machine = await tx.machine.findUniqueOrThrow({where:{id:machineId}});
-    await tx.machine.update({where:{id:machineId},data:{status:toStatus,statusChangedAt:occurredAt}});
-    return tx.machineEvent.create({data:{machineId,type,fromStatus:machine.status,toStatus,occurredAt,reason:reason||null,notes:notes||null,createdById:userId,maintenanceId:maintenanceId||null,incidentId:incidentId||null}});
-  });
+type ChangeMachineStatusArgs={machineId:number;toStatus:MachineStatus;type:MachineEventType;userId:number;reason?:string|null;notes?:string|null;maintenanceId?:number|null;incidentId?:number|null;occurredAt?:Date};
+
+async function applyMachineStatus(tx:Prisma.TransactionClient,{machineId,toStatus,type,userId,reason,notes,maintenanceId,incidentId,occurredAt=new Date()}:ChangeMachineStatusArgs){
+  const rows=await tx.$queryRaw<{id:number;status:MachineStatus}[]>(Prisma.sql`
+    SELECT id,status FROM Machine WHERE id=${machineId} FOR UPDATE
+  `);
+  const machine=rows[0];
+  if(!machine)throw new Error("A máquina já não existe.");
+  await tx.machine.update({where:{id:machineId},data:{status:toStatus,statusChangedAt:occurredAt}});
+  return tx.machineEvent.create({data:{machineId,type,fromStatus:machine.status,toStatus,occurredAt,reason:reason||null,notes:notes||null,createdById:userId,maintenanceId:maintenanceId||null,incidentId:incidentId||null}});
+}
+
+export async function changeMachineStatus(args:ChangeMachineStatusArgs,client?:Prisma.TransactionClient){
+  if(client)return applyMachineStatus(client,args);
+  return db.$transaction(tx=>applyMachineStatus(tx,args));
 }
 
 export function calculateUptime(events:{occurredAt:Date;toStatus:MachineStatus}[], from:Date, to=new Date()){
