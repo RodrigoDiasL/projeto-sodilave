@@ -8,11 +8,14 @@ import { PrismaClient } from "@prisma/client";
 const prisma = new PrismaClient();
 const npx = process.platform === "win32" ? "npx.cmd" : "npx";
 
-async function coreSchemaExists() {
+async function databaseState() {
   const rows = await prisma.$queryRawUnsafe(
-    "SELECT COUNT(*) AS count FROM information_schema.tables WHERE table_schema = DATABASE() AND table_name = 'User'"
+    "SELECT COUNT(*) AS totalTables, SUM(CASE WHEN table_name = 'User' THEN 1 ELSE 0 END) AS userTable FROM information_schema.tables WHERE table_schema = DATABASE()"
   );
-  return Number(rows?.[0]?.count ?? 0) > 0;
+  return {
+    totalTables: Number(rows?.[0]?.totalTables ?? 0),
+    hasUserTable: Number(rows?.[0]?.userTable ?? 0) > 0,
+  };
 }
 
 function createCoreSchema() {
@@ -96,7 +99,13 @@ async function ensureInitialAdmin() {
 }
 
 try {
-  if (!(await coreSchemaExists())) createCoreSchema();
+  const state = await databaseState();
+  if (!state.hasUserTable) {
+    if (state.totalTables > 0) {
+      throw new Error("A base de dados não está vazia, mas não contém o schema esperado da Sodilave. Por segurança, a instalação foi interrompida.");
+    }
+    createCoreSchema();
+  }
   await ensureMigrationTable();
   await applyManualMigrations();
   await ensureInitialAdmin();
