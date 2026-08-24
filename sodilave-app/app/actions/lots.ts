@@ -40,7 +40,7 @@ export async function createCommercialLot(fd: FormData) {
   if (validMaterials !== materials.length) throw new Error("Uma das matérias-primas selecionadas não existe ou está inativa.");
 
   const year = String(new Date().getFullYear()).slice(-2);
-  const code = await db.$transaction(async (tx) => {
+  await db.$transaction(async (tx) => {
     const active = await tx.$queryRaw<{ id: number; code: string }[]>`SELECT id, code FROM CommercialLot WHERE productId=${productId} AND status='ACTIVE' FOR UPDATE`;
     if (active.length) throw new Error(`Já existe o lote comercial ativo ${active[0].code} para este produto. Feche-o antes de criar outro.`);
 
@@ -56,10 +56,9 @@ export async function createCommercialLot(fd: FormData) {
     for (const row of materials) {
       await tx.$executeRaw`INSERT INTO CommercialLotMaterial (commercialLotId, rawMaterialId, percentage) VALUES (${created[0].id}, ${row.rawMaterialId}, ${row.percentage})`;
     }
-    return nextCode;
+    await tx.auditLog.create({ data: { userId: user.id, action: "CREATE", entity: "CommercialLot", entityId: nextCode, details: { productId, materials } } });
   });
 
-  await db.auditLog.create({ data: { userId: user.id, action: "CREATE", entity: "CommercialLot", entityId: code, details: { productId, materials } } });
   revalidatePath("/commercial-lots");
 }
 
@@ -67,9 +66,11 @@ export async function closeCommercialLot(fd: FormData) {
   const user = await requireLotManager();
   const id = Number(fd.get("id"));
   if (!Number.isInteger(id) || id <= 0) throw new Error("Lote inválido.");
-  const affected = await db.$executeRaw`UPDATE CommercialLot SET status='CLOSED', closedAt=NOW(3), closedById=${user.id} WHERE id=${id} AND status='ACTIVE'`;
-  if (!affected) throw new Error("O lote comercial não existe ou já se encontra fechado.");
-  await db.auditLog.create({ data: { userId: user.id, action: "CLOSE", entity: "CommercialLot", entityId: String(id) } });
+  await db.$transaction(async tx=>{
+    const affected = await tx.$executeRaw`UPDATE CommercialLot SET status='CLOSED', closedAt=NOW(3), closedById=${user.id} WHERE id=${id} AND status='ACTIVE'`;
+    if (!affected) throw new Error("O lote comercial não existe ou já se encontra fechado.");
+    await tx.auditLog.create({ data: { userId: user.id, action: "CLOSE", entity: "CommercialLot", entityId: String(id) } });
+  });
   revalidatePath("/commercial-lots");
 }
 
@@ -83,7 +84,7 @@ export async function changeMachineLotConfig(fd: FormData) {
   const machine = await db.machine.findUnique({ where: { id: machineId }, select: { id: true } });
   if (!machine) throw new Error("A máquina selecionada não existe.");
 
-  const change = await db.$transaction(async (tx) => {
+  await db.$transaction(async (tx) => {
     const rows = await tx.$queryRaw<{ majorLetter: string; minorLetter: string }[]>`SELECT majorLetter, minorLetter FROM MachineLotConfig WHERE machineId=${machineId} FOR UPDATE`;
     const previous = rows[0] ?? { majorLetter: "A", minorLetter: "A" };
     const next = changeType === "MAJOR"
@@ -91,9 +92,8 @@ export async function changeMachineLotConfig(fd: FormData) {
       : { majorLetter: previous.majorLetter, minorLetter: nextLetter(previous.minorLetter) };
     await tx.$executeRaw`INSERT INTO MachineLotConfig (machineId, majorLetter, minorLetter, updatedById) VALUES (${machineId}, ${next.majorLetter}, ${next.minorLetter}, ${user.id}) ON DUPLICATE KEY UPDATE majorLetter=VALUES(majorLetter), minorLetter=VALUES(minorLetter), updatedById=VALUES(updatedById)`;
     await tx.$executeRaw`INSERT INTO MachineLotConfigHistory (machineId, previousMajor, previousMinor, newMajor, newMinor, changeType, reason, changedById) VALUES (${machineId}, ${previous.majorLetter}, ${previous.minorLetter}, ${next.majorLetter}, ${next.minorLetter}, ${changeType}, ${reason}, ${user.id})`;
-    return { previous, next };
+    await tx.auditLog.create({ data: { userId: user.id, action: "CHANGE_CONFIG", entity: "MachineLotConfig", entityId: String(machineId), details: { previous, next, changeType, reason } } });
   });
 
-  await db.auditLog.create({ data: { userId: user.id, action: "CHANGE_CONFIG", entity: "MachineLotConfig", entityId: String(machineId), details: { ...change, changeType, reason } } });
   revalidatePath("/commercial-lots");
 }
