@@ -20,7 +20,8 @@
     "db:machine7": "node scripts/apply-machine7-schema.mjs",
     "db:lots": "node scripts/apply-lot-schema.mjs",
     "db:production": "npm run verify:production && node scripts/prepare-production-db.mjs",
-    "backup:db": "node scripts/backup-database.mjs"
+    "backup:db": "node scripts/backup-database.mjs",
+    "pins:upgrade8": "node scripts/upgrade-pins-to-8.mjs"
   },
   "prisma": {
     "seed": "tsx prisma/seed.ts"
