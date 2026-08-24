@@ -9,7 +9,7 @@
     "dev": "next dev",
     "build": "prisma generate && next build",
     "build:production": "npm run verify:production && npm run typecheck && npm run build",
-    "start": "node server.cjs",
+    "start": "node app.js",
     "typecheck": "prisma generate && tsc --noEmit",
     "lint": "next lint",
     "verify:production": "node scripts/validate-production-env.mjs",
