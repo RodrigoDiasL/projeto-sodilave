@@ -24,6 +24,7 @@
     "db:machine7": "node scripts/apply-machine7-schema.mjs",
     "db:lots": "node scripts/apply-lot-schema.mjs",
     "db:production": "npm run verify:production && prisma generate && node scripts/prepare-production-db.mjs",
+    "db:finalize:cpanel": "npm run verify:production && npm run check:prisma-client && node scripts/finalize-production-db-cpanel.mjs",
     "backup:db": "node scripts/backup-database.mjs",
     "pins:upgrade8": "prisma generate && node scripts/upgrade-pins-to-8.mjs",
     "pins:reset": "prisma generate && node scripts/reset-user-pin.mjs"
