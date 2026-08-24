@@ -1,61 +1,89 @@
 # Sodilave — Gestão de Produção
 
-Primeira base funcional da aplicação interna, construída com Next.js, TypeScript, Prisma e MariaDB/MySQL.
+Aplicação interna de gestão operacional da Sodilave, construída com Next.js 15, TypeScript, Prisma e MariaDB/MySQL.
 
-## Incluído
+## Ambiente de desenvolvimento
 
-- Login apenas por PIN, com sessão segura em cookie HTTP-only.
-- Perfis de Operador e Administrador.
-- Botão de administração visível, mas acesso bloqueado no servidor a operadores.
-- Registo de produção com gravação em rascunho e finalização confirmada.
-- Associação de lotes de matérias-primas por dropdown.
-- Geração automática do lote do produto acabado através de regra configurável.
-- Verificação de Turno da máquina separado do verificação de turno geral do turno.
-- Administração de utilizadores, máquinas, produtos, matérias-primas, lotes e regras.
-- Consultas básicas de produções, verificações de turno e atividade.
-- Registo de auditoria.
+Requisitos:
 
-## Instalação local
+- Node.js 22
+- MariaDB/MySQL
 
-1. Instalar Node.js 20 ou superior e MariaDB/MySQL.
-2. Copiar `.env.example` para `.env` e configurar a ligação.
-3. Executar:
+Instalação local:
 
 ```bash
 npm install
-npx prisma migrate dev --name initial
+npx prisma generate
+npm run db:lots
 npm run db:seed
 npm run dev
 ```
 
-Abrir `http://localhost:3000`.
+O `seed` é exclusivamente para desenvolvimento/testes. Os utilizadores criados pelo seed usam PINs iniciais de 8 algarismos.
 
-Credenciais de demonstração após o seed:
+## Validação
 
-- Administrador: `1111`
-- Operador: `2222`
+Antes de qualquer deploy:
 
-Altere estes PINs antes de utilizar em produção.
+```bash
+npm run typecheck
+npm run build
+```
 
-## Publicação em cPanel
+Para validar a configuração completa de produção:
 
-1. Criar a base de dados MariaDB e o utilizador no cPanel.
-2. Carregar o projeto e criar o ficheiro `.env`.
-3. No terminal do cPanel: `npm install`, `npm run db:deploy`, `npm run db:seed`, `npm run build`.
-4. Em **Setup Node.js App**, selecionar Node 20+, apontar para a pasta do projeto e usar `npm start`.
-5. Definir `SESSION_SECRET` com uma chave longa e aleatória.
+```bash
+npm run verify:production
+npm run build:production
+```
 
-## Decisões que ainda precisam de validação
+## Produção
 
-- A regra real de nomenclatura do lote produzido. A aplicação inclui um editor de modelo com tokens.
-- Regras de desconto de stock: quantidade colocada na máquina versus quantidade efetivamente consumida.
-- Procedimento para corrigir registos finalizados por administradores.
-- Formato final das etiquetas e integração com cada mini impressora.
-- Integração futura com NFC de assiduidade e estado automático das máquinas.
+A aplicação interna deve ser publicada num endereço separado do website institucional.
 
-## Estrutura principal
+- Website institucional: `www.sodilave.pt`
+- Aplicação interna: `producao.sodilave.pt`
 
-- `app/` — páginas e ações do servidor.
+O alojamento de produção usa cPanel / CloudLinux / Passenger com Node.js 22.
+
+As instruções completas estão em:
+
+```text
+DEPLOY_CPANEL.md
+```
+
+### Regras importantes de produção
+
+- Não executar `npm run db:seed` na base de dados real.
+- Usar `npm run db:production` para preparar/aplicar a estrutura suportada em produção.
+- Usar PINs de exatamente 8 algarismos.
+- PINs não podem ser repetidos entre utilizadores.
+- `SESSION_SECRET` deve ter pelo menos 32 caracteres.
+- HTTPS é obrigatório.
+- Confirmar `/api/health` depois de cada deploy.
+- Fazer backup antes de alterações à aplicação ou base de dados.
+
+## Scripts principais
+
+```text
+npm run dev                 Desenvolvimento local
+npm run typecheck           Verificação TypeScript
+npm run build               Build Next.js
+npm run build:production    Validação + typecheck + build de produção
+npm run verify:production   Validar variáveis do servidor
+npm run db:lots             Aplicar tabelas auxiliares no desenvolvimento
+npm run db:production       Preparar/aplicar estrutura da BD em produção
+npm run backup:db           Criar backup comprimido da BD
+npm start                   Arrancar através de app.js/server.cjs
+```
+
+## Estrutura
+
+- `app/` — páginas, rotas e Server Actions.
 - `components/` — componentes reutilizáveis.
-- `lib/` — autenticação, base de dados, turnos e geração de lotes.
-- `prisma/` — modelo de dados e dados de demonstração.
+- `lib/` — autenticação, base de dados, lotes, turnos, métricas e regras operacionais.
+- `prisma/` — schema e SQL auxiliar.
+- `scripts/` — preparação da BD, validação e backups.
+- `public/` — imagens e recursos estáticos.
+
+A aplicação mantém-se em fase `0.9.x` até concluir a instalação e validação com utilização real no servidor de produção.
