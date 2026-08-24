@@ -1,0 +1,7 @@
+# Segredos e dados gerados no servidor de produção
+.env.production
+.env.production.local
+backups/
+
+# Build local
+.next/
