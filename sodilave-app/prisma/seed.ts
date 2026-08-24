@@ -4,16 +4,16 @@ import bcrypt from "bcryptjs";
 const prisma = new PrismaClient();
 
 const users = [
-  { name: "Rodrigo", pin: "1234", role: UserRole.ADMIN },
-  { name: "Ana", pin: "4321", role: UserRole.ADMIN },
-  { name: "Emídio", pin: "1111", role: UserRole.OPERATOR },
-  { name: "Miguel", pin: "1112", role: UserRole.OPERATOR },
-  { name: "Nuno", pin: "1113", role: UserRole.OPERATOR },
-  { name: "Rafael", pin: "1114", role: UserRole.OPERATOR },
-  { name: "Hugo", pin: "1115", role: UserRole.OPERATOR },
-  { name: "Luís", pin: "1116", role: UserRole.PRODUCTION_MANAGER },
-  { name: "Claudio", pin: "1117", role: UserRole.OPERATOR },
-  { name: "Olga", pin: "0000", role: UserRole.AUDITOR },
+  { name: "Rodrigo", pin: "00001234", role: UserRole.ADMIN },
+  { name: "Ana", pin: "00004321", role: UserRole.ADMIN },
+  { name: "Emídio", pin: "00001111", role: UserRole.OPERATOR },
+  { name: "Miguel", pin: "00001112", role: UserRole.OPERATOR },
+  { name: "Nuno", pin: "00001113", role: UserRole.OPERATOR },
+  { name: "Rafael", pin: "00001114", role: UserRole.OPERATOR },
+  { name: "Hugo", pin: "00001115", role: UserRole.OPERATOR },
+  { name: "Luís", pin: "00001116", role: UserRole.PRODUCTION_MANAGER },
+  { name: "Claudio", pin: "00001117", role: UserRole.OPERATOR },
+  { name: "Olga", pin: "00000000", role: UserRole.AUDITOR },
 ];
 
 async function disableOrRemoveDemoUser(name: string) {
