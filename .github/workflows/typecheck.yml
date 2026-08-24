@@ -1,4 +1,4 @@
-name: Typecheck
+name: Validate application
 
 on:
   push:
@@ -7,15 +7,21 @@ on:
     branches: [dev, main]
 
 jobs:
-  typecheck:
+  validate:
     runs-on: ubuntu-latest
     defaults:
       run:
         working-directory: sodilave-app
+    env:
+      NODE_ENV: production
+      DATABASE_URL: mysql://typecheck:typecheck@localhost:3306/typecheck
+      SESSION_SECRET: typecheck-only-secret-with-more-than-32-characters
+      APP_URL: https://producao.sodilave.pt
+      APP_VERSION: 0.9.8
     steps:
       - name: Checkout
         uses: actions/checkout@v4
-      - name: Node.js
+      - name: Node.js 22
         uses: actions/setup-node@v4
         with:
           node-version: 22
@@ -23,8 +29,9 @@ jobs:
           cache-dependency-path: sodilave-app/package-lock.json
       - name: Install dependencies
         run: npm ci
+      - name: Validate production environment
+        run: npm run verify:production
       - name: Typecheck
         run: npm run typecheck
-        env:
-          DATABASE_URL: mysql://typecheck:typecheck@localhost:3306/typecheck
-          SESSION_SECRET: typecheck-only-secret-with-more-than-32-characters
+      - name: Production build
+        run: npm run build
