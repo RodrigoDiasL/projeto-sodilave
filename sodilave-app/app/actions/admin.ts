@@ -4,7 +4,8 @@ import { revalidatePath } from "next/cache";
 import { requireAdmin } from "@/lib/auth";
 import { db } from "@/lib/db";
 import { assertPinAvailable, assertValidPin } from "@/lib/pin-policy";
-import { UserRole } from "@prisma/client";
+import { cancelProduction } from "@/app/actions/production-admin";
+import { RecordStatus, UserRole } from "@prisma/client";
 
 const text = (fd: FormData, key: string, max = 120) => String(fd.get(key) || "").trim().slice(0, max);
 const positiveNumber = (fd: FormData, key: string, label: string, max = 999999999) => {
@@ -205,15 +206,34 @@ export async function deleteLotRule(formData: FormData) {
   await db.productionLotRule.delete({ where: { id } });
   revalidatePath("/admin/lot-rules");
 }
+
+// Compatibilidade com referências antigas: registos operacionais nunca são apagados fisicamente.
 export async function deleteProduction(formData: FormData) {
-  await requireAdmin(); const id = positiveId(formData);
-  await db.production.delete({ where: { id } }); revalidatePath("/admin/productions");
+  return cancelProduction(formData);
 }
+
 export async function deleteMachineCheckup(formData: FormData) {
-  await requireAdmin(); const id = positiveId(formData);
-  await db.machineCheckup.delete({ where: { id } }); revalidatePath("/admin/checkups");
+  const admin = await requireAdmin();
+  const id = positiveId(formData);
+  await db.$transaction(async (tx) => {
+    const row = await tx.machineCheckup.findUnique({ where: { id }, select: { status: true } });
+    if (!row) throw new Error("A verificação já não existe.");
+    if (row.status === RecordStatus.CANCELLED) throw new Error("A verificação já está cancelada.");
+    await tx.machineCheckup.update({ where: { id }, data: { status: RecordStatus.CANCELLED } });
+    await tx.auditLog.create({ data: { userId: admin.id, action: "CANCEL", entity: "MachineCheckup", entityId: String(id) } });
+  });
+  revalidatePath("/admin/checkups"); revalidatePath("/dashboard");
 }
+
 export async function deleteGeneralCheckup(formData: FormData) {
-  await requireAdmin(); const id = positiveId(formData);
-  await db.shiftGeneralCheck.delete({ where: { id } }); revalidatePath("/admin/checkups");
+  const admin = await requireAdmin();
+  const id = positiveId(formData);
+  await db.$transaction(async (tx) => {
+    const row = await tx.shiftGeneralCheck.findUnique({ where: { id }, select: { status: true } });
+    if (!row) throw new Error("A verificação já não existe.");
+    if (row.status === RecordStatus.CANCELLED) throw new Error("A verificação já está cancelada.");
+    await tx.shiftGeneralCheck.update({ where: { id }, data: { status: RecordStatus.CANCELLED } });
+    await tx.auditLog.create({ data: { userId: admin.id, action: "CANCEL", entity: "ShiftGeneralCheck", entityId: String(id) } });
+  });
+  revalidatePath("/admin/checkups"); revalidatePath("/dashboard");
 }
