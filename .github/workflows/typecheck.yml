@@ -28,7 +28,7 @@ jobs:
           cache: npm
           cache-dependency-path: sodilave-app/package-lock.json
       - name: Install dependencies
-        run: npm ci
+        run: npm ci --include=dev
       - name: Validate production environment
         run: npm run verify:production
       - name: Typecheck
