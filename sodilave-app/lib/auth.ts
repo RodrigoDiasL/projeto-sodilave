@@ -3,9 +3,10 @@ import { SignJWT, jwtVerify } from "jose";
 import { redirect } from "next/navigation";
 import { db } from "@/lib/db";
 
-const COOKIE = "sodilave_session";
+const IS_PRODUCTION = process.env.NODE_ENV === "production";
+const COOKIE = IS_PRODUCTION ? "__Host-sodilave_session" : "sodilave_session";
 const configuredSecret = process.env.SESSION_SECRET;
-if (process.env.NODE_ENV === "production" && (!configuredSecret || configuredSecret.length < 32)) {
+if (IS_PRODUCTION && (!configuredSecret || configuredSecret.length < 32)) {
   throw new Error("SESSION_SECRET é obrigatório em produção e deve ter pelo menos 32 caracteres.");
 }
 const secret = new TextEncoder().encode(configuredSecret || "dev-only-change-me");
@@ -18,9 +19,10 @@ export async function createSession(payload: SessionPayload) {
   jar.set(COOKIE, token, {
     httpOnly: true,
     sameSite: "lax",
-    secure: process.env.NODE_ENV === "production",
+    secure: IS_PRODUCTION,
     path: "/",
     maxAge: 60 * 60 * 12,
+    priority: "high",
   });
 }
 
