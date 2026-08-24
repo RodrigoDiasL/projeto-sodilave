@@ -36,7 +36,7 @@ export async function createUser(formData: FormData) {
   const name = requireText(text(formData, "name"), "O nome");
   const pin = text(formData, "pin", 8);
   const role = text(formData, "role", 20) as UserRole;
-  if (!/^\d{4,8}$/.test(pin)) throw new Error("O PIN deve ter entre 4 e 8 algarismos.");
+  if (!/^\d{8}$/.test(pin)) throw new Error("O PIN deve ter exatamente 8 algarismos.");
   if (!Object.values(UserRole).includes(role)) throw new Error("Perfil inválido.");
   const row = await db.user.create({ data: { name, pinHash: await bcrypt.hash(pin, 12), role, active: true } });
   await db.auditLog.create({ data: { userId: admin.id, action: "CREATE", entity: "User", entityId: String(row.id) } });
@@ -51,7 +51,7 @@ export async function updateUser(formData: FormData) {
   const role = text(formData, "role", 20) as UserRole;
   const active = formData.get("active") === "on";
   if (!Object.values(UserRole).includes(role)) throw new Error("Perfil inválido.");
-  if (pin && !/^\d{4,8}$/.test(pin)) throw new Error("O novo PIN deve ter entre 4 e 8 algarismos.");
+  if (pin && !/^\d{8}$/.test(pin)) throw new Error("O novo PIN deve ter exatamente 8 algarismos.");
   if (id === admin.id && (!active || role !== UserRole.ADMIN)) throw new Error("Não pode retirar o seu próprio acesso de administrador nem desativar a conta com sessão iniciada.");
   const data: { name: string; role: UserRole; active: boolean; pinHash?: string } = { name, role, active };
   if (pin) data.pinHash = await bcrypt.hash(pin, 12);
