@@ -1,7 +1,7 @@
 "use server";
 import { revalidatePath } from "next/cache";
 import { db } from "@/lib/db";
-import { requireUser } from "@/lib/auth";
+import { requireOperationalUser } from "@/lib/auth";
 import { getShift, getShiftWindow } from "@/lib/shift";
 import { OilLevel, RecordStatus } from "@prisma/client";
 import { assertMachineRunning } from "@/lib/active-machines";
@@ -14,7 +14,7 @@ const checkOptional = (v: number | null, min: number, max: number, label: string
 function assertWithinOriginalShift(observedAt:Date){const window=getShiftWindow(observedAt);if(new Date()>=window.end)throw new Error("Esta verificação só pode ser alterada durante o turno em que foi registada.");}
 
 export async function saveMachineCheckup(formData: FormData) {
-  const user = await requireUser();
+  const user = await requireOperationalUser();
   const intent = String(formData.get("intent") || "draft");
   const finalize = intent === "finalize";
   if (!["draft", "finalize"].includes(intent)) throw new Error("Ação inválida.");
@@ -54,7 +54,7 @@ export async function saveMachineCheckup(formData: FormData) {
 }
 
 export async function saveGeneralCheck(formData: FormData) {
-  const user = await requireUser();
+  const user = await requireOperationalUser();
   const intent = String(formData.get("intent") || "draft");
   const finalize = intent === "finalize";
   if (!["draft", "finalize"].includes(intent)) throw new Error("Ação inválida.");
