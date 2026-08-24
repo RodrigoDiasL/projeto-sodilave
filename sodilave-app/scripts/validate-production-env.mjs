@@ -27,6 +27,10 @@ if (appUrl) {
     const parsed = new URL(appUrl);
     if (parsed.protocol !== "https:") failures.push("APP_URL deve usar HTTPS em produção.");
     if (parsed.pathname !== "/" || parsed.search || parsed.hash) failures.push("APP_URL deve conter apenas a origem da aplicação, sem caminho, query ou hash.");
+    const host = parsed.hostname.toLowerCase();
+    if (host === "sodilave.pt" || host === "www.sodilave.pt") {
+      failures.push("O domínio principal e www.sodilave.pt estão reservados ao website institucional. Use um subdomínio separado para a aplicação.");
+    }
   } catch {
     failures.push("APP_URL não é um URL válido.");
   }
