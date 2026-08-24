@@ -7,12 +7,21 @@ import { createSession, destroySession } from "@/lib/auth";
 export async function loginAction(_: { error?: string } | undefined, formData: FormData) {
   const pin = String(formData.get("pin") || "").trim();
   if (!/^\d{8}$/.test(pin)) return { error: "Introduza um PIN válido de 8 algarismos." };
+
   const users = await db.user.findMany({ where: { active: true } });
+  const matches = [];
   for (const user of users) {
-    if (await bcrypt.compare(pin, user.pinHash)) {
-      await createSession({ userId: user.id, role: user.role, name: user.name });
-      redirect("/dashboard");
-    }
+    if (await bcrypt.compare(pin, user.pinHash)) matches.push(user);
+  }
+
+  if (matches.length > 1) {
+    console.error(`[sodilave] PIN duplicado detetado em ${matches.length} contas ativas.`);
+    return { error: "Existe um conflito de credenciais. Contacte um administrador." };
+  }
+  if (matches.length === 1) {
+    const user = matches[0];
+    await createSession({ userId: user.id, role: user.role, name: user.name });
+    redirect("/dashboard");
   }
   return { error: "PIN incorreto." };
 }
