@@ -1,7 +1,7 @@
 import fs from "node:fs/promises";
 import { createWriteStream } from "node:fs";
 import path from "node:path";
-import { spawn } from "node:child_process";
+import { spawn, spawnSync } from "node:child_process";
 import { createGzip } from "node:zlib";
 import { pipeline } from "node:stream/promises";
 
@@ -22,12 +22,21 @@ const backupDir = path.resolve(process.env.BACKUP_DIR || path.join(process.cwd()
 const retentionDays = Number(process.env.BACKUP_RETENTION_DAYS || "30");
 if (!Number.isInteger(retentionDays) || retentionDays < 1) throw new Error("BACKUP_RETENTION_DAYS é inválido.");
 
+function resolveDumpBinary() {
+  if (process.env.MYSQLDUMP_BIN) return process.env.MYSQLDUMP_BIN;
+  for (const candidate of ["mysqldump", "mariadb-dump"]) {
+    const probe = spawnSync(candidate, ["--version"], { stdio: "ignore" });
+    if (!probe.error && probe.status === 0) return candidate;
+  }
+  throw new Error("Não foi encontrado mysqldump nem mariadb-dump no servidor. Defina MYSQLDUMP_BIN com o caminho correto.");
+}
+
 await fs.mkdir(backupDir, { recursive: true, mode: 0o700 });
 
 const stamp = new Date().toISOString().replace(/[-:]/g, "").replace(/\.\d{3}Z$/, "Z").replace("T", "-");
 const filename = `sodilave-${stamp}.sql.gz`;
 const target = path.join(backupDir, filename);
-const dumpBinary = process.env.MYSQLDUMP_BIN || "mysqldump";
+const dumpBinary = resolveDumpBinary();
 
 const args = [
   `--host=${host}`,
@@ -51,7 +60,7 @@ child.stderr.on("data", (chunk) => { stderr += chunk; });
 
 const exitPromise = new Promise((resolve, reject) => {
   child.once("error", reject);
-  child.once("close", (code) => code === 0 ? resolve() : reject(new Error(stderr.trim() || `mysqldump terminou com código ${code}.`)));
+  child.once("close", (code) => code === 0 ? resolve() : reject(new Error(stderr.trim() || `${dumpBinary} terminou com código ${code}.`)));
 });
 
 try {
