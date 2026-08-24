@@ -30,7 +30,7 @@ export async function verifySecondWorker(formData: FormData, currentUserId: numb
   const secondWorkerPin = String(formData.get("secondWorkerPin") || "").trim();
   if (!secondWorkerId) throw new Error("Selecione o colega que está a trabalhar no turno.");
   if (secondWorkerId === currentUserId) throw new Error("A confirmação tem de ser feita por um segundo trabalhador.");
-  if (!/^\d{4,8}$/.test(secondWorkerPin)) throw new Error("O segundo trabalhador deve introduzir um PIN válido.");
+  if (!/^\d{8}$/.test(secondWorkerPin)) throw new Error("O segundo trabalhador deve introduzir um PIN válido de 8 algarismos.");
 
   const worker = await db.user.findFirst({
     where: { id: secondWorkerId, active: true, role: { in: ["OPERATOR", "PRODUCTION_MANAGER"] } },
