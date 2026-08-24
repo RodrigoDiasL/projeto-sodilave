@@ -6,7 +6,7 @@ export function SecondWorkerConfirmation({ workers, title = "Confirmação do se
   return <section className="subpanel form-stack second-worker-confirmation">
     <div>
       <h3>{title}</h3>
-      <p className="muted small">Para finalizar, selecione o colega presente no turno. Essa pessoa deve introduzir pessoalmente o respetivo PIN.</p>
+      <p className="muted small">Para finalizar, selecione o colega presente no turno. Essa pessoa deve introduzir pessoalmente o respetivo PIN de 8 algarismos.</p>
     </div>
     <div className="two-col">
       <label>Segundo trabalhador *
@@ -16,7 +16,7 @@ export function SecondWorkerConfirmation({ workers, title = "Confirmação do se
         </select>
       </label>
       <label>PIN de confirmação *
-        <input name="secondWorkerPin" type="password" inputMode="numeric" autoComplete="off" minLength={4} maxLength={8} placeholder="Introduzir PIN"/>
+        <input name="secondWorkerPin" type="password" inputMode="numeric" autoComplete="off" pattern="[0-9]{8}" minLength={8} maxLength={8} placeholder="8 algarismos"/>
       </label>
     </div>
   </section>;
