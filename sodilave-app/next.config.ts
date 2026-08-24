@@ -15,11 +15,11 @@ const contentSecurityPolicy = [
   "connect-src 'self'",
   "manifest-src 'self'",
   "worker-src 'self' blob:",
-  ...(isProduction ? ["upgrade-insecure-requests"] : []),
+  "upgrade-insecure-requests",
 ].join("; ");
 
 const securityHeaders = [
-  { key: "Content-Security-Policy", value: contentSecurityPolicy },
+  ...(isProduction ? [{ key: "Content-Security-Policy", value: contentSecurityPolicy }] : []),
   { key: "X-Content-Type-Options", value: "nosniff" },
   { key: "X-Frame-Options", value: "DENY" },
   { key: "Referrer-Policy", value: "same-origin" },
