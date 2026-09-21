@@ -3,7 +3,7 @@ import { revalidatePath } from "next/cache";
 import { db } from "@/lib/db";
 import { requireOperationalUser } from "@/lib/auth";
 import { getShift, getShiftWindow } from "@/lib/shift";
-import { OilLevel, RecordStatus } from "@prisma/client";
+import { OilLevel, RecordStatus } from "@/lib/db-types";
 import { assertMachineRunning } from "@/lib/active-machines";
 import { saveRecordConfirmation, verifySecondWorker } from "@/lib/second-worker-confirmation";
 
