@@ -5,7 +5,7 @@ import { requireAdmin } from "@/lib/auth";
 import { db } from "@/lib/db";
 import { assertPinAvailable, assertValidPin } from "@/lib/pin-policy";
 import { cancelProduction } from "@/app/actions/production-admin";
-import { RecordStatus, UserRole } from "@prisma/client";
+import { RecordStatus, UserRole } from "@/lib/db-types";
 
 const text = (fd: FormData, key: string, max = 120) => String(fd.get(key) || "").trim().slice(0, max);
 const positiveNumber = (fd: FormData, key: string, label: string, max = 999999999) => {
