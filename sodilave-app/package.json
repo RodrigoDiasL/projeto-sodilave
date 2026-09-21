@@ -18,7 +18,8 @@
     "db:lots": "node scripts/apply-lot-schema.mjs",
     "db:production": "npm run verify:production && node scripts/prepare-production-db.mjs",
     "backup:db": "node scripts/backup-database.mjs",
-    "pins:reset": "node scripts/reset-user-pin.mjs"
+    "pins:reset": "node scripts/reset-user-pin.mjs",
+    "db:upgrade": "node scripts/prepare-production-db.mjs"
   },
   "dependencies": {
     "bcryptjs": "^3.0.2",
