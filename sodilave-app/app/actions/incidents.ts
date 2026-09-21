@@ -2,7 +2,7 @@
 import { revalidatePath } from "next/cache";
 import { db } from "@/lib/db";
 import { requireOperationalUser } from "@/lib/auth";
-import { IncidentType, MachineEventType, MachineStatus, Prisma } from "@prisma/client";
+import { IncidentType, MachineEventType, MachineStatus } from "@/lib/db-types";
 import { changeMachineStatus } from "@/lib/machine-state";
 import { getActiveWeeklyStartup } from "@/lib/active-machines";
 
