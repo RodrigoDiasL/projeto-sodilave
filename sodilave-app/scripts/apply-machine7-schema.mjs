@@ -3,7 +3,7 @@ import path from "node:path";
 import { applySqlFile, closeDb } from "./mysql-client.mjs";
 
 try {
-  await applySqlFile(path.join(process.cwd(), "database", "migrations", "002-machine7-cavities.sql"), fs);
+  await applySqlFile(path.join(process.cwd(), "database", "migrations", "2026-07-26-machine7-cavities.sql"), fs);
   console.log("Estrutura da máquina 7 aplicada com sucesso.");
 } catch (error) {
   console.error("Não foi possível aplicar a estrutura da máquina 7.");
