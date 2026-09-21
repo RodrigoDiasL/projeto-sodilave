@@ -12,9 +12,10 @@ export async function cancelProduction(formData: FormData) {
   if (!Number.isInteger(id) || id <= 0) throw new Error("Produção inválida.");
 
   await db.$transaction(async (tx) => {
-    const rows = await tx.$queryRaw<{ id: number; status: RecordStatus }[]>(Prisma.sql`
-      SELECT id, status FROM Production WHERE id=${id} FOR UPDATE
-    `);
+    const rows = await tx.query<{ id: number; status: RecordStatus }[]>(
+      "SELECT id, status FROM Production WHERE id=? FOR UPDATE",
+      [id],
+    );
     const production = rows[0];
     if (!production) throw new Error("A produção já não existe.");
     if (production.status === RecordStatus.CANCELLED) throw new Error("A produção já se encontra cancelada.");
