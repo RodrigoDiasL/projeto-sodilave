@@ -1,6 +1,6 @@
 "use server";
 
-import { Prisma, RecordStatus } from "@prisma/client";
+import { RecordStatus } from "@/lib/db-types";
 import { revalidatePath } from "next/cache";
 import { requireAdmin } from "@/lib/auth";
 import { db } from "@/lib/db";
