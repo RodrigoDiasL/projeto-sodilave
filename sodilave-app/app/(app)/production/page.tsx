@@ -32,7 +32,7 @@ export default async function ProductionPage() {
 
   return <>
     <PageIntro title="Produções" subtitle="Inicie uma nova produção ou continue um registo já guardado." />
-    {user.role === "ADMIN" && <section className="panel form-stack historical-production-panel">
+    {user.role === "ADMIN" && <section className="panel form-stack historical-production-panel" id="historica">
       <div><h2>Introduzir produção de outra data</h2><p className="muted">Uso administrativo para registar produções anteriores à entrada em funcionamento da aplicação. É permitida apenas uma produção normal por máquina, data e turno.</p></div>
       <form action="/production/new" method="get" className="inline-form">
         <label>Data<input type="date" name="date" defaultValue={yesterdayText} max={todayText} required/></label>
