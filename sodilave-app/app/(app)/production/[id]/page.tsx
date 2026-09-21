@@ -6,6 +6,7 @@ import { db } from "@/lib/db";
 import { requireUser } from "@/lib/auth";
 import { getProductionFormData } from "@/lib/production-form-data";
 import { productionToInitial } from "@/lib/production-initial";
+import { getShiftPeerConfirmation } from "@/lib/second-worker-confirmation";
 
 type CavityDataRow = { rightInitialWeightG: unknown; rightMidWeightG: unknown };
 type CavityTestRow = { type: string; moment: string; result: string };
@@ -31,7 +32,10 @@ export default async function EditProductionPage({ params }: { params: Promise<{
     cavityTests = await db.$queryRaw<CavityTestRow[]>`SELECT type, moment, result FROM ProductionCavityTest WHERE productionId = ${production.id} AND cavity = 'RIGHT'`;
   }
 
-  const data = await getProductionFormData();
+  const [data, peerConfirmation] = await Promise.all([
+    getProductionFormData({ currentUserId: user.id }),
+    user.role === "ADMIN" ? Promise.resolve(null) : getShiftPeerConfirmation(user.id),
+  ]);
   const association = await db.$queryRaw<{ labelCode: string }[]>`SELECT labelCode FROM ProductionLotAssociation WHERE productionId = ${production.id} LIMIT 1`;
   const initial = productionToInitial(production, cavityData, cavityTests);
   initial.productionLot = association[0]?.labelCode ?? production.productionLot;
@@ -41,6 +45,6 @@ export default async function EditProductionPage({ params }: { params: Promise<{
   return <>
     <PageIntro title={`${production.status === "FINALIZED" ? "Corrigir" : "Continuar"} produção ${displayLot}`} subtitle={user.role === "ADMIN" ? "O administrador pode concluir ou corrigir este registo sem confirmação de um colega." : "As correções de produções finalizadas só são permitidas até ao fim do respetivo turno."} />
     <ProductionForm {...data} products={products} machines={[production.machine]} fixedMachine={production.machine} initial={initial} />
-    <SecondWorkerConfirmationPortals workers={data.workers} selector="form.machine-production-form" disabled={user.role === "ADMIN"} />
+    <SecondWorkerConfirmationPortals workers={data.workers} selector="form.machine-production-form" disabled={user.role === "ADMIN" || Boolean(peerConfirmation)} />
   </>;
 }
