@@ -3,7 +3,7 @@ import { revalidatePath } from "next/cache";
 import { db } from "@/lib/db";
 import { requireOperationalUser } from "@/lib/auth";
 import { getShift } from "@/lib/shift";
-import { MachineEventType, MachineStatus, RecordStatus } from "@prisma/client";
+import { MachineEventType, MachineStatus, RecordStatus } from "@/lib/db-types";
 import { changeMachineStatus } from "@/lib/machine-state";
 
 export async function saveWeeklyShutdown(fd: FormData){
