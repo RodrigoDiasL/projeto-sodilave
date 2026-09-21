@@ -3,7 +3,7 @@ import { revalidatePath } from "next/cache";
 import { db } from "@/lib/db";
 import { requireOperationalUser } from "@/lib/auth";
 import { getShift } from "@/lib/shift";
-import { MachineEventType, MachineStatus, RecordStatus, TestResult } from "@prisma/client";
+import { MachineEventType, MachineStatus, RecordStatus, TestResult } from "@/lib/db-types";
 import { changeMachineStatus } from "@/lib/machine-state";
 
 const result = (fd: FormData, key: string) => {
