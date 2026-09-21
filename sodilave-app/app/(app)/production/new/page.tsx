@@ -46,7 +46,7 @@ export default async function NewProductionPage({ searchParams }: { searchParams
           previous &&
           machineProducts.some((product) => product.id === previous.productId) &&
           previous.materials.length > 0 &&
-          previous.materials.every((material) => activeLotIds.has(material.rawMaterialLotId)),
+          previous.materials.every((material:any) => activeLotIds.has(material.rawMaterialLotId)),
         );
         const defaults = !primary && previousIsUsable && previous ? previousProductionToDefaults(previous) : undefined;
 
