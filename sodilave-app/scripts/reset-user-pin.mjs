@@ -1,7 +1,6 @@
 import bcrypt from "bcryptjs";
-import { PrismaClient } from "@prisma/client";
+import { query, execute, closeDb } from "./mysql-client.mjs";
 
-const prisma = new PrismaClient();
 const name = String(process.env.RESET_USER_NAME || "").trim();
 const pin = String(process.env.RESET_USER_PIN || "").trim();
 
@@ -9,22 +8,20 @@ if (!name) throw new Error("Defina RESET_USER_NAME com o nome exato do utilizado
 if (!/^\d{8}$/.test(pin)) throw new Error("RESET_USER_PIN deve ter exatamente 8 algarismos.");
 
 try {
-  const user = await prisma.user.findFirst({ where: { name } });
+  const users = await query("SELECT id,name,pinHash FROM User WHERE name=? LIMIT 1", [name]);
+  const user = users[0];
   if (!user) throw new Error("Utilizador não encontrado.");
 
-  const others = await prisma.user.findMany({
-    where: { id: { not: user.id } },
-    select: { pinHash: true },
-  });
+  const others = await query("SELECT pinHash FROM User WHERE id<>?", [user.id]);
   for (const other of others) {
     if (await bcrypt.compare(pin, other.pinHash)) throw new Error("O novo PIN já pertence a outro utilizador.");
   }
 
-  await prisma.user.update({
-    where: { id: user.id },
-    data: { pinHash: await bcrypt.hash(pin, 12), active: true },
-  });
+  await execute(
+    "UPDATE User SET pinHash=?, active=1, updatedAt=NOW(3) WHERE id=?",
+    [await bcrypt.hash(pin, 12), user.id],
+  );
   console.log(`PIN de ${user.name} reposto com sucesso. Remova RESET_USER_PIN do ambiente/comando usado para a recuperação.`);
 } finally {
-  await prisma.$disconnect();
+  await closeDb();
 }
