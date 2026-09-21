@@ -1,15 +1,11 @@
 import fs from "node:fs/promises";
 import path from "node:path";
 import crypto from "node:crypto";
-import { spawnSync } from "node:child_process";
 import bcrypt from "bcryptjs";
-import { PrismaClient } from "@prisma/client";
-
-const prisma = new PrismaClient();
-const npx = process.platform === "win32" ? "npx.cmd" : "npx";
+import { db, query, execute, closeDb, splitSqlStatements } from "./mysql-client.mjs";
 
 async function databaseState() {
-  const rows = await prisma.$queryRawUnsafe(
+  const rows = await query(
     "SELECT COUNT(*) AS totalTables, SUM(CASE WHEN table_name = 'User' THEN 1 ELSE 0 END) AS userTable FROM information_schema.tables WHERE table_schema = DATABASE()"
   );
   return {
@@ -18,18 +14,20 @@ async function databaseState() {
   };
 }
 
-function createCoreSchema() {
-  console.log("Base de dados vazia: a criar o schema Prisma inicial...");
-  const result = spawnSync(npx, ["prisma", "db", "push", "--skip-generate"], {
-    cwd: process.cwd(),
-    env: process.env,
-    stdio: "inherit",
-  });
-  if (result.status !== 0) throw new Error("Falhou a criação do schema Prisma inicial.");
+async function applySqlText(sql) {
+  for (const statement of splitSqlStatements(sql)) {
+    await db.query(statement);
+  }
+}
+
+async function createCoreSchema() {
+  console.log("Base de dados vazia: a criar o schema SQL inicial...");
+  const sql = await fs.readFile(path.join(process.cwd(), "database", "001-core.sql"), "utf8");
+  await applySqlText(sql);
 }
 
 async function ensureMigrationTable() {
-  await prisma.$executeRawUnsafe(`
+  await db.query(`
     CREATE TABLE IF NOT EXISTS AppSchemaMigration (
       name VARCHAR(255) NOT NULL,
       checksum CHAR(64) NOT NULL,
@@ -39,16 +37,16 @@ async function ensureMigrationTable() {
   `);
 }
 
-async function applyManualMigrations() {
-  const folder = path.join(process.cwd(), "prisma", "manual");
+async function applyMigrations() {
+  const folder = path.join(process.cwd(), "database", "migrations");
   const files = (await fs.readdir(folder)).filter((name) => name.endsWith(".sql")).sort();
 
   for (const file of files) {
     const sql = await fs.readFile(path.join(folder, file), "utf8");
     const checksum = crypto.createHash("sha256").update(sql).digest("hex");
-    const existing = await prisma.$queryRawUnsafe(
+    const existing = await query(
       "SELECT checksum FROM AppSchemaMigration WHERE name = ? LIMIT 1",
-      file,
+      [file],
     );
 
     if (existing.length) {
@@ -60,23 +58,27 @@ async function applyManualMigrations() {
     }
 
     console.log(`A aplicar migração: ${file}`);
-    const statements = sql
-      .split(/;\s*(?:\r?\n|$)/)
-      .map((part) => part.trim())
-      .filter(Boolean);
-
-    for (const statement of statements) await prisma.$executeRawUnsafe(statement);
-    await prisma.$executeRawUnsafe(
-      "INSERT INTO AppSchemaMigration (name, checksum) VALUES (?, ?)",
-      file,
-      checksum,
-    );
+    const connection = await db.getConnection();
+    try {
+      await connection.beginTransaction();
+      for (const statement of splitSqlStatements(sql)) await connection.query(statement);
+      await connection.execute(
+        "INSERT INTO AppSchemaMigration (name, checksum) VALUES (?, ?)",
+        [file, checksum],
+      );
+      await connection.commit();
+    } catch (error) {
+      await connection.rollback();
+      throw error;
+    } finally {
+      connection.release();
+    }
   }
 }
 
 async function ensureInitialAdmin() {
-  const count = await prisma.user.count();
-  if (count > 0) {
+  const rows = await query("SELECT COUNT(*) AS total FROM User");
+  if (Number(rows?.[0]?.total ?? 0) > 0) {
     console.log("Já existem utilizadores; não foi criado nenhum administrador inicial.");
     return;
   }
@@ -87,15 +89,11 @@ async function ensureInitialAdmin() {
     throw new Error("A base não tem utilizadores. Defina INITIAL_ADMIN_NAME e INITIAL_ADMIN_PIN com um PIN de 8 algarismos antes de continuar.");
   }
 
-  await prisma.user.create({
-    data: {
-      name: name.slice(0, 120),
-      pinHash: await bcrypt.hash(pin, 12),
-      role: "ADMIN",
-      active: true,
-    },
-  });
-  console.log(`Administrador inicial criado: ${name}. Remova INITIAL_ADMIN_PIN das variáveis do cPanel depois do primeiro arranque.`);
+  await execute(
+    "INSERT INTO User (name, pinHash, role, active, createdAt, updatedAt) VALUES (?, ?, 'ADMIN', 1, NOW(3), NOW(3))",
+    [name.slice(0, 120), await bcrypt.hash(pin, 12)],
+  );
+  console.log(`Administrador inicial criado: ${name}. Remova INITIAL_ADMIN_PIN das variáveis do servidor depois da primeira execução.`);
 }
 
 try {
@@ -104,12 +102,12 @@ try {
     if (state.totalTables > 0) {
       throw new Error("A base de dados não está vazia, mas não contém o schema esperado da Sodilave. Por segurança, a instalação foi interrompida.");
     }
-    createCoreSchema();
+    await createCoreSchema();
   }
   await ensureMigrationTable();
-  await applyManualMigrations();
+  await applyMigrations();
   await ensureInitialAdmin();
   console.log("Base de dados de produção preparada com sucesso.");
 } finally {
-  await prisma.$disconnect();
+  await closeDb();
 }
