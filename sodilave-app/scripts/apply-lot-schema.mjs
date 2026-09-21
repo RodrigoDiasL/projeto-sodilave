@@ -3,8 +3,8 @@ import path from "node:path";
 import { applySqlFile, closeDb } from "./mysql-client.mjs";
 
 const sqlFiles = [
-  "003-commercial-internal-lots.sql",
-  "004-production-stock-ledger.sql",
+  "2026-07-27-commercial-internal-lots.sql",
+  "2026-08-03-production-stock-ledger.sql",
 ];
 
 try {
