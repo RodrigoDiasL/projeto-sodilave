@@ -1,4 +1,3 @@
-import { Prisma } from "@prisma/client";
 import { db } from "@/lib/db";
 import { getReportingPeriods } from "@/lib/reporting-periods";
 
@@ -39,20 +38,20 @@ export async function getAdminProductionStats(now = new Date()): Promise<AdminPr
   const periods = getReportingPeriods(now);
   const [machines, rows] = await Promise.all([
     db.machine.findMany({ where: { active: true }, select: { id: true, code: true, name: true }, orderBy: { code: "asc" } }),
-    db.$queryRaw<AggregateRow[]>(Prisma.sql`
+    db.query<AggregateRow[]>(`
       SELECT
         machineId,
-        SUM(CASE WHEN startedAt >= ${periods.day} THEN COALESCE(quantityProduced, 0) ELSE 0 END) AS dayCount,
-        SUM(CASE WHEN startedAt >= ${periods.week} THEN COALESCE(quantityProduced, 0) ELSE 0 END) AS weekCount,
-        SUM(CASE WHEN startedAt >= ${periods.month} THEN COALESCE(quantityProduced, 0) ELSE 0 END) AS monthCount,
-        SUM(CASE WHEN startedAt >= ${periods.quarter} THEN COALESCE(quantityProduced, 0) ELSE 0 END) AS quarterCount,
-        SUM(CASE WHEN startedAt >= ${periods.semester} THEN COALESCE(quantityProduced, 0) ELSE 0 END) AS semesterCount,
-        SUM(CASE WHEN startedAt >= ${periods.year} THEN COALESCE(quantityProduced, 0) ELSE 0 END) AS yearCount,
+        SUM(CASE WHEN startedAt >= ? THEN COALESCE(quantityProduced, 0) ELSE 0 END) AS dayCount,
+        SUM(CASE WHEN startedAt >= ? THEN COALESCE(quantityProduced, 0) ELSE 0 END) AS weekCount,
+        SUM(CASE WHEN startedAt >= ? THEN COALESCE(quantityProduced, 0) ELSE 0 END) AS monthCount,
+        SUM(CASE WHEN startedAt >= ? THEN COALESCE(quantityProduced, 0) ELSE 0 END) AS quarterCount,
+        SUM(CASE WHEN startedAt >= ? THEN COALESCE(quantityProduced, 0) ELSE 0 END) AS semesterCount,
+        SUM(CASE WHEN startedAt >= ? THEN COALESCE(quantityProduced, 0) ELSE 0 END) AS yearCount,
         SUM(COALESCE(quantityProduced, 0)) AS totalCount
       FROM Production
       WHERE status = 'FINALIZED'
       GROUP BY machineId
-    `),
+    `, [periods.day, periods.week, periods.month, periods.quarter, periods.semester, periods.year]),
   ]);
 
   const byMachine = new Map(rows.map((row) => [row.machineId, row]));
