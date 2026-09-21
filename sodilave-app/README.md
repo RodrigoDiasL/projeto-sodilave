@@ -74,9 +74,9 @@ A estrutura é mantida em SQL versionado:
 database/
 ├── 001-core.sql
 └── migrations/
-    ├── 002-machine7-cavities.sql
-    ├── 003-commercial-internal-lots.sql
-    └── 004-production-stock-ledger.sql
+    ├── 2026-07-26-machine7-cavities.sql
+    ├── 2026-07-27-commercial-internal-lots.sql
+    └── 2026-08-03-production-stock-ledger.sql
 ```
 
 `npm run db:production`:
