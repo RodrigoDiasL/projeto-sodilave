@@ -261,6 +261,7 @@ export async function saveProduction(formData: FormData) {
       initialWeightG,
       midWeightG,
       quantityProduced,
+      unitsPerPackageSnapshot: product.unitsPerPackage ?? null,
       observations: String(formData.get("observations") || "").trim().slice(0, 500) || null,
       exceptionReason: otherProductionsInShift > 0 ? (exceptionReason || null) : null,
       exceptionNotes: otherProductionsInShift > 0 ? (exceptionNotes || null) : null,
