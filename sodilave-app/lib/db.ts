@@ -10,6 +10,51 @@ type QueryArgs = {
 };
 type SqlPart = { sql: string; params: any[] };
 
+type AnyRepo = {
+  findMany(args?: any): Promise<any[]>;
+  findFirst(args?: any): Promise<any | null>;
+  findUnique(args: any): Promise<any | null>;
+  findUniqueOrThrow(args: any): Promise<any>;
+  count(args?: any): Promise<number>;
+  create(args: any): Promise<any>;
+  update(args: any): Promise<any>;
+  updateMany(args: any): Promise<{ count: number }>;
+  delete(args: any): Promise<any>;
+  deleteMany(args?: any): Promise<{ count: number }>;
+  createMany(args: any): Promise<{ count: number }>;
+};
+
+export type DbApi = {
+  user: AnyRepo;
+  machine: AnyRepo;
+  product: AnyRepo;
+  rawMaterial: AnyRepo;
+  rawMaterialLot: AnyRepo;
+  productionLotRule: AnyRepo;
+  production: AnyRepo;
+  productionMaterial: AnyRepo;
+  qualityTest: AnyRepo;
+  machineCheckup: AnyRepo;
+  shiftGeneralCheck: AnyRepo;
+  auditLog: AnyRepo;
+  weeklyStartup: AnyRepo;
+  weeklyStartupMachine: AnyRepo;
+  weeklyShutdown: AnyRepo;
+  weeklyShutdownMachine: AnyRepo;
+  maintenance: AnyRepo;
+  maintenanceMachine: AnyRepo;
+  maintenanceParticipant: AnyRepo;
+  incident: AnyRepo;
+  machineEvent: AnyRepo;
+  query<T = any[]>(sql: string, params?: any[]): Promise<T>;
+  execute(sql: string, params?: any[]): Promise<number>;
+  $queryRaw<T = any[]>(strings: TemplateStringsArray, ...values: any[]): Promise<T>;
+  $queryRawUnsafe<T = any[]>(sql: string, ...params: any[]): Promise<T>;
+  $executeRaw(strings: TemplateStringsArray, ...values: any[]): Promise<number>;
+  $executeRawUnsafe(sql: string, ...params: any[]): Promise<number>;
+  $transaction<T>(fn: (tx: DbApi) => Promise<T>): Promise<T>;
+};
+
 const databaseUrl = process.env.DATABASE_URL;
 if (!databaseUrl) throw new Error("DATABASE_URL é obrigatório.");
 
@@ -624,8 +669,8 @@ function machineRepo(client: SqlClient) {
   return { ...base, findUnique };
 }
 
-function createDb(client: SqlClient) {
-  const dbObject: any = {
+function createDb(client: SqlClient): DbApi {
+  const dbObject = {
     user: simpleRepo(client, "User"),
     machine: machineRepo(client),
     product: productRepo(client),
@@ -702,9 +747,9 @@ function createDb(client: SqlClient) {
         connection.release();
       }
     },
-  };
+  } as DbApi;
   return dbObject;
 }
 
-export type DbTransaction = ReturnType<typeof createDb>;
-export const db = createDb(pool);
+export type DbTransaction = DbApi;
+export const db: DbApi = createDb(pool);
