@@ -7,35 +7,24 @@
   },
   "scripts": {
     "dev": "next dev",
-    "build": "prisma generate && next build",
+    "build": "next build",
     "build:production": "npm run verify:production && npm run typecheck && npm run build",
-    "build:cpanel": "npm run verify:production && npm run check:prisma-client && npm run typecheck:cpanel && next build",
     "start": "node app.js",
-    "typecheck": "prisma generate && tsc --noEmit",
-    "typecheck:cpanel": "tsc --noEmit",
-    "check:prisma-client": "node scripts/check-prisma-client.mjs",
-    "prisma:diagnose": "node scripts/diagnose-prisma.mjs",
+    "typecheck": "tsc --noEmit",
     "lint": "next lint",
     "verify:production": "node scripts/validate-production-env.mjs",
-    "db:generate": "prisma generate",
-    "db:migrate": "prisma migrate dev",
-    "db:deploy": "prisma migrate deploy",
-    "db:seed": "tsx prisma/seed.ts",
+    "db:seed": "node scripts/seed-dev.mjs",
     "db:machine7": "node scripts/apply-machine7-schema.mjs",
     "db:lots": "node scripts/apply-lot-schema.mjs",
-    "db:production": "npm run verify:production && prisma generate && node scripts/prepare-production-db.mjs",
+    "db:production": "npm run verify:production && node scripts/prepare-production-db.mjs",
     "backup:db": "node scripts/backup-database.mjs",
-    "pins:upgrade8": "prisma generate && node scripts/upgrade-pins-to-8.mjs",
-    "pins:reset": "prisma generate && node scripts/reset-user-pin.mjs"
-  },
-  "prisma": {
-    "seed": "tsx prisma/seed.ts"
+    "pins:reset": "node scripts/reset-user-pin.mjs"
   },
   "dependencies": {
-    "@prisma/client": "^6.19.0",
     "bcryptjs": "^3.0.2",
     "jose": "^6.1.0",
     "lucide-react": "^0.468.0",
+    "mysql2": "^3.15.3",
     "next": "^15.5.0",
     "react": "^19.1.0",
     "react-dom": "^19.1.0",
@@ -45,8 +34,6 @@
     "@types/node": "^22.0.0",
     "@types/react": "^19.0.0",
     "@types/react-dom": "^19.0.0",
-    "prisma": "^6.19.0",
-    "tsx": "^4.19.0",
     "typescript": "^5.7.0"
   }
 }
