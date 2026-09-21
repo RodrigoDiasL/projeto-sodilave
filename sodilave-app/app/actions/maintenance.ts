@@ -2,7 +2,7 @@
 import { revalidatePath } from "next/cache";
 import { db } from "@/lib/db";
 import { requireProductionManager } from "@/lib/auth";
-import { MaintenanceStatus, MaintenanceType, MachineEventType, MachineStatus } from "@prisma/client";
+import { MaintenanceStatus, MaintenanceType, MachineEventType, MachineStatus } from "@/lib/db-types";
 import { changeMachineStatus } from "@/lib/machine-state";
 
 const ids=(fd:FormData,key:string)=>[...new Set(fd.getAll(key).map(Number).filter(x=>Number.isInteger(x)&&x>0))];
