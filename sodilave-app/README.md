@@ -1,6 +1,6 @@
 # Sodilave — Gestão de Produção
 
-Aplicação interna de gestão operacional da Sodilave, construída com Next.js 15, TypeScript, Prisma e MariaDB/MySQL.
+Aplicação interna de gestão operacional da Sodilave, construída com Next.js 15, TypeScript e MariaDB/MySQL. A aplicação usa SQL direto através de `mysql2/promise`; não depende de ORM.
 
 ## Ambiente de desenvolvimento
 
@@ -13,42 +13,26 @@ Instalação local:
 
 ```bash
 npm install
-npx prisma generate
-npm run db:lots
+npm run db:production
 npm run dev
 ```
 
-O `seed` é exclusivamente para desenvolvimento/testes:
+Se a base de desenvolvimento estiver vazia, defina `INITIAL_ADMIN_NAME` e `INITIAL_ADMIN_PIN` antes de executar `db:production`.
+
+O seed opcional de desenvolvimento usa igualmente SQL direto:
 
 ```bash
 npm run db:seed
 ```
 
-## Transição para PINs de 8 dígitos
+## PINs
 
-A aplicação passou a exigir PINs de exatamente 8 algarismos e não permite PINs repetidos.
+A aplicação exige PINs de exatamente 8 algarismos e não permite PINs repetidos.
 
-Para converter apenas os PINs iniciais conhecidos de uma base de desenvolvimento já existente, sem voltar a correr o seed:
-
-```bash
-npm run pins:upgrade8
-```
-
-Se uma conta tiver um PIN diferente dos valores iniciais, o comando não a altera.
-
-Existe ainda um comando de recuperação administrativa por terminal:
+Existe um comando de recuperação administrativa:
 
 ```bash
 RESET_USER_NAME="Nome" RESET_USER_PIN="12345678" npm run pins:reset
-```
-
-No PowerShell:
-
-```powershell
-$env:RESET_USER_NAME="Nome"
-$env:RESET_USER_PIN="12345678"
-npm run pins:reset
-Remove-Item Env:RESET_USER_PIN
 ```
 
 ## Validação
@@ -82,9 +66,32 @@ As instruções completas estão em:
 DEPLOY_CPANEL.md
 ```
 
+### Base de dados
+
+A estrutura é mantida em SQL versionado:
+
+```text
+database/
+├── 001-core.sql
+└── migrations/
+    ├── 002-machine7-cavities.sql
+    ├── 003-commercial-internal-lots.sql
+    └── 004-production-stock-ledger.sql
+```
+
+`npm run db:production`:
+
+1. valida o ambiente de produção;
+2. cria o schema base apenas se a base estiver vazia;
+3. aplica as migrações SQL ainda não registadas;
+4. verifica o checksum de migrações já aplicadas;
+5. cria o primeiro administrador apenas quando não existem utilizadores.
+
+Não alterar retroativamente uma migração já aplicada. Qualquer alteração estrutural futura deve ser um novo ficheiro SQL numerado.
+
 ### Regras importantes de produção
 
-- Não executar `npm run db:seed` na base de dados real.
+- Não executar o seed de desenvolvimento na base real.
 - Usar `npm run db:production` para preparar/aplicar a estrutura suportada em produção.
 - Usar PINs de exatamente 8 algarismos.
 - PINs não podem ser repetidos entre utilizadores.
@@ -101,10 +108,10 @@ npm run typecheck           Verificação TypeScript
 npm run build               Build Next.js
 npm run build:production    Validação + typecheck + build de produção
 npm run verify:production   Validar variáveis do servidor
-npm run db:lots             Aplicar tabelas auxiliares no desenvolvimento
+npm run db:seed             Seed opcional de desenvolvimento
+npm run db:lots             Aplicar tabelas auxiliares de lotes/stock
 npm run db:production       Preparar/aplicar estrutura da BD em produção
 npm run backup:db           Criar backup comprimido da BD
-npm run pins:upgrade8       Converter PINs iniciais antigos para 8 dígitos
 npm run pins:reset          Recuperar um PIN por terminal
 npm start                   Arrancar através de app.js/server.cjs
 ```
@@ -113,9 +120,9 @@ npm start                   Arrancar através de app.js/server.cjs
 
 - `app/` — páginas, rotas e Server Actions.
 - `components/` — componentes reutilizáveis.
-- `lib/` — autenticação, base de dados, lotes, turnos, métricas e regras operacionais.
-- `prisma/` — schema e SQL auxiliar.
-- `scripts/` — preparação da BD, validação e backups.
+- `lib/` — autenticação, acesso SQL, lotes, turnos, métricas e regras operacionais.
+- `database/` — schema SQL e migrações versionadas.
+- `scripts/` — preparação da BD, validação, recuperação e backups.
 - `public/` — imagens e recursos estáticos.
 
 A aplicação mantém-se em fase `0.9.x` até concluir a instalação e validação com utilização real no servidor de produção.
