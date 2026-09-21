@@ -21,9 +21,10 @@ export async function registerIncident(fd:FormData){
  if(Number.isNaN(occurredAt.getTime()))throw new Error("A data e hora da ocorrência são inválidas.");
 
  await db.$transaction(async tx=>{
-   const machines=await tx.$queryRaw<{id:number;status:MachineStatus}[]>(Prisma.sql`
-     SELECT id,status FROM Machine WHERE id=${machineId} AND active=1 FOR UPDATE
-   `);
+   const machines=await tx.query<{id:number;status:MachineStatus}[]>(
+     "SELECT id,status FROM Machine WHERE id=? AND active=1 FOR UPDATE",
+     [machineId],
+   );
    const machine=machines[0];
    if(!machine)throw new Error("Máquina inválida.");
    const incident=await tx.incident.create({data:{machineId,type,occurredAt,description:description.slice(0,2000),stoppedMachine,createdById:user.id}});
