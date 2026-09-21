@@ -4,10 +4,14 @@ import { getConfirmationWorkers } from "@/lib/second-worker-confirmation";
 
 type ProductMachineRow={productId:number;machineId:number};
 
-export async function getProductionFormData() {
-  const runningMachineIds = await getActiveWeeklyMachineIds();
+export async function getProductionFormData(options: { allActiveMachines?: boolean; currentUserId?: number } = {}) {
+  const runningMachineIds = options.allActiveMachines ? [] : await getActiveWeeklyMachineIds();
+  const machineWhere = options.allActiveMachines
+    ? { active: true }
+    : { active: true, id: { in: runningMachineIds } };
+
   const [machineRows, productRows, rawMaterialRows, lotRows, workers, productMachineRows] = await Promise.all([
-    db.machine.findMany({ where: { active: true, id: { in: runningMachineIds } }, orderBy: { code: "asc" } }),
+    db.machine.findMany({ where: machineWhere, orderBy: { code: "asc" } }),
     db.product.findMany({ where: { active: true }, orderBy: { name: "asc" } }),
     db.rawMaterial.findMany({ where: { active: true }, orderBy: { name: "asc" } }),
     db.rawMaterialLot.findMany({
@@ -15,7 +19,7 @@ export async function getProductionFormData() {
       include: { rawMaterial: true },
       orderBy: { receivedAt: "asc" },
     }),
-    getConfirmationWorkers(),
+    getConfirmationWorkers(options.currentUserId),
     db.$queryRaw<ProductMachineRow[]>`SELECT productId,machineId FROM ProductMachine`,
   ]);
 
