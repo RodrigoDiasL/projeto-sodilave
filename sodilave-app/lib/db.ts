@@ -46,6 +46,8 @@ export type DbApi = {
   maintenanceParticipant: AnyRepo;
   incident: AnyRepo;
   machineEvent: AnyRepo;
+  lotDispatch: AnyRepo;
+  lotDispatchLine: AnyRepo;
   query<T = any[]>(sql: string, params?: any[]): Promise<T>;
   execute(sql: string, params?: any[]): Promise<number>;
   $queryRaw<T = any[]>(strings: TemplateStringsArray, ...values: any[]): Promise<T>;
@@ -699,6 +701,8 @@ function createDb(client: SqlClient): DbApi {
     maintenanceParticipant: simpleRepo(client, "MaintenanceParticipant"),
     incident: incidentRepo(client),
     machineEvent: machineEventRepo(client),
+    lotDispatch: simpleRepo(client, "LotDispatch"),
+    lotDispatchLine: simpleRepo(client, "LotDispatchLine"),
 
     async query<T = any[]>(sql: string, params: any[] = []): Promise<T> {
       return await queryRows<any>(client, sql, params) as T;
