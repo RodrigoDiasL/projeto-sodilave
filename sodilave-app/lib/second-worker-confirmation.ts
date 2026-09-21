@@ -1,9 +1,9 @@
 import bcrypt from "bcryptjs";
-import { Prisma } from "@prisma/client";
+import type { DbTransaction } from "@/lib/db";
 import { db } from "@/lib/db";
 
 export type ConfirmationWorker = { id: number; name: string };
-type ConfirmationClient = Pick<Prisma.TransactionClient, "$executeRaw">;
+type ConfirmationClient = Pick<DbTransaction, "$executeRaw">;
 
 export async function getConfirmationWorkers(currentUserId?: number): Promise<ConfirmationWorker[]> {
   const users = await db.user.findMany({
