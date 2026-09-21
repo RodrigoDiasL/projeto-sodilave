@@ -4,7 +4,7 @@ import { RecordStatus, TestMoment, TestResult, TestType } from "@/lib/db-types";
 import { revalidatePath } from "next/cache";
 import { db } from "@/lib/db";
 import { requireOperationalUser } from "@/lib/auth";
-import { getShift, getShiftWindow } from "@/lib/shift";
+import { getShift, getShiftWindow, getShiftWindowForDate, type ShiftCode } from "@/lib/shift";
 import { generateProductionLot, getActiveCommercialLotForProduct, validateCommercialLotMixture } from "@/lib/lot";
 import { assertMachineRunning } from "@/lib/active-machines";
 import { saveRecordConfirmation, verifySecondWorker } from "@/lib/second-worker-confirmation";
@@ -75,6 +75,16 @@ export async function saveProduction(formData: FormData) {
   const productionId = asNum(formData.get("productionId"));
   if (productionId !== null && (!Number.isInteger(productionId) || productionId <= 0)) {
     throw new Error("Identificador da produção inválido.");
+  }
+
+  const historicalDate = String(formData.get("historicalDate") || "").trim();
+  const historicalShiftRaw = String(formData.get("historicalShift") || "").trim();
+  let historicalWindow: ReturnType<typeof getShiftWindowForDate> | null = null;
+  if (historicalDate || historicalShiftRaw) {
+    if (user.role !== "ADMIN") throw new Error("Apenas administradores podem registar produções de outras datas.");
+    if (!historicalDate || !["A", "B", "C"].includes(historicalShiftRaw)) throw new Error("Selecione uma data e um turno válidos.");
+    historicalWindow = getShiftWindowForDate(historicalDate, historicalShiftRaw as ShiftCode);
+    if (historicalWindow.start > new Date()) throw new Error("Não é possível registar uma produção num turno futuro.");
   }
 
   let existing: ExistingProduction | null = null;
@@ -175,7 +185,7 @@ export async function saveProduction(formData: FormData) {
     throw new Error("Defina as unidades por embalagem deste produto antes de finalizar a produção.");
   }
 
-  if (!existing || (user.role !== "ADMIN" && existing.status !== RecordStatus.FINALIZED)) {
+  if (!historicalWindow && (!existing || (user.role !== "ADMIN" && existing.status !== RecordStatus.FINALIZED))) {
     await assertMachineRunning(machineId);
   }
 
@@ -198,7 +208,7 @@ export async function saveProduction(formData: FormData) {
     throw new Error(`A mistura introduzida não corresponde à mistura definida no lote comercial ${commercialLot.code}.`);
   }
 
-  const recordWindow = existing ? getShiftWindow(existing.startedAt) : getShiftWindow();
+  const recordWindow = existing ? getShiftWindow(existing.startedAt) : historicalWindow ?? getShiftWindow();
   const otherProductionsInShift = await db.production.count({
     where: {
       machineId,
@@ -207,6 +217,9 @@ export async function saveProduction(formData: FormData) {
       ...(productionId ? { id: { not: productionId } } : {}),
     },
   });
+  if (historicalWindow && otherProductionsInShift > 0) {
+    throw new Error("Já existe uma produção desta máquina para a data e turno selecionados. O registo histórico não pode criar duplicações.");
+  }
   if (finalize && otherProductionsInShift > 0 && !exceptionReason) {
     throw new Error("Já existe uma produção desta máquina neste turno. Indique o motivo da produção adicional.");
   }
@@ -219,8 +232,8 @@ export async function saveProduction(formData: FormData) {
   ], finalize);
   const rightTests = isMachine7 ? parseRightTests(formData, finalize) : [];
 
-  const shift = existing ? { code: existing.shiftCode } : getShift();
-  const internalCode = existing?.productionLot ?? await generateProductionLot(machine.code, shift.code);
+  const shift = existing ? { code: existing.shiftCode } : historicalWindow ? { code: historicalWindow.code } : getShift();
+  const internalCode = existing?.productionLot ?? await generateProductionLot(machine.code, shift.code, recordWindow.start);
   const status = finalize || existing?.status === RecordStatus.FINALIZED ? RecordStatus.FINALIZED : RecordStatus.DRAFT;
 
   const production = await db.$transaction(async (tx) => {
@@ -251,6 +264,7 @@ export async function saveProduction(formData: FormData) {
       observations: String(formData.get("observations") || "").trim().slice(0, 500) || null,
       exceptionReason: otherProductionsInShift > 0 ? (exceptionReason || null) : null,
       exceptionNotes: otherProductionsInShift > 0 ? (exceptionNotes || null) : null,
+      startedAt: lockedExisting ? undefined : historicalWindow?.start,
       finalizedAt: status === RecordStatus.FINALIZED
         ? (lockedExisting?.status === RecordStatus.FINALIZED ? undefined : new Date())
         : null,
@@ -325,6 +339,8 @@ export async function saveProduction(formData: FormData) {
           secondWorkerId: secondWorker?.id ?? null,
           secondWorkerName: secondWorker?.name ?? null,
           stockReconciled: status === RecordStatus.FINALIZED,
+          historicalDate: historicalWindow ? historicalDate : null,
+          historicalShift: historicalWindow?.code ?? null,
         },
       },
     });
