@@ -1,7 +1,8 @@
-import { LotStatus, Prisma } from "@prisma/client";
+import { LotStatus } from "@/lib/db-types";
+import type { DbTransaction } from "@/lib/db";
 
-type StockClient = Prisma.TransactionClient;
-export type Consumption = { rawMaterialLotId: number; quantityKg: number | Prisma.Decimal | null };
+type StockClient = DbTransaction;
+export type Consumption = { rawMaterialLotId: number; quantityKg: number | string | null };
 type LockedLot = { id: number; quantityAvailable: unknown; status: LotStatus; supplierLot: string };
 
 function roundKg(value: number) {
@@ -19,12 +20,10 @@ function aggregate(rows: Consumption[]) {
 }
 
 export async function getRecordedProductionStock(tx: StockClient, productionId: number) {
-  return tx.$queryRaw<Consumption[]>(Prisma.sql`
-    SELECT rawMaterialLotId, quantityKg
-    FROM ProductionStockConsumption
-    WHERE productionId=${productionId}
-    FOR UPDATE
-  `);
+  return tx.query<Consumption[]>(
+    "SELECT rawMaterialLotId, quantityKg FROM ProductionStockConsumption WHERE productionId=? FOR UPDATE",
+    [productionId],
+  );
 }
 
 export async function replaceRecordedProductionStock(tx: StockClient, productionId: number, rows: Consumption[]) {
@@ -45,12 +44,13 @@ export async function reconcileProductionStock(tx: StockClient, previousRows: Co
   const ids = [...new Set([...previous.keys(), ...next.keys()])].sort((a, b) => a - b);
   if (!ids.length) return;
 
-  const lots = await tx.$queryRaw<LockedLot[]>(Prisma.sql`
-    SELECT id, quantityAvailable, status, supplierLot
-    FROM RawMaterialLot
-    WHERE id IN (${Prisma.join(ids)})
-    FOR UPDATE
-  `);
+  const lots = await tx.query<LockedLot[]>(
+    `SELECT id, quantityAvailable, status, supplierLot
+     FROM RawMaterialLot
+     WHERE id IN (${ids.map(() => "?").join(",")})
+     FOR UPDATE`,
+    ids,
+  );
   if (lots.length !== ids.length) throw new Error("Um dos lotes de matéria-prima já não existe.");
 
   for (const id of ids) {
