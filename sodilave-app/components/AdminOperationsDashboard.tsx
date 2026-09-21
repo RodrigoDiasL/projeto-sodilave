@@ -1,6 +1,7 @@
 import Link from "next/link";
 import {
   AlertTriangle,
+  CalendarDays,
   ClipboardList,
   LogOut,
   PlayCircle,
@@ -113,6 +114,7 @@ export function AdminOperationsDashboard({
         <div className="admin-panel-title"><div><h2>Registo e gestão</h2><p>Acesso rápido</p></div></div>
         <nav className="admin-side-actions">
           <ActionLink href="/production" title="Registar produção" icon={<ClipboardList />} disabled={!hasStartup || !hasRunning} />
+          <ActionLink href="/production#historica" title="Produção histórica" icon={<CalendarDays />} />
           <ActionLink href="/checkups" title="Verificações de turno" icon={<ShieldCheck />} disabled={!hasStartup || !hasRunning} />
           <ActionLink href="/scoreboards" title="Scoreboards" icon={<Trophy />} />
           <ActionLink href="/admin/queries" title="Consultas" icon={<Search />} />
