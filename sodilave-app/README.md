@@ -110,6 +110,7 @@ npm run build:production    Validação + typecheck + build de produção
 npm run verify:production   Validar variáveis do servidor
 npm run db:seed             Seed opcional de desenvolvimento
 npm run db:lots             Aplicar tabelas auxiliares de lotes/stock
+npm run db:upgrade          Aplicar schema/migrações na BD configurada (útil em testes locais)
 npm run db:production       Preparar/aplicar estrutura da BD em produção
 npm run backup:db           Criar backup comprimido da BD
 npm run pins:reset          Recuperar um PIN por terminal
