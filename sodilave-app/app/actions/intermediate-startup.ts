@@ -2,7 +2,7 @@
 import { revalidatePath } from "next/cache";
 import { db } from "@/lib/db";
 import { requireOperationalUser } from "@/lib/auth";
-import { MaintenanceStatus, MaintenanceType, MachineEventType, MachineStatus } from "@prisma/client";
+import { MaintenanceStatus, MaintenanceType, MachineEventType, MachineStatus } from "@/lib/db-types";
 import { changeMachineStatus } from "@/lib/machine-state";
 
 export async function registerIntermediateStartup(fd:FormData){
