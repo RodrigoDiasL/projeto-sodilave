@@ -1,15 +1,16 @@
 import Link from "next/link";
-import { ClipboardPlus, FolderOpen, CheckCircle2 } from "lucide-react";
+import { ClipboardPlus, FolderOpen, CheckCircle2, CalendarDays } from "lucide-react";
 import { db } from "@/lib/db";
 import { requireUser } from "@/lib/auth";
 import { PageIntro } from "@/components/PageIntro";
+import { formatLocalDateInput } from "@/lib/shift";
 
 function statusLabel(status: string) {
   return { DRAFT: "Em aberto", FINALIZED: "Finalizada", CANCELLED: "Cancelada" }[status] ?? status;
 }
 
 export default async function ProductionPage() {
-  await requireUser();
+  const user = await requireUser();
   const [drafts, finalized] = await Promise.all([
     db.production.findMany({
       where: { status: "DRAFT" },
@@ -24,8 +25,21 @@ export default async function ProductionPage() {
     }),
   ]);
 
+  const yesterday = new Date();
+  yesterday.setDate(yesterday.getDate() - 1);
+  const todayText = formatLocalDateInput();
+  const yesterdayText = formatLocalDateInput(yesterday);
+
   return <>
     <PageIntro title="Produções" subtitle="Inicie uma nova produção ou continue um registo já guardado." />
+    {user.role === "ADMIN" && <section className="panel form-stack historical-production-panel">
+      <div><h2>Introduzir produção de outra data</h2><p className="muted">Uso administrativo para registar produções anteriores à entrada em funcionamento da aplicação. É permitida apenas uma produção normal por máquina, data e turno.</p></div>
+      <form action="/production/new" method="get" className="inline-form">
+        <label>Data<input type="date" name="date" defaultValue={yesterdayText} max={todayText} required/></label>
+        <label>Turno<select name="shift" defaultValue="A"><option value="A">Turno A · 00:00–08:00</option><option value="B">Turno B · 08:00–16:00</option><option value="C">Turno C · 16:00–24:00</option></select></label>
+        <button className="btn primary" type="submit"><CalendarDays/>Preencher produção histórica</button>
+      </form>
+    </section>}
     <section className="production-choice-grid">
       <Link className="admin-card production-choice" href="/production/new"><ClipboardPlus/><h2>Nova produção</h2><p>Criar um novo registo de produção.</p><span>→</span></Link>
       <a className="admin-card production-choice" href="#abertas"><FolderOpen/><h2>Produções em aberto</h2><p>{drafts.length} registo(s) por concluir.</p><span>↓</span></a>
