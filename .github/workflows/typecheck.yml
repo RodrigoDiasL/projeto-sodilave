@@ -29,6 +29,9 @@ jobs:
           cache-dependency-path: sodilave-app/package-lock.json
       - name: Install dependencies
         run: npm install --include=dev --no-audit --no-fund
+      - name: Show lockfile diff for refactor
+        if: github.ref == 'refs/heads/refactor/remove-prisma'
+        run: git diff -- package-lock.json
       - name: Validate production environment
         run: npm run verify:production
       - name: Typecheck
