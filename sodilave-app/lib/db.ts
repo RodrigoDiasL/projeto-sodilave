@@ -189,6 +189,11 @@ async function getByIds(client: SqlClient, table: string, ids: number[]) {
   return new Map(rows.map((row) => [Number(row.id), row]));
 }
 
+const updatedAtTables = new Set([
+  "User", "Machine", "Product", "RawMaterial", "RawMaterialLot", "ProductionLotRule",
+  "Production", "MachineCheckup", "ShiftGeneralCheck", "WeeklyStartup", "WeeklyShutdown", "Maintenance",
+]);
+
 function prepareData(table: string, data: Record<string, any>) {
   const result: Record<string, any> = {};
   for (const [key, value] of Object.entries(data)) {
@@ -201,6 +206,7 @@ function prepareData(table: string, data: Record<string, any>) {
 
 async function insertRow(client: SqlClient, table: string, data: Record<string, any>) {
   const clean = prepareData(table, data);
+  if (updatedAtTables.has(table) && clean.updatedAt === undefined) clean.updatedAt = new Date();
   const keys = Object.keys(clean);
   if (!keys.length) throw new Error(`Não existem dados para inserir em ${table}.`);
   const result = await executeSql(
@@ -214,6 +220,7 @@ async function insertRow(client: SqlClient, table: string, data: Record<string, 
 
 async function updateRows(client: SqlClient, table: string, where: Record<string, any>, data: Record<string, any>) {
   const clean = prepareData(table, data);
+  if (updatedAtTables.has(table) && clean.updatedAt === undefined) clean.updatedAt = new Date();
   const keys = Object.keys(clean);
   if (!keys.length) return { count: 0 };
   const condition = buildWhere(where);
