@@ -1,6 +1,6 @@
 "use server";
 
-import { Prisma, RecordStatus, TestMoment, TestResult, TestType } from "@prisma/client";
+import { RecordStatus, TestMoment, TestResult, TestType } from "@/lib/db-types";
 import { revalidatePath } from "next/cache";
 import { db } from "@/lib/db";
 import { requireOperationalUser } from "@/lib/auth";
