@@ -228,7 +228,7 @@ export async function getAdminDashboardData(now = new Date()): Promise<AdminDash
     })),
     ...maintenances.map((maintenance) => ({
       key: `maintenance-${maintenance.id}`,
-      title: `Manutenção · ${maintenance.machines.map((row) => row.machine.code).join(", ") || "Sem máquina"}`,
+      title: `Manutenção · ${maintenance.machines.map((row:any) => row.machine.code).join(", ") || "Sem máquina"}`,
       subtitle: maintenance.status === "OPEN" ? "Intervenção em aberto" : "Intervenção concluída",
       occurredAt: maintenance.updatedAt,
       href: "/maintenance",
@@ -269,7 +269,7 @@ export async function getAdminDashboardData(now = new Date()): Promise<AdminDash
       const cycleEvents = events
         .filter((event) => event.machineId === machine.id && event.occurredAt >= from && event.occurredAt <= to)
         .map((event) => ({ occurredAt: event.occurredAt, toStatus: event.toStatus }));
-      const startedWithCycle = cycle.machines.some((row) => row.machineId === machine.id);
+      const startedWithCycle = cycle.machines.some((row:any) => row.machineId === machine.id);
       if (startedWithCycle && !cycleEvents.some((event) => event.occurredAt.getTime() === from.getTime())) {
         cycleEvents.push({ occurredAt: from, toStatus: MachineStatus.RUNNING });
       }
