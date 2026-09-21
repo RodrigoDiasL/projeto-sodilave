@@ -226,12 +226,10 @@ export async function saveProduction(formData: FormData) {
   const production = await db.$transaction(async (tx) => {
     let lockedExisting: ExistingProduction | null = existing;
     if (productionId) {
-      const locked = await tx.$queryRaw<ExistingProduction[]>(Prisma.sql`
-        SELECT id, status, operatorId, productionLot, startedAt, shiftCode, productId
-        FROM Production
-        WHERE id=${productionId}
-        FOR UPDATE
-      `);
+      const locked = await tx.query<ExistingProduction[]>(
+        "SELECT id, status, operatorId, productionLot, startedAt, shiftCode, productId FROM Production WHERE id=? FOR UPDATE",
+        [productionId],
+      );
       lockedExisting = locked[0] ?? null;
       if (!lockedExisting) throw new Error("A produção já não existe.");
       if (lockedExisting.status === RecordStatus.CANCELLED) throw new Error("Esta produção foi cancelada.");
