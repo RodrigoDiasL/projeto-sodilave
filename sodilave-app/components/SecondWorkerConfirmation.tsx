@@ -6,7 +6,7 @@ export function SecondWorkerConfirmation({ workers, title = "Confirmação do se
   return <section className="subpanel form-stack second-worker-confirmation">
     <div>
       <h3>{title}</h3>
-      <p className="muted small">Para finalizar, selecione o colega presente no turno. Essa pessoa deve introduzir pessoalmente o respetivo PIN de 8 algarismos.</p>
+      <p className="muted small">Para finalizar o primeiro registo do turno, selecione o colega presente. Essa pessoa deve introduzir pessoalmente o respetivo PIN de 8 algarismos. A confirmação fica válida para o restante turno.</p>
     </div>
     <div className="two-col">
       <label>Segundo trabalhador *
