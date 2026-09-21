@@ -195,7 +195,7 @@ export async function getScoreboardData(now = new Date()): Promise<ScoreboardDat
 
     const quantity = Number(production.quantityProduced ?? 0);
     const hasObservation = Boolean(production.observations?.trim());
-    const nonConforming = production.tests.some((test) => test.result === TestResult.NON_CONFORMING)
+    const nonConforming = production.tests.some((test:any) => test.result === TestResult.NON_CONFORMING)
       || cavityNonConformingIds.has(production.id);
 
     for (const userId of participantIds) {
