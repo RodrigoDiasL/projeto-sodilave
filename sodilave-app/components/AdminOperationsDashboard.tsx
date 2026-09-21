@@ -13,6 +13,7 @@ import {
   ShieldCheck,
   Tags,
   Trophy,
+  Truck,
   Wrench,
 } from "lucide-react";
 import { logoutAction } from "@/app/actions/auth";
@@ -116,6 +117,7 @@ export function AdminOperationsDashboard({
           <ActionLink href="/production" title="Registar produção" icon={<ClipboardList />} disabled={!hasStartup || !hasRunning} />
           <ActionLink href="/production#historica" title="Produção histórica" icon={<CalendarDays />} />
           <ActionLink href="/checkups" title="Verificações de turno" icon={<ShieldCheck />} disabled={!hasStartup || !hasRunning} />
+          <ActionLink href="/lot-dispatch" title="Saída de Lotes" icon={<Truck />} />
           <ActionLink href="/scoreboards" title="Scoreboards" icon={<Trophy />} />
           <ActionLink href="/admin/queries" title="Consultas" icon={<Search />} />
           <ActionLink href="/commercial-lots" title="Lotes e controlo interno" icon={<Tags />} />
