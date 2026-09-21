@@ -21,7 +21,7 @@ try {
     "UPDATE User SET pinHash=?, active=1, updatedAt=NOW(3) WHERE id=?",
     [await bcrypt.hash(pin, 12), user.id],
   );
-  console.log(`PIN de ${user.name} reposto com sucesso. Remova RESET_USER_PIN do ambiente/comando usado para a recuperação.`);
+  console.log(`PIN de ${user.name} reposto com sucesso.`);
 } finally {
   await closeDb();
 }
