@@ -1,4 +1,4 @@
-import { MachineStatus, Prisma, RecordStatus, TestResult } from "@prisma/client";
+import { MachineStatus, RecordStatus, TestResult } from "@/lib/db-types";
 import { db } from "@/lib/db";
 import { calculateUptime } from "@/lib/machine-state";
 
@@ -161,8 +161,8 @@ export async function getAdminDashboardData(now = new Date()): Promise<AdminDash
 
   const machine7Ids = productions.filter((production) => production.machine.code === "7").map((production) => production.id);
   const cavityRows = machine7Ids.length
-    ? await db.$queryRaw<CavitySummary[]>(Prisma.sql`
-        SELECT
+    ? await db.query<CavitySummary[]>(
+        `SELECT
           p.id AS productionId,
           CASE WHEN pcd.rightInitialWeightG IS NOT NULL AND pcd.rightMidWeightG IS NOT NULL THEN 1 ELSE 0 END AS hasWeights,
           COUNT(pct.id) AS testCount,
@@ -170,9 +170,10 @@ export async function getAdminDashboardData(now = new Date()): Promise<AdminDash
         FROM Production p
         LEFT JOIN ProductionCavityData pcd ON pcd.productionId = p.id
         LEFT JOIN ProductionCavityTest pct ON pct.productionId = p.id AND pct.cavity = 'RIGHT'
-        WHERE p.id IN (${Prisma.join(machine7Ids)})
-        GROUP BY p.id, pcd.rightInitialWeightG, pcd.rightMidWeightG
-      `)
+        WHERE p.id IN (${machine7Ids.map(() => "?").join(",")})
+        GROUP BY p.id, pcd.rightInitialWeightG, pcd.rightMidWeightG`,
+        machine7Ids,
+      )
     : [];
   const cavityByProduction = new Map(cavityRows.map((row) => [row.productionId, row]));
 
