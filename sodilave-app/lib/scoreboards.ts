@@ -1,4 +1,4 @@
-import { Prisma, RecordStatus, TestResult } from "@prisma/client";
+import { RecordStatus, TestResult } from "@/lib/db-types";
 import { db } from "@/lib/db";
 import { getShift } from "@/lib/shift";
 import { dateKey, getReportingPeriods, isSince } from "@/lib/reporting-periods";
@@ -177,12 +177,13 @@ export async function getScoreboardData(now = new Date()): Promise<ScoreboardDat
 
   const machine7ProductionIds = productions.filter((production) => production.machine.code === "7").map((production) => production.id);
   const cavityNonConforming = machine7ProductionIds.length
-    ? await db.$queryRaw<CavityNonConformingRow[]>(Prisma.sql`
-        SELECT DISTINCT productionId
-        FROM ProductionCavityTest
-        WHERE productionId IN (${Prisma.join(machine7ProductionIds)})
-          AND result = 'NON_CONFORMING'
-      `)
+    ? await db.query<CavityNonConformingRow[]>(
+        `SELECT DISTINCT productionId
+         FROM ProductionCavityTest
+         WHERE productionId IN (${machine7ProductionIds.map(() => "?").join(",")})
+           AND result = 'NON_CONFORMING'`,
+        machine7ProductionIds,
+      )
     : [];
   const cavityNonConformingIds = new Set(cavityNonConforming.map((row) => row.productionId));
 
