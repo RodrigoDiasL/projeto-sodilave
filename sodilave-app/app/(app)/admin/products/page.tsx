@@ -16,7 +16,7 @@ export default async function Page(){
   ]);
   return <AdminPage title="Produtos" subtitle="Consultar e gerir os artigos produzidos e as máquinas autorizadas.">
     <section className="subpanel product-create-panel"><h2>Adicionar produto</h2><form action={createProduct} className="product-create-form form-stack">
-      <div className="three-col"><label>Código<input name="code" placeholder="Ex.: PROD001" maxLength={40} required/></label><label>Designação<input name="name" placeholder="Ex.: Garrafão 5 L" maxLength={120} required/></label><label>Unidades por embalagem<input className="no-spinner" name="unitsPerPackage" type="number" min="1" step="1" placeholder="Ex.: 25" required/></label></div>
+      <div className="three-col"><label>Código<input name="code" placeholder="Ex.: PROD001" maxLength={40} required/></label><label>Designação<input name="name" placeholder="Ex.: Garrafão 5 L" maxLength={120} required/></label><label>Unidades por embalagem<input className="no-spinner" name="unitsPerPackage" type="number" min="1" step="1" placeholder="Ex.: 25" required/></label><label>Unidade de produção / stock<select name="productionUnit" defaultValue="BAG"><option value="BAG">Saco</option><option value="PALLET">Palete</option></select></label></div>
       <fieldset><legend>Máquinas que produzem este artigo *</legend><div className="machine-checkbox-grid">{machines.map(m=><label className="check" key={m.id}><input type="checkbox" name="machineIds" value={m.id}/><strong>Máquina {m.code}</strong><span>{m.name}</span></label>)}</div></fieldset>
       <button className="btn primary">Adicionar produto</button>
     </form></section>
