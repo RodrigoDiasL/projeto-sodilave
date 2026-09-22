@@ -1,6 +1,7 @@
 import { db } from "@/lib/db";
 import { getActiveWeeklyMachineIds } from "@/lib/active-machines";
 import { getConfirmationWorkers } from "@/lib/second-worker-confirmation";
+import { getStorageLocations } from "@/lib/stock-map";
 
 type ProductMachineRow={productId:number;machineId:number};
 
@@ -10,7 +11,7 @@ export async function getProductionFormData(options: { allActiveMachines?: boole
     ? { active: true }
     : { active: true, id: { in: runningMachineIds } };
 
-  const [machineRows, productRows, rawMaterialRows, lotRows, workers, productMachineRows] = await Promise.all([
+  const [machineRows, productRows, rawMaterialRows, lotRows, workers, productMachineRows, storageLocations] = await Promise.all([
     db.machine.findMany({ where: machineWhere, orderBy: { code: "asc" } }),
     db.product.findMany({ where: { active: true }, orderBy: { name: "asc" } }),
     db.rawMaterial.findMany({ where: { active: true }, orderBy: { name: "asc" } }),
@@ -21,12 +22,13 @@ export async function getProductionFormData(options: { allActiveMachines?: boole
     }),
     getConfirmationWorkers(options.currentUserId),
     db.$queryRaw<ProductMachineRow[]>`SELECT productId,machineId FROM ProductMachine`,
+    getStorageLocations(),
   ]);
 
   return {
     machines: machineRows.map(({ id, code, name }) => ({ id, code, name })),
     products: productRows.map(({ id, code, name, unitsPerPackage }) => ({
-      id, code, name, unitsPerPackage,
+      id, code, name, unitsPerPackage, productionUnit: String((productRows.find((row:any)=>row.id===id) as any)?.productionUnit ?? "BAG"),
       machineIds: productMachineRows.filter(row=>row.productId===id).map(row=>row.machineId),
     })),
     rawMaterials: rawMaterialRows.map(({ id, name }) => ({ id, name })),
@@ -37,5 +39,6 @@ export async function getProductionFormData(options: { allActiveMachines?: boole
       rawMaterial: { id: lot.rawMaterial.id, name: lot.rawMaterial.name },
     })),
     workers,
+    storageLocations,
   };
 }
