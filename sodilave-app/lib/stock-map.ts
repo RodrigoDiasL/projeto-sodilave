@@ -1,11 +1,11 @@
-"import { db } from \"@/lib/db\";
+import { db } from "@/lib/db";
 
-export type StorageZoneType = \"STACK\" | \"PALLET\";
-export type ProductionUnit = \"BAG\" | \"PALLET\";
+export type StorageZoneType = "STACK" | "PALLET";
+export type ProductionUnit = "BAG" | "PALLET";
 
 export type StorageLocationInfo = {
   id: number;
-  warehouseCode: \"W1\" | \"W2\";
+  warehouseCode: "W1" | "W2";
   warehouseName: string;
   zoneType: StorageZoneType;
   rowNumber: number;
@@ -45,15 +45,15 @@ export type UnlocatedFinishedLot = {
 };
 
 export async function getStorageLocations(): Promise<StorageLocationInfo[]> {
-  const rows = await db.query<any[]>(\`
+  const rows = await db.query<any[]>(`
     SELECT id, warehouseCode, warehouseName, zoneType, rowNumber, columnNumber, code
     FROM StorageLocation
     WHERE active = 1
     ORDER BY warehouseCode, FIELD(zoneType,'STACK','PALLET'), rowNumber, columnNumber
-  \`);
+  `);
   return rows.map((row) => ({
     id: Number(row.id),
-    warehouseCode: String(row.warehouseCode) as \"W1\" | \"W2\",
+    warehouseCode: String(row.warehouseCode) as "W1" | "W2",
     warehouseName: String(row.warehouseName),
     zoneType: String(row.zoneType) as StorageZoneType,
     rowNumber: Number(row.rowNumber),
@@ -65,7 +65,7 @@ export async function getStorageLocations(): Promise<StorageLocationInfo[]> {
 export async function getStorageMapData(): Promise<StorageMapLocation[]> {
   const [locations, rows] = await Promise.all([
     getStorageLocations(),
-    db.query<any[]>(\`
+    db.query<any[]>(`
       SELECT
         b.locationId,
         b.productionId,
@@ -82,7 +82,7 @@ export async function getStorageMapData(): Promise<StorageMapLocation[]> {
       LEFT JOIN ProductionLotAssociation pla ON pla.productionId = p.id
       WHERE b.quantityPackages > 0
       ORDER BY p.startedAt ASC, p.id ASC
-    \`),
+    `),
   ]);
 
   const byLocation = new Map<number, StoredLotLine[]>();
@@ -96,7 +96,7 @@ export async function getStorageMapData(): Promise<StorageMapLocation[]> {
       productId: Number(row.productId),
       productCode: String(row.productCode),
       productName: String(row.productName),
-      productionUnit: String(row.productionUnit || \"BAG\") as ProductionUnit,
+      productionUnit: String(row.productionUnit || "BAG") as ProductionUnit,
       unitsPerPackage,
       quantityPackages,
       quantityUnits: quantityPackages * unitsPerPackage,
@@ -116,7 +116,7 @@ export async function getStorageMapData(): Promise<StorageMapLocation[]> {
 }
 
 export async function getProductionStorageBalances(productionId: number) {
-  const rows = await db.query<any[]>(\`
+  const rows = await db.query<any[]>(`
     SELECT
       b.locationId,
       b.quantityPackages,
@@ -131,7 +131,7 @@ export async function getProductionStorageBalances(productionId: number) {
     WHERE b.productionId = ?
       AND b.quantityPackages > 0
     ORDER BY l.warehouseCode, FIELD(l.zoneType,'STACK','PALLET'), l.rowNumber, l.columnNumber
-  \`, [productionId]);
+  `, [productionId]);
 
   return rows.map((row) => ({
     locationId: Number(row.locationId),
@@ -146,7 +146,7 @@ export async function getProductionStorageBalances(productionId: number) {
 }
 
 export async function getUnlocatedFinishedLots(): Promise<UnlocatedFinishedLot[]> {
-  const rows = await db.query<any[]>(\`
+  const rows = await db.query<any[]>(`
     SELECT
       p.id AS productionId,
       COALESCE(pla.labelCode, p.productionLot) AS lotCode,
@@ -176,7 +176,7 @@ export async function getUnlocatedFinishedLots(): Promise<UnlocatedFinishedLot[]
       AND COALESCE(p.quantityProduced, 0) > 0
       AND COALESCE(p.unitsPerPackageSnapshot, pr.unitsPerPackage, 0) > 0
     ORDER BY p.startedAt DESC, p.id DESC
-  \`);
+  `);
 
   return rows.flatMap((row) => {
     const unitsPerPackage = Number(row.unitsPerPackage);
@@ -191,7 +191,7 @@ export async function getUnlocatedFinishedLots(): Promise<UnlocatedFinishedLot[]
       lotCode: String(row.lotCode),
       productCode: String(row.productCode),
       productName: String(row.productName),
-      productionUnit: String(row.productionUnit || \"BAG\") as ProductionUnit,
+      productionUnit: String(row.productionUnit || "BAG") as ProductionUnit,
       unitsPerPackage,
       producedPackages,
       dispatchedPackages,
@@ -200,4 +200,3 @@ export async function getUnlocatedFinishedLots(): Promise<UnlocatedFinishedLot[]
     }];
   });
 }
-"
