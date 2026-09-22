@@ -8,9 +8,17 @@ type LockedProduction = {
   id: number;
   productId: number;
   status: string;
-  quantityProduced: number | string | null;
   unitsPerPackage: number | string | null;
   lotCode: string;
+  productionUnit: string;
+};
+
+type LockedBalance = {
+  productionId: number;
+  locationId: number;
+  quantityPackages: number | string;
+  warehouseName: string;
+  locationCode: string;
 };
 
 const requiredText = (fd: FormData, key: string, label: string, max = 191) => {
@@ -36,76 +44,98 @@ export async function createLotDispatch(formData: FormData) {
     throw new Error("A quantidade da encomenda deve ser um número inteiro superior a zero.");
   }
 
-  const allocations = new Map<number, number>();
+  const allocations = new Map<string, { productionId: number; locationId: number; quantityPackages: number }>();
   for (const [key, rawValue] of formData.entries()) {
-    if (!key.startsWith("lot_")) continue;
-    const productionId = Number(key.slice(4));
-    const quantityUnits = Number(rawValue || 0);
-    if (!Number.isInteger(productionId) || productionId <= 0) continue;
-    if (!Number.isFinite(quantityUnits) || quantityUnits < 0 || !Number.isInteger(quantityUnits)) {
-      throw new Error("Uma das quantidades atribuídas aos lotes é inválida.");
+    const match = /^stock_(\d+)_(\d+)$/.exec(key);
+    if (!match) continue;
+    const productionId = Number(match[1]);
+    const locationId = Number(match[2]);
+    const quantityPackages = Number(rawValue || 0);
+    if (!Number.isInteger(quantityPackages) || quantityPackages < 0) {
+      throw new Error("Uma das quantidades retiradas do stock é inválida.");
     }
-    if (quantityUnits > 0) allocations.set(productionId, quantityUnits);
+    if (quantityPackages > 0) {
+      allocations.set(`${productionId}-${locationId}`, { productionId, locationId, quantityPackages });
+    }
   }
 
-  if (!allocations.size) throw new Error("Selecione pelo menos um lote para dar saída.");
-  const allocatedTotal = [...allocations.values()].reduce((sum, value) => sum + value, 0);
-  if (allocatedTotal !== orderedQuantityUnits) {
-    throw new Error(`A soma dos lotes selecionados (${allocatedTotal}) tem de ser exatamente igual à quantidade da encomenda (${orderedQuantityUnits}).`);
-  }
+  if (!allocations.size) throw new Error("Selecione pelo menos uma posição de stock para dar saída.");
 
-  const productionIds = [...allocations.keys()];
-  const placeholders = productionIds.map(() => "?").join(",");
+  const allocationRows = [...allocations.values()];
+  const productionIds = [...new Set(allocationRows.map((row) => row.productionId))];
+  const productionPlaceholders = productionIds.map(() => "?").join(",");
 
   const dispatch = await db.$transaction(async (tx) => {
-    const locked = await tx.query<LockedProduction[]>(
+    const product = await tx.product.findUnique({ where: { id: productId }, select: { id: true, code: true, name: true } });
+    if (!product) throw new Error("O artigo selecionado já não existe.");
+
+    const lockedProductions = await tx.query<LockedProduction[]>(
       `SELECT
          p.id,
          p.productId,
          p.status,
-         p.quantityProduced,
          COALESCE(p.unitsPerPackageSnapshot, pr.unitsPerPackage, 0) AS unitsPerPackage,
-         COALESCE(pla.labelCode, p.productionLot) AS lotCode
+         COALESCE(pla.labelCode, p.productionLot) AS lotCode,
+         COALESCE(p.productionUnitSnapshot, pr.productionUnit, 'BAG') AS productionUnit
        FROM Production p
        INNER JOIN Product pr ON pr.id = p.productId
        LEFT JOIN ProductionLotAssociation pla ON pla.productionId = p.id
-       WHERE p.id IN (${placeholders})
+       WHERE p.id IN (${productionPlaceholders})
        FOR UPDATE`,
       productionIds,
     );
+    if (lockedProductions.length !== productionIds.length) throw new Error("Um dos lotes selecionados já não existe.");
 
-    if (locked.length !== productionIds.length) throw new Error("Um dos lotes selecionados já não existe.");
-
-    const product = await tx.product.findUnique({ where: { id: productId }, select: { id: true, code: true, name: true } });
-    if (!product) throw new Error("O artigo selecionado já não existe.");
-
-    const alreadyDispatched = await tx.query<{ productionId: number; dispatchedUnits: number | string }[]>(
-      `SELECT line.productionId, COALESCE(SUM(line.quantityUnits), 0) AS dispatchedUnits
-       FROM LotDispatchLine line
-       INNER JOIN LotDispatch dispatch ON dispatch.id = line.lotDispatchId
-       WHERE line.productionId IN (${placeholders})
-         AND dispatch.cancelledAt IS NULL
-       GROUP BY line.productionId`,
-      productionIds,
-    );
-    const dispatchedMap = new Map(alreadyDispatched.map((row) => [Number(row.productionId), Number(row.dispatchedUnits)]));
-
-    for (const row of locked) {
+    const productionMap = new Map(lockedProductions.map((row) => [Number(row.id), row]));
+    for (const row of lockedProductions) {
       if (row.status !== "FINALIZED") throw new Error(`O lote ${row.lotCode} ainda não está finalizado.`);
-      if (Number(row.productId) !== productId) throw new Error("Todos os lotes selecionados têm de pertencer ao mesmo artigo da encomenda.");
-
+      if (Number(row.productId) !== productId) throw new Error("Todos os lotes selecionados têm de pertencer ao artigo da encomenda.");
       const unitsPerPackage = Number(row.unitsPerPackage);
-      const producedPackages = Number(row.quantityProduced);
-      if (!Number.isInteger(unitsPerPackage) || unitsPerPackage <= 0 || !Number.isFinite(producedPackages) || producedPackages < 0) {
-        throw new Error(`O lote ${row.lotCode} não tem uma quantidade de stock válida.`);
+      if (!Number.isInteger(unitsPerPackage) || unitsPerPackage <= 0) {
+        throw new Error(`O lote ${row.lotCode} não tem unidades por embalagem válidas.`);
+      }
+    }
+
+    const balanceConditions = allocationRows.map(() => "(b.productionId=? AND b.locationId=?)").join(" OR ");
+    const balanceParams = allocationRows.flatMap((row) => [row.productionId, row.locationId]);
+    const lockedBalances = await tx.query<LockedBalance[]>(
+      `SELECT
+         b.productionId,
+         b.locationId,
+         b.quantityPackages,
+         l.warehouseName,
+         l.code AS locationCode
+       FROM ProductionStorageBalance b
+       INNER JOIN StorageLocation l ON l.id = b.locationId
+       WHERE ${balanceConditions}
+       FOR UPDATE`,
+      balanceParams,
+    );
+    const balanceMap = new Map(lockedBalances.map((row) => [`${row.productionId}-${row.locationId}`, row]));
+    if (lockedBalances.length !== allocationRows.length) {
+      throw new Error("Uma das posições selecionadas já não tem stock disponível.");
+    }
+
+    let allocatedUnits = 0;
+    const unitsByProduction = new Map<number, number>();
+    for (const allocation of allocationRows) {
+      const key = `${allocation.productionId}-${allocation.locationId}`;
+      const balance = balanceMap.get(key);
+      const production = productionMap.get(allocation.productionId);
+      if (!balance || !production) throw new Error("O stock selecionado foi alterado. Atualize a página e tente novamente.");
+
+      const availablePackages = Number(balance.quantityPackages);
+      if (allocation.quantityPackages > availablePackages) {
+        throw new Error(`A posição ${balance.warehouseName} · ${balance.locationCode} só tem ${availablePackages} embalagem(ns) disponíveis.`);
       }
 
-      const producedUnits = Math.trunc(producedPackages) * unitsPerPackage;
-      const availableUnits = producedUnits - (dispatchedMap.get(Number(row.id)) ?? 0);
-      const requestedUnits = allocations.get(Number(row.id)) ?? 0;
-      if (requestedUnits > availableUnits) {
-        throw new Error(`O lote ${row.lotCode} só tem ${availableUnits} artigo(s) disponíveis em stock.`);
-      }
+      const units = allocation.quantityPackages * Number(production.unitsPerPackage);
+      allocatedUnits += units;
+      unitsByProduction.set(allocation.productionId, (unitsByProduction.get(allocation.productionId) ?? 0) + units);
+    }
+
+    if (allocatedUnits !== orderedQuantityUnits) {
+      throw new Error(`As posições selecionadas totalizam ${allocatedUnits} artigo(s), mas a encomenda tem ${orderedQuantityUnits}.`);
     }
 
     const saved = await tx.lotDispatch.create({
@@ -121,12 +151,42 @@ export async function createLotDispatch(formData: FormData) {
     });
 
     await tx.lotDispatchLine.createMany({
-      data: productionIds.map((productionId) => ({
+      data: [...unitsByProduction.entries()].map(([productionId, quantityUnits]) => ({
         lotDispatchId: saved.id,
         productionId,
-        quantityUnits: allocations.get(productionId),
+        quantityUnits,
       })),
     });
+
+    for (const allocation of allocationRows) {
+      const key = `${allocation.productionId}-${allocation.locationId}`;
+      const balance = balanceMap.get(key)!;
+      const remaining = Number(balance.quantityPackages) - allocation.quantityPackages;
+
+      if (remaining === 0) {
+        await tx.productionStorageBalance.delete({
+          where: { productionId: allocation.productionId, locationId: allocation.locationId },
+        });
+      } else {
+        await tx.productionStorageBalance.update({
+          where: { productionId: allocation.productionId, locationId: allocation.locationId },
+          data: { quantityPackages: remaining },
+        });
+      }
+
+      await tx.productionStorageMovement.create({
+        data: {
+          productionId: allocation.productionId,
+          movementType: "DISPATCH",
+          fromLocationId: allocation.locationId,
+          toLocationId: null,
+          quantityPackages: allocation.quantityPackages,
+          lotDispatchId: saved.id,
+          createdById: user.id,
+          reason: `Saída para ${customerName} · encomenda ${orderReference} · fatura ${invoiceNumber}`,
+        },
+      });
+    }
 
     await tx.auditLog.create({
       data: {
@@ -142,11 +202,18 @@ export async function createLotDispatch(formData: FormData) {
           productCode: product.code,
           orderedQuantityUnits,
           dispatchDate,
-          lots: locked.map((row) => ({
-            productionId: Number(row.id),
-            lotCode: row.lotCode,
-            quantityUnits: allocations.get(Number(row.id)) ?? 0,
-          })),
+          allocations: allocationRows.map((allocation) => {
+            const production = productionMap.get(allocation.productionId)!;
+            const balance = balanceMap.get(`${allocation.productionId}-${allocation.locationId}`)!;
+            return {
+              productionId: allocation.productionId,
+              lotCode: production.lotCode,
+              locationId: allocation.locationId,
+              location: `${balance.warehouseName} · ${balance.locationCode}`,
+              quantityPackages: allocation.quantityPackages,
+              quantityUnits: allocation.quantityPackages * Number(production.unitsPerPackage),
+            };
+          }),
         },
       },
     });
@@ -155,6 +222,7 @@ export async function createLotDispatch(formData: FormData) {
   });
 
   revalidatePath("/lot-dispatch");
+  revalidatePath("/stock-map");
   revalidatePath("/dashboard");
   revalidatePath("/traceability");
 
