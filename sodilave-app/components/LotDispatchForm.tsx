@@ -13,12 +13,15 @@ function todayInput() {
   return `${y}-${m}-${d}`;
 }
 
+const packageLabel = (unit: string, quantity: number) =>
+  unit === "PALLET" ? (quantity === 1 ? "palete" : "paletes") : (quantity === 1 ? "saco" : "sacos");
+
 export function LotDispatchForm({ lots, employeeName }: { lots: AvailableFinishedLot[]; employeeName: string }) {
   const router = useRouter();
   const formRef = useRef<HTMLFormElement>(null);
   const [productId, setProductId] = useState("");
   const [orderQuantity, setOrderQuantity] = useState("");
-  const [allocations, setAllocations] = useState<Record<number, number>>({});
+  const [allocations, setAllocations] = useState<Record<string, number>>({});
   const [message, setMessage] = useState("");
   const [error, setError] = useState("");
   const [saving, setSaving] = useState(false);
@@ -43,14 +46,18 @@ export function LotDispatchForm({ lots, employeeName }: { lots: AvailableFinishe
     [lots, productId],
   );
 
-  const totalAvailable = filteredLots.reduce((sum, lot) => sum + lot.availableUnits, 0);
-  const allocatedTotal = filteredLots.reduce((sum, lot) => sum + (allocations[lot.productionId] ?? 0), 0);
   const target = Number(orderQuantity || 0);
-  const difference = target - allocatedTotal;
+  const totalAvailable = filteredLots.reduce((sum, lot) => sum + lot.availableUnits, 0);
+  const selectedUnits = filteredLots.reduce((sum, lot) => {
+    const packages = lot.locations.reduce((inner, location) => inner + (allocations[`${lot.productionId}-${location.locationId}`] ?? 0), 0);
+    return sum + packages * lot.unitsPerPackage;
+  }, 0);
+  const difference = target - selectedUnits;
 
-  const updateAllocation = (productionId: number, value: number, max: number) => {
+  const setLocationAllocation = (productionId: number, locationId: number, value: number, max: number) => {
+    const key = `${productionId}-${locationId}`;
     const safe = Number.isFinite(value) ? Math.max(0, Math.min(Math.trunc(value), max)) : 0;
-    setAllocations((current) => ({ ...current, [productionId]: safe }));
+    setAllocations((current) => ({ ...current, [key]: safe }));
   };
 
   const fillFifo = () => {
@@ -58,16 +65,28 @@ export function LotDispatchForm({ lots, employeeName }: { lots: AvailableFinishe
       setError("Introduza primeiro a quantidade da encomenda.");
       return;
     }
+
     let remaining = target;
-    const next: Record<number, number> = {};
+    const next: Record<string, number> = {};
+
     for (const lot of filteredLots) {
       if (remaining <= 0) break;
-      const quantity = Math.min(remaining, lot.availableUnits);
-      if (quantity > 0) next[lot.productionId] = quantity;
-      remaining -= quantity;
+      const unitsPerPackage = lot.unitsPerPackage;
+      for (const location of lot.locations) {
+        if (remaining < unitsPerPackage) break;
+        const packagesNeeded = Math.floor(remaining / unitsPerPackage);
+        const packages = Math.min(location.quantityPackages, packagesNeeded);
+        if (packages > 0) {
+          next[`${lot.productionId}-${location.locationId}`] = packages;
+          remaining -= packages * unitsPerPackage;
+        }
+      }
     }
+
     setAllocations(next);
-    setError(remaining > 0 ? `O stock disponível é insuficiente. Faltam ${remaining} artigo(s).` : "");
+    setError(remaining > 0
+      ? `Não é possível completar exatamente a encomenda com embalagens completas. Faltam ${remaining} artigo(s).`
+      : "");
   };
 
   const submit = async (fd: FormData) => {
@@ -75,8 +94,8 @@ export function LotDispatchForm({ lots, employeeName }: { lots: AvailableFinishe
     setError("");
     if (!productId) { setError("Selecione o artigo da encomenda."); return; }
     if (!Number.isInteger(target) || target <= 0) { setError("Introduza uma quantidade válida."); return; }
-    if (allocatedTotal !== target) {
-      setError(`Os lotes selecionados totalizam ${allocatedTotal} artigo(s), mas a encomenda tem ${target}.`);
+    if (selectedUnits !== target) {
+      setError(`As localizações selecionadas totalizam ${selectedUnits} artigo(s), mas a encomenda tem ${target}.`);
       return;
     }
 
@@ -126,7 +145,7 @@ export function LotDispatchForm({ lots, employeeName }: { lots: AvailableFinishe
           >
             <option value="">Selecione o artigo</option>
             {products.map((product) => <option key={product.id} value={product.id}>
-              {product.code} — {product.name} · {product.availableUnits.toLocaleString("pt-PT")} un. disponíveis
+              {product.code} — {product.name} · {product.availableUnits.toLocaleString("pt-PT")} artigos disponíveis
             </option>)}
           </select>
         </label>
@@ -145,47 +164,62 @@ export function LotDispatchForm({ lots, employeeName }: { lots: AvailableFinishe
       </div>
 
       {productId && <div className="lot-dispatch-balance">
-        <div><span>Stock disponível</span><strong>{totalAvailable.toLocaleString("pt-PT")} artigos</strong></div>
-        <div><span>Selecionado</span><strong>{allocatedTotal.toLocaleString("pt-PT")} artigos</strong></div>
+        <div><span>Stock localizado</span><strong>{totalAvailable.toLocaleString("pt-PT")} artigos</strong></div>
+        <div><span>Selecionado</span><strong>{selectedUnits.toLocaleString("pt-PT")} artigos</strong></div>
         <div className={difference === 0 && target > 0 ? "complete" : difference < 0 ? "excess" : ""}>
           <span>{difference < 0 ? "Excesso" : "Falta selecionar"}</span>
           <strong>{Math.abs(difference).toLocaleString("pt-PT")} artigos</strong>
         </div>
-        <button type="button" className="btn secondary" onClick={fillFifo}>Preencher automaticamente por lotes mais antigos</button>
+        <button type="button" className="btn secondary" onClick={fillFifo}>Preencher automaticamente por stock mais antigo</button>
       </div>}
     </section>
 
     {productId && <section className="subpanel">
       <div className="section-heading">
-        <div><h2>Lotes disponíveis em stock</h2><p className="muted small">Pode usar um ou vários lotes. A soma tem de corresponder exatamente à quantidade da encomenda.</p></div>
+        <div>
+          <h2>Lotes e posições disponíveis</h2>
+          <p className="muted small">Indique fisicamente de que estibas/paletes vai retirar a encomenda. A aplicação abate exatamente essas posições.</p>
+        </div>
       </div>
 
       {filteredLots.length === 0
-        ? <p className="empty-state">Não existem lotes com stock disponível para este artigo.</p>
-        : <div className="responsive-table"><table className="lot-dispatch-table">
-          <thead><tr><th>Lote</th><th>Produção</th><th>Máquina</th><th>Disponível</th><th>Quantidade desta encomenda</th></tr></thead>
-          <tbody>{filteredLots.map((lot) => {
-            const allocated = allocations[lot.productionId] ?? 0;
-            return <tr key={lot.productionId} className={allocated > 0 ? "selected-stock-lot" : ""}>
-              <td><strong>{lot.lotCode}</strong><small>{lot.productCode}</small></td>
-              <td>{new Date(`${lot.productionDate}T12:00:00`).toLocaleDateString("pt-PT")}<small>{lot.producedPackages.toLocaleString("pt-PT")} embalagens × {lot.unitsPerPackage} un.</small></td>
-              <td>{lot.machineCode}</td>
-              <td><strong>{lot.availableUnits.toLocaleString("pt-PT")} un.</strong>{lot.dispatchedUnits > 0 && <small>{lot.dispatchedUnits.toLocaleString("pt-PT")} un. já expedidas</small>}</td>
-              <td>
-                <input
-                  name={`lot_${lot.productionId}`}
-                  type="number"
-                  min="0"
-                  max={lot.availableUnits}
-                  step="1"
-                  value={allocated || ""}
-                  onChange={(e) => updateAllocation(lot.productionId, Number(e.target.value || 0), lot.availableUnits)}
-                  placeholder="0"
-                />
-              </td>
-            </tr>;
-          })}</tbody>
-        </table></div>}
+        ? <p className="empty-state">Não existem lotes localizados com stock disponível para este artigo.</p>
+        : <div className="lot-dispatch-lots">{filteredLots.map((lot) => {
+          const selectedPackages = lot.locations.reduce((sum, location) => sum + (allocations[`${lot.productionId}-${location.locationId}`] ?? 0), 0);
+          const selectedLotUnits = selectedPackages * lot.unitsPerPackage;
+          return <article className={`lot-dispatch-lot ${selectedPackages > 0 ? "selected-stock-lot" : ""}`} key={lot.productionId}>
+            <div className="lot-dispatch-lot-heading">
+              <div>
+                <strong>{lot.lotCode}</strong>
+                <span>{lot.productCode} · Produção {new Date(`${lot.productionDate}T12:00:00`).toLocaleDateString("pt-PT")} · Máquina {lot.machineCode}</span>
+              </div>
+              <div>
+                <strong>{lot.availablePackages.toLocaleString("pt-PT")} {packageLabel(lot.productionUnit, lot.availablePackages)}</strong>
+                <span>{lot.availableUnits.toLocaleString("pt-PT")} artigos disponíveis</span>
+              </div>
+            </div>
+            <div className="lot-location-allocation-grid">
+              {lot.locations.map((location) => {
+                const key = `${lot.productionId}-${location.locationId}`;
+                const value = allocations[key] ?? 0;
+                return <label className={`lot-location-allocation ${value > 0 ? "selected" : ""}`} key={location.locationId}>
+                  <span><strong>{location.warehouseName} · {location.code}</strong><small>{location.zoneType === "STACK" ? "Estiba / monte" : "Paletes"} · {location.quantityPackages} {packageLabel(lot.productionUnit, location.quantityPackages)} disponíveis</small></span>
+                  <input
+                    name={`stock_${lot.productionId}_${location.locationId}`}
+                    type="number"
+                    min="0"
+                    max={location.quantityPackages}
+                    step="1"
+                    value={value || ""}
+                    onChange={(e) => setLocationAllocation(lot.productionId, location.locationId, Number(e.target.value || 0), location.quantityPackages)}
+                    placeholder="0"
+                  />
+                </label>;
+              })}
+            </div>
+            {selectedPackages > 0 && <div className="notice muted">Selecionado deste lote: <strong>{selectedPackages} {packageLabel(lot.productionUnit, selectedPackages)} = {selectedLotUnits.toLocaleString("pt-PT")} artigos</strong></div>}
+          </article>;
+        })}</div>}
     </section>}
 
     <div className="notice muted"><strong>Funcionário responsável pelo registo:</strong> {employeeName}</div>
@@ -193,7 +227,7 @@ export function LotDispatchForm({ lots, employeeName }: { lots: AvailableFinishe
     {message && <div className="alert success">{message}</div>}
 
     <div className="button-row">
-      <button className="btn primary" type="submit" disabled={saving || target <= 0 || allocatedTotal !== target}>
+      <button className="btn primary" type="submit" disabled={saving || target <= 0 || selectedUnits !== target}>
         {saving ? "A registar..." : "Registar saída dos lotes"}
       </button>
     </div>
