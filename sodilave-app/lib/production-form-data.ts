@@ -27,8 +27,8 @@ export async function getProductionFormData(options: { allActiveMachines?: boole
 
   return {
     machines: machineRows.map(({ id, code, name }) => ({ id, code, name })),
-    products: productRows.map(({ id, code, name, unitsPerPackage }) => ({
-      id, code, name, unitsPerPackage, productionUnit: String((productRows.find((row:any)=>row.id===id) as any)?.productionUnit ?? "BAG"),
+    products: productRows.map(({ id, code, name, unitsPerPackage, productionUnit }) => ({
+      id, code, name, unitsPerPackage, productionUnit: String(productionUnit ?? "BAG"),
       machineIds: productMachineRows.filter(row=>row.productId===id).map(row=>row.machineId),
     })),
     rawMaterials: rawMaterialRows.map(({ id, name }) => ({ id, name })),
