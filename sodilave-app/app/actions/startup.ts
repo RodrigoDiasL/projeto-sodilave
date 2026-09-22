@@ -16,6 +16,15 @@ export async function saveWeeklyStartup(fd: FormData) {
   const intent = String(fd.get("intent") || "draft");
   if(!["draft","finalize"].includes(intent)) throw new Error("Ação inválida.");
   const finalize = intent === "finalize";
+  const pumpSelection = String(fd.get("coolingPump") || "");
+  if(fd.getAll("coolingPump").length > 1 || !["", "1", "2"].includes(pumpSelection)) {
+    throw new Error("Selecione apenas uma bomba de refrigeração.");
+  }
+  // Also validate submissions from a tab opened before the radio-button update.
+  const coolingPump1 = pumpSelection === "1" || fd.get("coolingPump1") === "on";
+  const coolingPump2 = pumpSelection === "2" || fd.get("coolingPump2") === "on";
+  if(coolingPump1 && coolingPump2) throw new Error("As duas bombas de refrigeração não podem funcionar em simultâneo. Selecione apenas uma.");
+  if(finalize && !coolingPump1 && !coolingPump2) throw new Error("Selecione a bomba de refrigeração em funcionamento: bomba 1 ou bomba 2.");
   const idValue = Number(fd.get("startupId") || 0);
   if(idValue && (!Number.isInteger(idValue)||idValue<=0)) throw new Error("Arranque semanal inválido.");
   const machineIds = [...new Set(fd.getAll("machineIds").map(Number).filter((id) => Number.isInteger(id) && id > 0))];
@@ -45,8 +54,9 @@ export async function saveWeeklyStartup(fd: FormData) {
     shiftCode,
     chillerSmall:fd.get("chillerSmall")==="on",
     chillerLarge:fd.get("chillerLarge")==="on",
-    coolingPump1:fd.get("coolingPump1")==="on",
-    coolingPump2:fd.get("coolingPump2")==="on",
+    coolingPump:coolingPump1 || coolingPump2,
+    coolingPump1,
+    coolingPump2,
     compressor:fd.get("compressor")==="on",
     airDryers:fd.get("airDryers")==="on",
     airDemolecularizer:fd.get("airDemolecularizer")==="on",

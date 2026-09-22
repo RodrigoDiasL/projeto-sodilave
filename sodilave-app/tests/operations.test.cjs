@@ -5,6 +5,8 @@ const assert=require('node:assert/strict');
 const fs=require('node:fs');
 const path=require('node:path');
 const ts=require('typescript');
+const {execFile}=require('node:child_process');
+const execFileAsync=require('node:util').promisify(execFile);
 const {createRequire}=require('node:module');
 const url=process.env.TEST_DATABASE_URL;
 if(!url || !['sodilave_test','typecheck'].includes(new URL(url).pathname.slice(1))) {
@@ -64,16 +66,70 @@ before(async()=>{
 });
 after(async()=>{await globalThis.sodilaveMysqlPool.end();});
 function startup(intent='finalize',id) {
-  const data=fd({intent,machineIds:machine.id,...(id?{startupId:id}:{})});
+  const data=fd({intent,coolingPump:"1",machineIds:machine.id,...(id?{startupId:id}:{})});
   for(const key of ['productionWindows','storageWindows','dispatchWindows','forkliftIntegrity','emergencyLighting'])data.set(key,'CONFORMING');
   for(const key of ['acrylics','plasticTrays','lighting','extruderTemperatures','lubrication','mouldCleaning','beltsTraysTables','waterFilters'])data.set(`m${machine.id}_${key}`,'CONFORMING');
   return data;
 }
+test('upgrade repairs the reported missing-pump-column error and remains repeatable',async()=>{
+  const usersBefore=await db.user.count();
+  await db.execute('ALTER TABLE WeeklyStartup DROP COLUMN coolingPump1, DROP COLUMN coolingPump2');
+  await db.execute('DELETE FROM AppSchemaMigration WHERE name=?',['2026-09-22-shift-confirmation-and-cooling-pumps.sql']);
+  await assert.rejects(db.execute('INSERT INTO WeeklyStartup (operatorId,shiftCode,coolingPump1) VALUES (?,?,?)',[user.id,'A',1]),{code:'ER_BAD_FIELD_ERROR'});
+  const options={cwd:root,env:{...process.env,DATABASE_URL:url}};
+  const check=path.join(root,'scripts/check-production-db.mjs');
+  await assert.rejects(execFileAsync(process.execPath,[check],options),error=>{
+    assert.match(error.stderr,/WeeklyStartup.coolingPump1/);
+    assert.match(error.stderr,/npm run db:upgrade/);
+    return true;
+  });
+  const upgrade=path.join(root,'scripts/prepare-production-db.mjs');
+  await execFileAsync(process.execPath,[upgrade],options);
+  await execFileAsync(process.execPath,[upgrade],options);
+  await execFileAsync(process.execPath,[check],options);
+  await db.query('SELECT coolingPump1,coolingPump2 FROM WeeklyStartup');
+  assert.equal(await db.user.count(),usersBefore,'upgrade must preserve users');
+});
+test('database scripts load local Next environment files without overriding host settings',async()=>{
+  const {pathToFileURL}=require('node:url');
+  const tmp=fs.mkdtempSync(path.join(require('node:os').tmpdir(),'sodilave-env-'));
+  try {
+    fs.writeFileSync(path.join(tmp,'.env'),'SODILAVE_TEST_ENV=base\nSODILAVE_TEST_HOST=file\n');
+    fs.writeFileSync(path.join(tmp,'.env.local'),'SODILAVE_TEST_ENV=local\n');
+    const env={...process.env,NODE_ENV:'development',SODILAVE_TEST_HOST:'host'};
+    delete env.SODILAVE_TEST_ENV;delete env.__NEXT_PROCESSED_ENV;
+    const code=`await import(${JSON.stringify(pathToFileURL(path.join(root,'scripts/load-env.mjs')).href)}); if(process.env.SODILAVE_TEST_ENV!=='local'||process.env.SODILAVE_TEST_HOST!=='host')process.exit(1);`;
+    await execFileAsync(process.execPath,['--input-type=module','-e',code],{cwd:tmp,env});
+    fs.writeFileSync(path.join(tmp,'.env.production.local'),'SODILAVE_TEST_ENV=production\n');
+    delete env.NODE_ENV;
+    await execFileAsync(process.execPath,['--input-type=module','-e',code.replace("!=='local'","!=='production'"),'--','--production'],{cwd:tmp,env});
+  } finally {fs.rmSync(tmp,{recursive:true,force:true});}
+});
+test('weekly startup requires exactly one pump when finalized and rejects both even in drafts',async()=>{
+  const missing=startup();missing.delete('coolingPump');
+  await assert.rejects(saveWeeklyStartup(missing),/bomba de refrigeração em funcionamento/);
+  for(const intent of ['draft','finalize']) {
+    const both=startup(intent);both.delete('coolingPump');both.set('coolingPump1','on');both.set('coolingPump2','on');
+    await assert.rejects(saveWeeklyStartup(both),/simultâneo/);
+  }
+  const duplicate=startup();duplicate.append('coolingPump','2');
+  await assert.rejects(saveWeeklyStartup(duplicate),/apenas uma/);
+  const draftForm=startup('draft');draftForm.delete('coolingPump');
+  const draft=await saveWeeklyStartup(draftForm);
+  const changed=startup('draft',draft.id);changed.set('coolingPump','2');
+  await saveWeeklyStartup(changed);
+  const record=await db.weeklyStartup.findUnique({where:{id:draft.id}});
+  assert.equal(Number(record.coolingPump1),0);assert.equal(Number(record.coolingPump2),1);
+  await db.weeklyStartupMachine.deleteMany({where:{weeklyStartupId:draft.id}});
+  await db.weeklyStartup.delete({where:{id:draft.id}});
+});
 test('weekly draft → finalization → shutdown draft remains active → next cycle',async()=>{
   const draft=await saveWeeklyStartup(startup('draft'));
   assert.equal(await getActiveWeeklyStartup(),null);
   const final=await saveWeeklyStartup(startup('finalize',draft.id));
   assert.equal(final.id,draft.id);
+  const pumpRecord=await db.weeklyStartup.findUnique({where:{id:final.id}});
+  assert.equal(Number(pumpRecord.coolingPump1),1);assert.equal(Number(pumpRecord.coolingPump2),0);
   assert.equal((await getActiveWeeklyStartup()).id,draft.id);
   assert.equal((await db.machine.findUnique({where:{id:machine.id}})).status,'RUNNING');
   const stop=await saveWeeklyShutdown(fd({intent:'draft'}));

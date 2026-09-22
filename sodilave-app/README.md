@@ -166,3 +166,28 @@ indicando o motivo. O stock regressa às posições originais e a saída anulada
 no histórico. Para corrigir uma saída, anule e registe novamente os dados certos.
 Saídas antigas sem histórico completo de posições exigem reconciliação prévia;
 a aplicação não presume uma localização para repor esse stock.
+
+### Atualização local e seleção da bomba de refrigeração
+
+O erro `Unknown column 'coolingPump1' in 'INSERT INTO'` significa que o código
+está mais atualizado do que a base de dados. Depois de obter este ramo, pare o
+servidor de desenvolvimento e execute na pasta `sodilave-app`:
+
+```sh
+npm install
+npm run db:upgrade
+npm run db:check
+npm run dev
+```
+
+Os comandos de base de dados leem agora os ficheiros `.env` / `.env.local` com a
+mesma precedência do Next.js. As variáveis já definidas no ambiente têm prioridade.
+Para uma instalação de produção, use `NODE_ENV=production` para carregar a
+configuração de produção. `db:upgrade` aplica as migrações pendentes e preserva os
+registos existentes. `dev` e `start` verificam a estrutura antes de abrir o servidor;
+em alojamentos que executam diretamente `app.js`, execute `db:check` na atualização.
+
+O arranque exige **bomba 1 ou bomba 2** ao finalizar. Um rascunho pode ainda não ter
+bomba escolhida, mas nunca pode ter as duas. Submissões de separadores antigos com
+ambas as caixas assinaladas são rejeitadas no servidor. Rascunhos antigos com as
+duas flags precisam de uma escolha explícita: não se presume qual bomba funcionava.

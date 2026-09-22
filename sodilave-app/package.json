@@ -12,16 +12,18 @@
     "start": "node app.js",
     "typecheck": "tsc --noEmit",
     "lint": "next lint",
-    "verify:production": "node scripts/validate-production-env.mjs",
+    "verify:production": "node scripts/validate-production-env.mjs --production",
     "db:seed": "node scripts/seed-dev.mjs",
     "db:machine7": "node scripts/apply-machine7-schema.mjs",
     "db:lots": "node scripts/apply-lot-schema.mjs",
-    "db:production": "npm run verify:production && node scripts/prepare-production-db.mjs",
+    "db:production": "npm run verify:production && node scripts/prepare-production-db.mjs --production",
     "backup:db": "node scripts/backup-database.mjs",
     "pins:reset": "node scripts/reset-user-pin.mjs",
     "db:upgrade": "node scripts/prepare-production-db.mjs",
     "test:integration": "node --test tests/operations.test.cjs",
-    "db:check": "node scripts/check-production-db.mjs"
+    "db:check": "node scripts/check-production-db.mjs",
+    "predev": "npm run db:check",
+    "prestart": "node scripts/check-production-db.mjs --production"
   },
   "dependencies": {
     "bcryptjs": "^3.0.2",
@@ -31,7 +33,8 @@
     "next": "^15.5.0",
     "react": "^19.1.0",
     "react-dom": "^19.1.0",
-    "zod": "^4.4.0"
+    "zod": "^4.4.0",
+    "@next/env": "^15.5.0"
   },
   "devDependencies": {
     "@types/node": "^22.0.0",

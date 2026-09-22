@@ -1,3 +1,4 @@
+import "./load-env.mjs";
 const failures = [];
 
 const required = (name) => {

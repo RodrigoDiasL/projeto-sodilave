@@ -1,3 +1,4 @@
+import "./load-env.mjs";
 import mysql from "mysql2/promise";
 
 const rawUrl = String(process.env.DATABASE_URL || "").trim();
