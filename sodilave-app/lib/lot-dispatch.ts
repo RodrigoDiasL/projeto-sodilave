@@ -1,4 +1,14 @@
 import { db } from "@/lib/db";
+import type { ProductionUnit, StorageZoneType } from "@/lib/stock-map";
+
+export type FinishedLotLocation = {
+  locationId: number;
+  warehouseCode: string;
+  warehouseName: string;
+  zoneType: StorageZoneType;
+  code: string;
+  quantityPackages: number;
+};
 
 export type AvailableFinishedLot = {
   productionId: number;
@@ -8,11 +18,13 @@ export type AvailableFinishedLot = {
   productName: string;
   machineCode: string;
   productionDate: string;
+  productionUnit: ProductionUnit;
   unitsPerPackage: number;
   producedPackages: number;
-  producedUnits: number;
   dispatchedUnits: number;
+  availablePackages: number;
   availableUnits: number;
+  locations: FinishedLotLocation[];
 };
 
 export type RecentLotDispatch = {
@@ -29,7 +41,7 @@ export type RecentLotDispatch = {
 };
 
 export async function getAvailableFinishedLots(): Promise<AvailableFinishedLot[]> {
-  const rows = await db.query<any[]>(`
+  const rows = await db.query<any[]>(\`
     SELECT
       p.id AS productionId,
       COALESCE(pla.labelCode, p.productionLot) AS lotCode,
@@ -38,15 +50,19 @@ export async function getAvailableFinishedLots(): Promise<AvailableFinishedLot[]
       pr.name AS productName,
       m.code AS machineCode,
       DATE_FORMAT(p.startedAt, '%Y-%m-%d') AS productionDate,
+      COALESCE(p.productionUnitSnapshot, pr.productionUnit, 'BAG') AS productionUnit,
       COALESCE(p.unitsPerPackageSnapshot, pr.unitsPerPackage, 0) AS unitsPerPackage,
       COALESCE(p.quantityProduced, 0) AS producedPackages,
-      COALESCE(p.quantityProduced, 0) * COALESCE(p.unitsPerPackageSnapshot, pr.unitsPerPackage, 0) AS producedUnits,
       COALESCE(outbound.dispatchedUnits, 0) AS dispatchedUnits,
-      (
-        COALESCE(p.quantityProduced, 0) * COALESCE(p.unitsPerPackageSnapshot, pr.unitsPerPackage, 0)
-        - COALESCE(outbound.dispatchedUnits, 0)
-      ) AS availableUnits
-    FROM Production p
+      b.locationId,
+      b.quantityPackages,
+      l.warehouseCode,
+      l.warehouseName,
+      l.zoneType,
+      l.code
+    FROM ProductionStorageBalance b
+    INNER JOIN StorageLocation l ON l.id = b.locationId
+    INNER JOIN Production p ON p.id = b.productionId
     INNER JOIN Product pr ON pr.id = p.productId
     INNER JOIN Machine m ON m.id = p.machineId
     LEFT JOIN ProductionLotAssociation pla ON pla.productionId = p.id
@@ -58,34 +74,55 @@ export async function getAvailableFinishedLots(): Promise<AvailableFinishedLot[]
       GROUP BY line.productionId
     ) outbound ON outbound.productionId = p.id
     WHERE p.status = 'FINALIZED'
-      AND COALESCE(p.quantityProduced, 0) > 0
+      AND b.quantityPackages > 0
       AND COALESCE(p.unitsPerPackageSnapshot, pr.unitsPerPackage, 0) > 0
-      AND (
-        COALESCE(p.quantityProduced, 0) * COALESCE(p.unitsPerPackageSnapshot, pr.unitsPerPackage, 0)
-        - COALESCE(outbound.dispatchedUnits, 0)
-      ) > 0
-    ORDER BY p.startedAt ASC, p.id ASC
-  `);
+    ORDER BY p.startedAt ASC, p.id ASC, l.warehouseCode, FIELD(l.zoneType,'STACK','PALLET'), l.rowNumber, l.columnNumber
+  \`);
 
-  return rows.map((row) => ({
-    productionId: Number(row.productionId),
-    lotCode: String(row.lotCode),
-    productId: Number(row.productId),
-    productCode: String(row.productCode),
-    productName: String(row.productName),
-    machineCode: String(row.machineCode),
-    productionDate: String(row.productionDate),
-    unitsPerPackage: Number(row.unitsPerPackage),
-    producedPackages: Number(row.producedPackages),
-    producedUnits: Number(row.producedUnits),
-    dispatchedUnits: Number(row.dispatchedUnits),
-    availableUnits: Number(row.availableUnits),
-  }));
+  const grouped = new Map<number, AvailableFinishedLot>();
+  for (const row of rows) {
+    const productionId = Number(row.productionId);
+    const unitsPerPackage = Number(row.unitsPerPackage);
+    let lot = grouped.get(productionId);
+    if (!lot) {
+      lot = {
+        productionId,
+        lotCode: String(row.lotCode),
+        productId: Number(row.productId),
+        productCode: String(row.productCode),
+        productName: String(row.productName),
+        machineCode: String(row.machineCode),
+        productionDate: String(row.productionDate),
+        productionUnit: String(row.productionUnit || "BAG") as ProductionUnit,
+        unitsPerPackage,
+        producedPackages: Number(row.producedPackages),
+        dispatchedUnits: Number(row.dispatchedUnits),
+        availablePackages: 0,
+        availableUnits: 0,
+        locations: [],
+      };
+      grouped.set(productionId, lot);
+    }
+
+    const quantityPackages = Number(row.quantityPackages);
+    lot.locations.push({
+      locationId: Number(row.locationId),
+      warehouseCode: String(row.warehouseCode),
+      warehouseName: String(row.warehouseName),
+      zoneType: String(row.zoneType) as StorageZoneType,
+      code: String(row.code),
+      quantityPackages,
+    });
+    lot.availablePackages += quantityPackages;
+    lot.availableUnits += quantityPackages * unitsPerPackage;
+  }
+
+  return [...grouped.values()];
 }
 
 export async function getRecentLotDispatches(limit = 30): Promise<RecentLotDispatch[]> {
   const safeLimit = Math.max(1, Math.min(100, Math.trunc(limit)));
-  const rows = await db.query<any[]>(`
+  const rows = await db.query<any[]>(\`
     SELECT
       d.id,
       d.customerName,
@@ -115,8 +152,8 @@ export async function getRecentLotDispatches(limit = 30): Promise<RecentLotDispa
     ) lines ON lines.lotDispatchId = d.id
     WHERE d.cancelledAt IS NULL
     ORDER BY d.dispatchDate DESC, d.id DESC
-    LIMIT ${safeLimit}
-  `);
+    LIMIT \${safeLimit}
+  \`);
 
   return rows.map((row) => ({
     id: Number(row.id),
