@@ -75,7 +75,9 @@ export async function createProduct(formData: FormData) {
   const admin=await requireAdmin();
   const ids=machineIds(formData);
   const unitsPerPackage = positiveNumber(formData, "unitsPerPackage", "As unidades por embalagem", 100000);
-  const row=await db.product.create({ data: { code: requireText(text(formData, "code", 40), "O código"), name: requireText(text(formData, "name"), "A designação"), unitsPerPackage, active: true } });
+  const productionUnit = text(formData, "productionUnit", 16) || "BAG";
+  if (!["BAG","PALLET"].includes(productionUnit)) throw new Error("A unidade de produção é inválida.");
+  const row=await db.product.create({ data: { code: requireText(text(formData, "code", 40), "O código"), name: requireText(text(formData, "name"), "A designação"), unitsPerPackage, productionUnit, active: true } });
   await replaceProductMachines(row.id,ids);
   await db.auditLog.create({data:{userId:admin.id,action:"CREATE",entity:"Product",entityId:String(row.id),details:{machineIds:ids}}});
   revalidatePath("/admin/products"); revalidatePath("/production");
@@ -86,10 +88,13 @@ export async function updateProduct(formData: FormData) {
   const id = positiveId(formData);
   const ids=machineIds(formData);
   const unitsPerPackage = positiveNumber(formData, "unitsPerPackage", "As unidades por embalagem", 100000);
+  const productionUnit = text(formData, "productionUnit", 16) || "BAG";
+  if (!["BAG","PALLET"].includes(productionUnit)) throw new Error("A unidade de produção é inválida.");
   await db.product.update({ where: { id }, data: {
     code: requireText(text(formData, "code", 40), "O código"),
     name: requireText(text(formData, "name"), "A designação"),
     unitsPerPackage,
+    productionUnit,
     active: formData.get("active") === "on",
   }});
   await replaceProductMachines(id,ids);
