@@ -28,6 +28,8 @@ type ExistingProduction = {
   startedAt: Date;
   shiftCode: string;
   productId: number;
+  unitsPerPackageSnapshot?: number | null;
+  productionUnitSnapshot?: string | null;
 };
 
 type TestInput = { type: TestType; moment: TestMoment; key: string };
@@ -91,7 +93,7 @@ export async function saveProduction(formData: FormData) {
   if (productionId) {
     existing = await db.production.findUnique({
       where: { id: productionId },
-      select: { id: true, status: true, operatorId: true, productionLot: true, startedAt: true, shiftCode: true, productId: true },
+      select: { id: true, status: true, operatorId: true, productionLot: true, startedAt: true, shiftCode: true, productId: true, unitsPerPackageSnapshot: true, productionUnitSnapshot: true },
     });
     if (!existing) throw new Error("A produção em aberto já não existe.");
     if (existing.status === RecordStatus.CANCELLED) throw new Error("Esta produção foi cancelada.");
@@ -203,6 +205,33 @@ export async function saveProduction(formData: FormData) {
   const machine = await db.machine.findFirst({ where: { id: machineId, active: true } });
   const product = await db.product.findFirst({ where: { id: productId, active: true } });
   if (!machine || !product) throw new Error("A máquina ou o produto selecionado já não está ativo.");
+  if (existing?.status === RecordStatus.FINALIZED && productId !== existing.productId) {
+    throw new Error("O artigo de uma produção já finalizada não pode ser alterado porque já está ligado ao stock físico e à rastreabilidade.");
+  }
+  if (existing?.status === RecordStatus.FINALIZED && quantityProduced !== null) {
+    const [storageRows, dispatchRows] = await Promise.all([
+      db.query<{ total: number | string }[]>(
+        "SELECT COALESCE(SUM(quantityPackages),0) AS total FROM ProductionStorageBalance WHERE productionId=?",
+        [existing.id],
+      ),
+      db.query<{ total: number | string }[]>(
+        `SELECT COALESCE(SUM(line.quantityUnits),0) AS total
+         FROM LotDispatchLine line
+         INNER JOIN LotDispatch d ON d.id=line.lotDispatchId
+         WHERE line.productionId=? AND d.cancelledAt IS NULL`,
+        [existing.id],
+      ),
+    ]);
+    const snapshotUnits = Number(existing.unitsPerPackageSnapshot ?? product.unitsPerPackage ?? 0);
+    const dispatchedUnits = Number(dispatchRows[0]?.total ?? 0);
+    if (snapshotUnits <= 0 || dispatchedUnits % snapshotUnits !== 0) {
+      throw new Error("A quantidade histórica deste lote não permite uma correção segura da produção.");
+    }
+    const accountedPackages = Number(storageRows[0]?.total ?? 0) + dispatchedUnits / snapshotUnits;
+    if (quantityProduced < accountedPackages) {
+      throw new Error(`A produção não pode ser reduzida para ${quantityProduced}: já existem ${accountedPackages} embalagem(ns) localizadas ou expedidas.`);
+    }
+  }
   const productMachine = await db.$queryRaw<{ ok: number }[]>`
     SELECT 1 AS ok FROM ProductMachine WHERE productId=${productId} AND machineId=${machineId} LIMIT 1
   `;
@@ -271,7 +300,7 @@ export async function saveProduction(formData: FormData) {
     let lockedExisting: ExistingProduction | null = existing;
     if (productionId) {
       const locked = await tx.query<ExistingProduction[]>(
-        "SELECT id, status, operatorId, productionLot, startedAt, shiftCode, productId FROM Production WHERE id=? FOR UPDATE",
+        "SELECT id, status, operatorId, productionLot, startedAt, shiftCode, productId, unitsPerPackageSnapshot, productionUnitSnapshot FROM Production WHERE id=? FOR UPDATE",
         [productionId],
       );
       lockedExisting = locked[0] ?? null;
@@ -292,8 +321,8 @@ export async function saveProduction(formData: FormData) {
       initialWeightG,
       midWeightG,
       quantityProduced,
-      unitsPerPackageSnapshot: product.unitsPerPackage ?? null,
-      productionUnitSnapshot: product.productionUnit ?? "BAG",
+      unitsPerPackageSnapshot: existing?.status === RecordStatus.FINALIZED ? undefined : (product.unitsPerPackage ?? null),
+      productionUnitSnapshot: existing?.status === RecordStatus.FINALIZED ? undefined : (product.productionUnit ?? "BAG"),
       observations: String(formData.get("observations") || "").trim().slice(0, 500) || null,
       exceptionReason: otherProductionsInShift > 0 ? (exceptionReason || null) : null,
       exceptionNotes: otherProductionsInShift > 0 ? (exceptionNotes || null) : null,
