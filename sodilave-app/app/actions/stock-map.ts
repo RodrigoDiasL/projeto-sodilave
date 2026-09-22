@@ -195,3 +195,67 @@ export async function transferStockMap(formData: FormData) {
   revalidatePath("/lot-dispatch");
   revalidatePath("/traceability");
 }
+
+export async function addUnlocatedStock(formData: FormData) {
+  const admin = await requireAdmin();
+  const productionId = positiveId(formData, "productionId");
+  const locationId = positiveId(formData, "locationId");
+  const quantityPackages = Number(formData.get("quantityPackages") || 0);
+  if (!Number.isInteger(quantityPackages) || quantityPackages <= 0) throw new Error("A quantidade a localizar é inválida.");
+  const placementReason = reason(formData);
+
+  await db.$transaction(async (tx) => {
+    const location = await tx.storageLocation.findFirst({ where: { id: locationId, active: true } });
+    if (!location) throw new Error("A posição selecionada não existe.");
+
+    const capacity = await getProductionCapacity(tx, productionId);
+    const balances = await tx.query<any[]>(
+      "SELECT locationId,quantityPackages FROM ProductionStorageBalance WHERE productionId=? FOR UPDATE",
+      [productionId],
+    );
+    const currentTotal = balances.reduce((sum, row) => sum + Number(row.quantityPackages), 0);
+    const missing = capacity.maxStoredPackages - currentTotal;
+    if (quantityPackages > missing) {
+      throw new Error(`Só existem ${missing} embalagem(ns) deste lote por localizar.`);
+    }
+
+    const current = Number(balances.find((row) => Number(row.locationId) === locationId)?.quantityPackages ?? 0);
+    if (current > 0) {
+      await tx.productionStorageBalance.update({
+        where: { productionId, locationId },
+        data: { quantityPackages: current + quantityPackages },
+      });
+    } else {
+      await tx.productionStorageBalance.create({
+        data: { productionId, locationId, quantityPackages },
+      });
+    }
+
+    await tx.productionStorageMovement.create({
+      data: {
+        productionId,
+        movementType: "ADJUSTMENT",
+        fromLocationId: null,
+        toLocationId: locationId,
+        quantityPackages,
+        lotDispatchId: null,
+        createdById: admin.id,
+        reason: placementReason,
+      },
+    });
+    await tx.auditLog.create({
+      data: {
+        userId: admin.id,
+        action: "LOCATE",
+        entity: "ProductionStorageBalance",
+        entityId: String(productionId),
+        details: { locationId, quantityPackages, reason: placementReason },
+      },
+    });
+  });
+
+  revalidatePath("/stock-map");
+  revalidatePath("/lot-dispatch");
+  revalidatePath("/traceability");
+}
+
