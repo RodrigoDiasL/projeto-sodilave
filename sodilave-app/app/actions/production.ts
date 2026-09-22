@@ -28,6 +28,7 @@ type ExistingProduction = {
   startedAt: Date;
   shiftCode: string;
   productId: number;
+  quantityProduced?: number | null;
   unitsPerPackageSnapshot?: number | null;
   productionUnitSnapshot?: string | null;
 };
@@ -93,7 +94,7 @@ export async function saveProduction(formData: FormData) {
   if (productionId) {
     existing = await db.production.findUnique({
       where: { id: productionId },
-      select: { id: true, status: true, operatorId: true, productionLot: true, startedAt: true, shiftCode: true, productId: true, unitsPerPackageSnapshot: true, productionUnitSnapshot: true },
+      select: { id: true, status: true, operatorId: true, productionLot: true, startedAt: true, shiftCode: true, productId: true, quantityProduced: true, unitsPerPackageSnapshot: true, productionUnitSnapshot: true },
     });
     if (!existing) throw new Error("A produção em aberto já não existe.");
     if (existing.status === RecordStatus.CANCELLED) throw new Error("Esta produção foi cancelada.");
@@ -232,6 +233,15 @@ export async function saveProduction(formData: FormData) {
       throw new Error(`A produção não pode ser reduzida para ${quantityProduced}: já existem ${accountedPackages} embalagem(ns) localizadas ou expedidas.`);
     }
   }
+  if (
+    existing?.status === RecordStatus.FINALIZED &&
+    user.role !== "ADMIN" &&
+    quantityProduced !== null &&
+    Number(existing.quantityProduced ?? 0) !== quantityProduced
+  ) {
+    throw new Error("Depois de finalizada, a quantidade produzida só pode ser corrigida por um administrador porque está ligada ao mapa de stock.");
+  }
+
   const productMachine = await db.$queryRaw<{ ok: number }[]>`
     SELECT 1 AS ok FROM ProductMachine WHERE productId=${productId} AND machineId=${machineId} LIMIT 1
   `;
@@ -300,7 +310,7 @@ export async function saveProduction(formData: FormData) {
     let lockedExisting: ExistingProduction | null = existing;
     if (productionId) {
       const locked = await tx.query<ExistingProduction[]>(
-        "SELECT id, status, operatorId, productionLot, startedAt, shiftCode, productId, unitsPerPackageSnapshot, productionUnitSnapshot FROM Production WHERE id=? FOR UPDATE",
+        "SELECT id, status, operatorId, productionLot, startedAt, shiftCode, productId, quantityProduced, unitsPerPackageSnapshot, productionUnitSnapshot FROM Production WHERE id=? FOR UPDATE",
         [productionId],
       );
       lockedExisting = locked[0] ?? null;
