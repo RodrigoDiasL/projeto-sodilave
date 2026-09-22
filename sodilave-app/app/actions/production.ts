@@ -125,6 +125,16 @@ export async function saveProduction(formData: FormData) {
   const rightInitialWeightG = asNum(formData.get("rightInitialWeightG"));
   const rightMidWeightG = asNum(formData.get("rightMidWeightG"));
   const quantityProduced = asNum(formData.get("quantityProduced"));
+  const storageUnlocated = formData.get("storageUnlocated") === "on";
+  const storageAllocations = new Map<number, number>();
+  for (const [key, rawValue] of formData.entries()) {
+    if (!key.startsWith("storage_location_")) continue;
+    const locationId = Number(key.slice("storage_location_".length));
+    const quantityPackages = Number(rawValue || 0);
+    if (!Number.isInteger(locationId) || locationId <= 0) continue;
+    if (!Number.isInteger(quantityPackages) || quantityPackages < 0) throw new Error("Uma das quantidades de armazenamento é inválida.");
+    if (quantityPackages > 0) storageAllocations.set(locationId, quantityPackages);
+  }
   finiteInRange(initialWeightG, 1, 100000, "O peso inicial da cavidade esquerda", true);
   finiteInRange(midWeightG, 1, 100000, "O peso intermédio da cavidade esquerda", true);
   finiteInRange(rightInitialWeightG, 1, 100000, "O peso inicial da cavidade direita", true);
@@ -163,6 +173,27 @@ export async function saveProduction(formData: FormData) {
     }
     if (initialWeightG === null || midWeightG === null) throw new Error("Preencha os pesos do início e do meio do turno.");
     if (quantityProduced === null) throw new Error("Introduza a quantidade produzida.");
+  }
+
+  const firstFinalization = finalize && existing?.status !== RecordStatus.FINALIZED;
+  if (storageUnlocated && !historicalWindow) {
+    throw new Error("A opção sem localização só pode ser usada em registos históricos de administrador.");
+  }
+  if (firstFinalization && quantityProduced !== null && quantityProduced > 0 && !storageUnlocated) {
+    const allocatedPackages = [...storageAllocations.values()].reduce((sum, value) => sum + value, 0);
+    if (!storageAllocations.size) throw new Error("Indique no mapa onde a produção ficou armazenada.");
+    if (allocatedPackages !== quantityProduced) {
+      throw new Error(`A localização do stock totaliza ${allocatedPackages} embalagem(ns), mas a produção tem ${quantityProduced}.`);
+    }
+  }
+
+  const uniqueStorageLocationIds = [...storageAllocations.keys()];
+  const storageLocationRows = uniqueStorageLocationIds.length
+    ? await db.storageLocation.findMany({ where: { id: { in: uniqueStorageLocationIds }, active: true } })
+    : [];
+  if (storageLocationRows.length !== uniqueStorageLocationIds.length) throw new Error("Uma das posições de armazenamento selecionadas já não está disponível.");
+  if (new Set(storageLocationRows.map((row:any) => row.zoneType)).size > 1) {
+    throw new Error("A mesma produção deve ser armazenada apenas em estibas/montes ou apenas em paletes.");
   }
 
   const uniqueLotIds = [...new Set(materials.map((row) => row.rawMaterialLotId))];
@@ -262,6 +293,7 @@ export async function saveProduction(formData: FormData) {
       midWeightG,
       quantityProduced,
       unitsPerPackageSnapshot: product.unitsPerPackage ?? null,
+      productionUnitSnapshot: product.productionUnit ?? "BAG",
       observations: String(formData.get("observations") || "").trim().slice(0, 500) || null,
       exceptionReason: otherProductionsInShift > 0 ? (exceptionReason || null) : null,
       exceptionNotes: otherProductionsInShift > 0 ? (exceptionNotes || null) : null,
@@ -274,6 +306,28 @@ export async function saveProduction(formData: FormData) {
     const saved = lockedExisting
       ? await tx.production.update({ where: { id: lockedExisting.id }, data })
       : await tx.production.create({ data: { ...data, operatorId: user.id, productionLot: internalCode } });
+
+    const becameFinalized = status === RecordStatus.FINALIZED && lockedExisting?.status !== RecordStatus.FINALIZED;
+    if (becameFinalized && !storageUnlocated && quantityProduced && quantityProduced > 0) {
+      await tx.productionStorageBalance.deleteMany({ where: { productionId: saved.id } });
+      for (const [locationId, quantityPackages] of storageAllocations) {
+        await tx.productionStorageBalance.create({
+          data: { productionId: saved.id, locationId, quantityPackages },
+        });
+        await tx.productionStorageMovement.create({
+          data: {
+            productionId: saved.id,
+            movementType: "ENTRY",
+            fromLocationId: null,
+            toLocationId: locationId,
+            quantityPackages,
+            lotDispatchId: null,
+            createdById: user.id,
+            reason: historicalWindow ? "Localização registada na introdução histórica da produção." : "Entrada em stock após finalização da produção.",
+          },
+        });
+      }
+    }
 
     if (commercialLot) {
       const labelCode = `${commercialLot.code} / ${internalCode}`;
@@ -342,6 +396,8 @@ export async function saveProduction(formData: FormData) {
           stockReconciled: status === RecordStatus.FINALIZED,
           historicalDate: historicalWindow ? historicalDate : null,
           historicalShift: historicalWindow?.code ?? null,
+          storageUnlocated: firstFinalization ? storageUnlocated : null,
+          storageAllocations: firstFinalization ? [...storageAllocations.entries()].map(([locationId, quantityPackages]) => ({ locationId, quantityPackages })) : null,
         },
       },
     });
@@ -353,6 +409,9 @@ export async function saveProduction(formData: FormData) {
   revalidatePath("/admin/productions");
   revalidatePath("/admin/raw-material-lots");
   revalidatePath("/commercial-lots");
+  revalidatePath("/stock-map");
+  revalidatePath("/lot-dispatch");
+  revalidatePath("/traceability");
   return {
     ok: true,
     id: production.id,
