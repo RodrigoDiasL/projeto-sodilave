@@ -1,7 +1,7 @@
 "use client";
 
 import { useMemo, useState } from "react";
-import { adjustStockMap, transferStockMap } from "@/app/actions/stock-map";
+import { addUnlocatedStock, adjustStockMap, transferStockMap } from "@/app/actions/stock-map";
 import type { StorageMapLocation, StorageLocationInfo, UnlocatedFinishedLot } from "@/lib/stock-map";
 
 const packageLabel = (unit: string, quantity: number) =>
@@ -136,7 +136,7 @@ export function StockMap({
         <p className="muted small">Produções finalizadas cujo stock atual ainda não está totalmente atribuído ao mapa.</p>
         {unlocated.length === 0 ? <p className="empty-state">Não existem lotes por localizar.</p> : unlocated.map((lot) => <article className="stock-unlocated-lot" key={lot.productionId}>
           <div><strong>{lot.lotCode}</strong><span>{lot.productCode} — {lot.productName}</span><small>Por localizar: {lot.missingPackages} {packageLabel(lot.productionUnit, lot.missingPackages)}</small></div>
-          <form action={adjustStockMap} className="form-stack compact-admin-form">
+          <form action={addUnlocatedStock} className="form-stack compact-admin-form">
             <input type="hidden" name="productionId" value={lot.productionId}/>
             <label>Posição
               <select name="locationId" required defaultValue="">
@@ -145,7 +145,7 @@ export function StockMap({
               </select>
             </label>
             <label>Quantidade a localizar
-              <input name="newQuantityPackages" type="number" min="1" max={lot.missingPackages} step="1" defaultValue={lot.missingPackages} required/>
+              <input name="quantityPackages" type="number" min="1" max={lot.missingPackages} step="1" defaultValue={lot.missingPackages} required/>
             </label>
             <label>Motivo
               <input name="reason" maxLength={500} defaultValue="Regularização da localização física do stock." required/>
