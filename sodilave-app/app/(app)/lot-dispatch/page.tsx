@@ -1,5 +1,6 @@
 import { requireOperationalUser } from "@/lib/auth";
 import { PageIntro } from "@/components/PageIntro";
+import { CancelLotDispatchForm } from "@/components/CancelLotDispatchForm";
 import { LotDispatchForm } from "@/components/LotDispatchForm";
 import { getAvailableFinishedLots, getRecentLotDispatches } from "@/lib/lot-dispatch";
 
@@ -30,7 +31,7 @@ export default async function LotDispatchPage() {
       {recent.length === 0
         ? <p className="empty-state">Ainda não existem saídas de lotes registadas.</p>
         : <div className="responsive-table"><table>
-          <thead><tr><th>Saída</th><th>Data</th><th>Cliente</th><th>Encomenda</th><th>Fatura</th><th>Artigo</th><th>Quantidade</th><th>Lotes</th><th>Funcionário</th></tr></thead>
+          <thead><tr><th>Saída</th><th>Data</th><th>Cliente</th><th>Encomenda</th><th>Fatura</th><th>Artigo</th><th>Quantidade</th><th>Lotes</th><th>Funcionário</th><th>Estado / correção</th></tr></thead>
           <tbody>{recent.map((row) => <tr key={row.id}>
             <td><strong>#{row.id}</strong></td>
             <td>{new Date(`${row.dispatchDate}T12:00:00`).toLocaleDateString("pt-PT")}</td>
@@ -41,6 +42,7 @@ export default async function LotDispatchPage() {
             <td>{row.orderedQuantityUnits.toLocaleString("pt-PT")} artigos</td>
             <td>{row.lots || "—"}</td>
             <td>{row.createdByName}</td>
+            <td>{row.cancelledAt ? <>Anulada — {row.cancelReason}</> : user.role === "ADMIN" ? <CancelLotDispatchForm dispatchId={row.id}/> : "Registada"}</td>
           </tr>)}</tbody>
         </table></div>}
     </section>

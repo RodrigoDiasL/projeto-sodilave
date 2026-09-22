@@ -209,38 +209,6 @@ export async function saveProduction(formData: FormData) {
   if (existing?.status === RecordStatus.FINALIZED && productId !== existing.productId) {
     throw new Error("O artigo de uma produção já finalizada não pode ser alterado porque já está ligado ao stock físico e à rastreabilidade.");
   }
-  if (existing?.status === RecordStatus.FINALIZED && quantityProduced !== null) {
-    const [storageRows, dispatchRows] = await Promise.all([
-      db.query<{ total: number | string }[]>(
-        "SELECT COALESCE(SUM(quantityPackages),0) AS total FROM ProductionStorageBalance WHERE productionId=?",
-        [existing.id],
-      ),
-      db.query<{ total: number | string }[]>(
-        `SELECT COALESCE(SUM(line.quantityUnits),0) AS total
-         FROM LotDispatchLine line
-         INNER JOIN LotDispatch d ON d.id=line.lotDispatchId
-         WHERE line.productionId=? AND d.cancelledAt IS NULL`,
-        [existing.id],
-      ),
-    ]);
-    const snapshotUnits = Number(existing.unitsPerPackageSnapshot ?? product.unitsPerPackage ?? 0);
-    const dispatchedUnits = Number(dispatchRows[0]?.total ?? 0);
-    if (snapshotUnits <= 0 || dispatchedUnits % snapshotUnits !== 0) {
-      throw new Error("A quantidade histórica deste lote não permite uma correção segura da produção.");
-    }
-    const accountedPackages = Number(storageRows[0]?.total ?? 0) + dispatchedUnits / snapshotUnits;
-    if (quantityProduced < accountedPackages) {
-      throw new Error(`A produção não pode ser reduzida para ${quantityProduced}: já existem ${accountedPackages} embalagem(ns) localizadas ou expedidas.`);
-    }
-  }
-  if (
-    existing?.status === RecordStatus.FINALIZED &&
-    user.role !== "ADMIN" &&
-    quantityProduced !== null &&
-    Number(existing.quantityProduced ?? 0) !== quantityProduced
-  ) {
-    throw new Error("Depois de finalizada, a quantidade produzida só pode ser corrigida por um administrador porque está ligada ao mapa de stock.");
-  }
 
   const productMachine = await db.$queryRaw<{ ok: number }[]>`
     SELECT 1 AS ok FROM ProductMachine WHERE productId=${productId} AND machineId=${machineId} LIMIT 1
@@ -316,6 +284,40 @@ export async function saveProduction(formData: FormData) {
       lockedExisting = locked[0] ?? null;
       if (!lockedExisting) throw new Error("A produção já não existe.");
       if (lockedExisting.status === RecordStatus.CANCELLED) throw new Error("Esta produção foi cancelada.");
+      if (lockedExisting.status !== existing?.status) throw new Error("O estado da produção foi alterado por outro utilizador. Atualize a página antes de continuar.");
+    }
+
+    if (lockedExisting?.status === RecordStatus.FINALIZED && quantityProduced !== null) {
+      const [storageRows, dispatchRows] = await Promise.all([
+        tx.query<{ total: number | string }[]>(
+          "SELECT COALESCE(SUM(quantityPackages),0) AS total FROM ProductionStorageBalance WHERE productionId=?",
+          [lockedExisting.id],
+        ),
+        tx.query<{ total: number | string }[]>(
+          `SELECT COALESCE(SUM(line.quantityUnits),0) AS total
+           FROM LotDispatchLine line
+           INNER JOIN LotDispatch d ON d.id=line.lotDispatchId
+           WHERE line.productionId=? AND d.cancelledAt IS NULL`,
+          [lockedExisting.id],
+        ),
+      ]);
+      const snapshotUnits = Number(lockedExisting.unitsPerPackageSnapshot ?? product.unitsPerPackage ?? 0);
+      const dispatchedUnits = Number(dispatchRows[0]?.total ?? 0);
+      if (snapshotUnits <= 0 || dispatchedUnits % snapshotUnits !== 0) {
+        throw new Error("A quantidade histórica deste lote não permite uma correção segura da produção.");
+      }
+      const accountedPackages = Number(storageRows[0]?.total ?? 0) + dispatchedUnits / snapshotUnits;
+      if (quantityProduced < accountedPackages) {
+        throw new Error(`A produção não pode ser reduzida para ${quantityProduced}: já existem ${accountedPackages} embalagem(ns) localizadas ou expedidas.`);
+      }
+    }
+    if (
+      lockedExisting?.status === RecordStatus.FINALIZED &&
+      user.role !== "ADMIN" &&
+      quantityProduced !== null &&
+      Number(lockedExisting.quantityProduced ?? 0) !== quantityProduced
+    ) {
+      throw new Error("Depois de finalizada, a quantidade produzida só pode ser corrigida por um administrador porque está ligada ao mapa de stock.");
     }
 
     const previousStock = lockedExisting ? await getRecordedProductionStock(tx, lockedExisting.id) : [];

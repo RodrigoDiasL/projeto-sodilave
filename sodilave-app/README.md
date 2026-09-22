@@ -141,3 +141,28 @@ npm start                   Arrancar através de app.js/server.cjs
 - `public/` — imagens e recursos estáticos.
 
 A aplicação mantém-se em fase `0.9.x` até concluir a instalação e validação com utilização real no servidor de produção.
+
+### Verificação dos fluxos operacionais
+
+Depois de atualizar o código e executar `npm run db:production`, execute
+`npm run db:check` com as mesmas variáveis do servidor. Esta verificação é apenas
+leitura: deteta migrações pendentes/alteradas e colunas necessárias aos fluxos
+operacionais, incluindo `WeeklyStartup.coolingPump1` e `coolingPump2`. Atualizar
+apenas o código sem aplicar as migrações pode impedir o arranque semanal.
+
+Os testes de integração executam as ações da aplicação sobre SQL real; apenas a
+sessão de utilizador e a invalidação de cache Next são substituídas. Cobrem o ciclo
+semanal (incluindo rascunhos e submissões simultâneas), correções com matéria-prima
+esgotada, snapshots, expedição, anulação e reposição de stock.
+
+**Usar exclusivamente uma base descartável:** os testes apagam os dados da base
+indicada. `TEST_DATABASE_URL` só aceita bases chamadas `sodilave_test` ou `typecheck`.
+Prepare essa base com `DATABASE_URL` e `npm run db:upgrade`, depois execute
+`TEST_DATABASE_URL='mysql://utilizador:senha@localhost:3306/sodilave_test' npm run test:integration`.
+O workflow de CI executa estes testes numa base MySQL isolada.
+
+Administradores podem anular uma saída em **Saída de Lotes → Anular / corrigir**,
+indicando o motivo. O stock regressa às posições originais e a saída anulada fica
+no histórico. Para corrigir uma saída, anule e registe novamente os dados certos.
+Saídas antigas sem histórico completo de posições exigem reconciliação prévia;
+a aplicação não presume uma localização para repor esse stock.

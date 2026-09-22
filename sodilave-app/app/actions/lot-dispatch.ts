@@ -1,7 +1,7 @@
 "use server";
 
 import { revalidatePath } from "next/cache";
-import { requireOperationalUser } from "@/lib/auth";
+import { requireOperationalUser, requireAdmin } from "@/lib/auth";
 import { db } from "@/lib/db";
 
 type LockedProduction = {
@@ -81,6 +81,7 @@ export async function createLotDispatch(formData: FormData) {
        INNER JOIN Product pr ON pr.id = p.productId
        LEFT JOIN ProductionLotAssociation pla ON pla.productionId = p.id
        WHERE p.id IN (${productionPlaceholders})
+       ORDER BY p.id
        FOR UPDATE`,
       productionIds,
     );
@@ -227,4 +228,50 @@ export async function createLotDispatch(formData: FormData) {
   revalidatePath("/traceability");
 
   return { ok: true, id: dispatch.id };
+}
+
+export async function cancelLotDispatch(formData: FormData) {
+  const user = await requireAdmin();
+  const id = Number(formData.get("dispatchId"));
+  if (!Number.isInteger(id) || id <= 0) throw new Error("Saída inválida.");
+  const reason = requiredText(formData, "reason", "O motivo da anulação", 500);
+
+  await db.$transaction(async tx => {
+    // Use the same lock order as dispatch/production corrections: production first.
+    const lines = await tx.query<{productionId:number;quantityUnits:number}[]>(
+      "SELECT productionId,quantityUnits FROM LotDispatchLine WHERE lotDispatchId=? ORDER BY productionId", [id]);
+    if (!lines.length) throw new Error("Esta saída não tem lotes para repor.");
+    const productions = await tx.query<{id:number;status:string;unitsPerPackage:number}[]>(
+      `SELECT p.id,p.status,COALESCE(p.unitsPerPackageSnapshot,pr.unitsPerPackage) AS unitsPerPackage
+       FROM Production p INNER JOIN Product pr ON pr.id=p.productId
+       WHERE p.id IN (${lines.map(()=>"?").join(",")}) ORDER BY p.id FOR UPDATE`, lines.map(row=>row.productionId));
+    const dispatches = await tx.query<{id:number;cancelledAt:Date|null}[]>(
+      "SELECT id,cancelledAt FROM LotDispatch WHERE id=? FOR UPDATE", [id]);
+    if (!dispatches.length) throw new Error("Esta saída já não existe.");
+    if (dispatches[0].cancelledAt) throw new Error("Esta saída já foi anulada.");
+    if (productions.length !== lines.length || productions.some(row=>row.status!=="FINALIZED")) {
+      throw new Error("Um dos lotes desta saída já não está finalizado.");
+    }
+    const movements = await tx.query<{productionId:number;fromLocationId:number|null;quantityPackages:number}[]>(
+      "SELECT productionId,fromLocationId,quantityPackages FROM ProductionStorageMovement WHERE lotDispatchId=? AND movementType='DISPATCH' ORDER BY productionId,fromLocationId", [id]);
+    // Legacy dispatches may not have position history. Never invent a return location.
+    if (!movements.length || movements.some(row=>!row.fromLocationId || Number(row.quantityPackages)<=0 || !lines.some(line=>line.productionId===row.productionId)) ||
+      lines.some(line=>movements.filter(row=>row.productionId===line.productionId).reduce((sum,row)=>sum+Number(row.quantityPackages),0) * Number(productions.find(row=>row.id===line.productionId)?.unitsPerPackage) !== Number(line.quantityUnits))) {
+      throw new Error("Esta saída antiga não tem um histórico completo das posições. É necessária uma reconciliação de stock antes de a anular.");
+    }
+    for (const movement of movements) {
+      await tx.execute(`INSERT INTO ProductionStorageBalance (productionId,locationId,quantityPackages)
+        VALUES (?,?,?) ON DUPLICATE KEY UPDATE quantityPackages=quantityPackages+?`,
+        [movement.productionId,movement.fromLocationId,movement.quantityPackages,movement.quantityPackages]);
+      await tx.productionStorageMovement.create({data:{
+        productionId:movement.productionId,movementType:"DISPATCH_REVERSAL",fromLocationId:null,
+        toLocationId:movement.fromLocationId,quantityPackages:movement.quantityPackages,
+        lotDispatchId:id,createdById:user.id,reason,
+      }});
+    }
+    await tx.lotDispatch.update({where:{id},data:{cancelledAt:new Date(),cancelledById:user.id,cancelReason:reason}});
+    await tx.auditLog.create({data:{userId:user.id,action:"CANCEL",entity:"LotDispatch",entityId:String(id),details:{reason,movements}}});
+  });
+  for (const path of ["/lot-dispatch","/stock-map","/dashboard","/traceability"]) revalidatePath(path);
+  return {ok:true};
 }

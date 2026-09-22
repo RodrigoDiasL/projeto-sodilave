@@ -36,6 +36,7 @@ export function productionToInitial(production: any, cavityData?: any, cavityTes
       lotId: String(material.rawMaterialLotId),
       percentage: Number(material.percentage ?? 0),
       quantityKg: material.quantityKg ? String(Number(material.quantityKg)) : "",
+      manualQuantity: true,
     })),
     tests,
   };

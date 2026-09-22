@@ -20,6 +20,7 @@ async function getProductionCapacity(tx: DbTransaction, productionId: number) {
   const rows = await tx.query<any[]>(
     `SELECT
        p.id,
+       p.status,
        COALESCE(p.quantityProduced,0) AS producedPackages,
        COALESCE(p.unitsPerPackageSnapshot,pr.unitsPerPackage,0) AS unitsPerPackage,
        COALESCE(pla.labelCode,p.productionLot) AS lotCode
@@ -32,6 +33,7 @@ async function getProductionCapacity(tx: DbTransaction, productionId: number) {
   );
   const production = rows[0];
   if (!production) throw new Error("O lote de produção já não existe.");
+  if (production.status !== "FINALIZED") throw new Error("Só é possível movimentar stock de produções finalizadas.");
 
   const unitsPerPackage = Number(production.unitsPerPackage);
   const producedPackages = Number(production.producedPackages);
@@ -68,10 +70,10 @@ export async function adjustStockMap(formData: FormData) {
   const correctionReason = reason(formData);
 
   await db.$transaction(async (tx) => {
+    const capacity = await getProductionCapacity(tx, productionId);
     const location = await tx.storageLocation.findFirst({ where: { id: locationId, active: true } });
     if (!location) throw new Error("A posição selecionada não existe.");
 
-    const capacity = await getProductionCapacity(tx, productionId);
     const balances = await tx.query<any[]>(
       "SELECT locationId,quantityPackages FROM ProductionStorageBalance WHERE productionId=? FOR UPDATE",
       [productionId],
@@ -134,6 +136,7 @@ export async function transferStockMap(formData: FormData) {
   const transferReason = reason(formData);
 
   await db.$transaction(async (tx) => {
+    await getProductionCapacity(tx, productionId);
     const locations = await tx.storageLocation.findMany({ where: { id: { in: [fromLocationId, toLocationId] }, active: true } });
     if (locations.length !== 2) throw new Error("Uma das posições selecionadas não existe.");
 
@@ -205,10 +208,10 @@ export async function addUnlocatedStock(formData: FormData) {
   const placementReason = reason(formData);
 
   await db.$transaction(async (tx) => {
+    const capacity = await getProductionCapacity(tx, productionId);
     const location = await tx.storageLocation.findFirst({ where: { id: locationId, active: true } });
     if (!location) throw new Error("A posição selecionada não existe.");
 
-    const capacity = await getProductionCapacity(tx, productionId);
     const balances = await tx.query<any[]>(
       "SELECT locationId,quantityPackages FROM ProductionStorageBalance WHERE productionId=? FOR UPDATE",
       [productionId],

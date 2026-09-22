@@ -60,15 +60,15 @@ export async function saveWeeklyStartup(fd: FormData) {
   };
 
   const startup=await db.$transaction(async tx=>{
+    // Serialize weekly transitions, including simultaneous submissions from different operators.
+    await tx.query("SELECT id FROM Machine ORDER BY id FOR UPDATE");
     const existing=idValue?await tx.weeklyStartup.findUnique({where:{id:idValue}}):null;
     if(idValue&&!existing) throw new Error("Este arranque semanal já não existe.");
     if(existing?.status===RecordStatus.CANCELLED) throw new Error("Este arranque foi cancelado.");
     if(existing?.status===RecordStatus.FINALIZED) throw new Error("Este arranque já foi finalizado.");
 
-    if(!existing){
-      const lastStartup=await tx.weeklyStartup.findFirst({where:{status:RecordStatus.FINALIZED},orderBy:{startupDate:"desc"},include:{shutdown:true}});
-      if(lastStartup&&!lastStartup.shutdown) throw new Error("Antes de iniciar uma nova semana, finalize a paragem semanal do arranque anterior.");
-    }
+    const activeStartup=await tx.weeklyStartup.findFirst({where:{status:RecordStatus.FINALIZED,shutdown:null}});
+    if(activeStartup) throw new Error("Antes de iniciar uma nova semana, finalize a paragem semanal do arranque anterior.");
 
     if(machineIds.length){
       const validMachines=await tx.machine.count({where:{id:{in:machineIds},active:true}});
@@ -83,7 +83,7 @@ export async function saveWeeklyStartup(fd: FormData) {
     for(const row of machineChecks) await tx.weeklyStartupMachine.create({data:{weeklyStartupId:saved.id,machineId:row.machineId,...row.checks}});
 
     if(finalize){
-      for(const machineId of machineIds) await changeMachineStatus({machineId,toStatus:MachineStatus.RUNNING,type:MachineEventType.WEEKLY_STARTUP,userId:user.id,reason:"Arranque semanal",occurredAt:saved.startupDate},tx);
+      for(const machineId of machineIds) await changeMachineStatus({machineId,toStatus:MachineStatus.RUNNING,type:MachineEventType.WEEKLY_STARTUP,userId:user.id,reason:"Arranque semanal",occurredAt:data.finalizedAt!},tx);
     }
     await tx.auditLog.create({data:{userId:user.id,action:finalize?"FINALIZE":existing?"EDIT":"CREATE",entity:"WeeklyStartup",entityId:String(saved.id),details:{machineIds}}});
     return saved;

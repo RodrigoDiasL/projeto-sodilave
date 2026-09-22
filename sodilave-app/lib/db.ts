@@ -502,7 +502,7 @@ function weeklyStartupRepo(client: SqlClient) {
     const condition = buildWhere(where);
     let sql = `SELECT t.* FROM WeeklyStartup t${condition.sql}`;
     const params = [...condition.params];
-    if (requireNoShutdown) sql += `${condition.sql ? " AND " : " WHERE "}NOT EXISTS (SELECT 1 FROM WeeklyShutdown ws WHERE ws.weeklyStartupId=t.id)`;
+    if (requireNoShutdown) sql += `${condition.sql ? " AND " : " WHERE "}NOT EXISTS (SELECT 1 FROM WeeklyShutdown ws WHERE ws.weeklyStartupId=t.id AND ws.status='FINALIZED')`;
     sql += buildOrder(args.orderBy);
     if (args.take) sql += ` LIMIT ${Number(args.take)}`;
     const rows = await queryRows<any>(client, sql, params);

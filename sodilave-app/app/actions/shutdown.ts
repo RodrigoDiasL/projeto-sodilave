@@ -1,5 +1,6 @@
 "use server";
 import { revalidatePath } from "next/cache";
+import { getWeeklyShutdownMachines } from "@/lib/active-machines";
 import { db } from "@/lib/db";
 import { requireOperationalUser } from "@/lib/auth";
 import { getShift } from "@/lib/shift";
@@ -18,11 +19,12 @@ export async function saveWeeklyShutdown(fd: FormData){
   const fields=["externalCleaning","acrylicsCleaning","mouldCleaning","traysCleaning","catchersCleaning","beltsCleaning","packingTableCleaning","surroundingArea"];
 
   const row=await db.$transaction(async tx=>{
+    await tx.query("SELECT id FROM Machine ORDER BY id FOR UPDATE");
     const startup=await tx.weeklyStartup.findFirst({where:{status:RecordStatus.FINALIZED,shutdown:null},orderBy:{startupDate:"desc"}});
     if(!startup)throw new Error("Não existe um arranque semanal ativo para encerrar.");
 
-    const runningMachines=await tx.machine.findMany({where:{active:true,status:MachineStatus.RUNNING},orderBy:{code:"asc"}});
-    if(!runningMachines.length)throw new Error("Não existem máquinas em funcionamento para parar.");
+    const runningMachines=await getWeeklyShutdownMachines(startup.id,tx);
+
 
     const machineRows=runningMachines.map(machine=>({
       machine,
@@ -53,7 +55,7 @@ export async function saveWeeklyShutdown(fd: FormData){
     }
 
     if(finalize){
-      for(const machineRow of machineRows)await changeMachineStatus({machineId:machineRow.machine.id,toStatus:MachineStatus.STOPPED,type:MachineEventType.WEEKLY_SHUTDOWN,userId:user.id,reason:"Paragem semanal",occurredAt:saved.shutdownDate},tx);
+      for(const machineRow of machineRows.filter(row=>row.machine.status===MachineStatus.RUNNING))await changeMachineStatus({machineId:machineRow.machine.id,toStatus:MachineStatus.STOPPED,type:MachineEventType.WEEKLY_SHUTDOWN,userId:user.id,reason:"Paragem semanal",occurredAt:data.finalizedAt!},tx);
     }
     await tx.auditLog.create({data:{userId:user.id,action:finalize?"FINALIZE":existing?"EDIT":"CREATE",entity:"WeeklyShutdown",entityId:String(saved.id),details:{incompleteGeneral,incompleteMachines,machineIds:runningMachines.map(m=>m.id)}}});
     return saved;

@@ -38,6 +38,8 @@ export type RecentLotDispatch = {
   dispatchDate: string;
   createdByName: string;
   lots: string;
+  cancelledAt: string | null;
+  cancelReason: string | null;
 };
 
 export async function getAvailableFinishedLots(): Promise<AvailableFinishedLot[]> {
@@ -125,6 +127,8 @@ export async function getRecentLotDispatches(limit = 30): Promise<RecentLotDispa
   const rows = await db.query<any[]>(`
     SELECT
       d.id,
+      DATE_FORMAT(d.cancelledAt, '%Y-%m-%d %H:%i:%s') AS cancelledAt,
+      d.cancelReason,
       d.customerName,
       d.orderReference,
       d.invoiceNumber,
@@ -133,7 +137,7 @@ export async function getRecentLotDispatches(limit = 30): Promise<RecentLotDispa
       d.orderedQuantityUnits,
       DATE_FORMAT(d.dispatchDate, '%Y-%m-%d') AS dispatchDate,
       u.name AS createdByName,
-      COALESCE(lines.lots, '') AS lots
+      COALESCE(dispatch_lots.lots, '') AS lots
     FROM LotDispatch d
     INNER JOIN Product pr ON pr.id = d.productId
     INNER JOIN User u ON u.id = d.createdById
@@ -149,14 +153,15 @@ export async function getRecentLotDispatches(limit = 30): Promise<RecentLotDispa
       INNER JOIN Production p ON p.id = line.productionId
       LEFT JOIN ProductionLotAssociation pla ON pla.productionId = p.id
       GROUP BY line.lotDispatchId
-    ) lines ON lines.lotDispatchId = d.id
-    WHERE d.cancelledAt IS NULL
+    ) dispatch_lots ON dispatch_lots.lotDispatchId = d.id
     ORDER BY d.dispatchDate DESC, d.id DESC
     LIMIT ${safeLimit}
   `);
 
   return rows.map((row) => ({
     id: Number(row.id),
+    cancelledAt: row.cancelledAt ? String(row.cancelledAt) : null,
+    cancelReason: row.cancelReason ? String(row.cancelReason) : null,
     customerName: String(row.customerName),
     orderReference: String(row.orderReference),
     invoiceNumber: String(row.invoiceNumber),

@@ -33,7 +33,7 @@ export default async function EditProductionPage({ params }: { params: Promise<{
   }
 
   const [data, peerConfirmation] = await Promise.all([
-    getProductionFormData({ currentUserId: user.id }),
+    getProductionFormData({ currentUserId: user.id, existingProductionId: production.id }),
     user.role === "ADMIN" ? Promise.resolve(null) : getShiftPeerConfirmation(user.id),
   ]);
   const association = await db.$queryRaw<{ labelCode: string }[]>`SELECT labelCode FROM ProductionLotAssociation WHERE productionId = ${production.id} LIMIT 1`;

@@ -50,6 +50,12 @@ jobs:
         run: npm run verify:production
       - name: Bootstrap SQL database
         run: npm run db:upgrade
+      - name: Check database schema
+        run: npm run db:check
+      - name: SQL integration tests
+        run: npm run test:integration
+        env:
+          TEST_DATABASE_URL: mysql://typecheck:typecheck@localhost:3306/typecheck
       - name: Typecheck
         run: npm run typecheck
       - name: Production build
