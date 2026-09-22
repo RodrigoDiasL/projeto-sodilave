@@ -51,6 +51,20 @@ npm run verify:production
 npm run build:production
 ```
 
+
+## Stock de produto acabado
+
+A aplicação mantém a localização física dos lotes produzidos:
+
+- Armazém 1: 7 colunas × 10 linhas de estibas/montes + 7 × 5 posições de paletes.
+- Armazém 2: 7 colunas × 15 linhas de estibas/montes + 7 × 5 posições de paletes.
+- Uma posição pode conter vários lotes.
+- A unidade normal de stock é o saco; produtos específicos podem ser configurados para usar palete como unidade de produção/stock.
+- Ao finalizar uma produção, o operador atribui a quantidade produzida às posições físicas do mapa.
+- As saídas para clientes retiram stock das posições indicadas pelo operador.
+- Transferências e correções administrativas ficam registadas como movimentos, sem apagar o histórico.
+- A rastreabilidade liga produção, matérias-primas, localização atual, saídas, cliente, encomenda e fatura.
+
 ## Produção
 
 A aplicação interna deve ser publicada num endereço separado do website institucional.
