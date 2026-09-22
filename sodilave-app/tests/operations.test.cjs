@@ -49,11 +49,13 @@ const {saveProduction}=load('app/actions/production');
 const fd=(obj)=>{const form=new FormData();for(const [key,value]of Object.entries(obj))form.set(key,String(value));return form;};
 let machine,product,material,lot,location,production;
 before(async()=>{
+  const [server]=await db.query('SELECT @@lower_case_table_names AS mode');
+  if(process.env.TEST_LOWER_CASE_TABLE_NAMES!==undefined)assert.equal(Number(server.mode),Number(process.env.TEST_LOWER_CASE_TABLE_NAMES));
   // Clean only this explicitly named disposable database, preserving installed schema.
   const tables=await db.query('SELECT TABLE_NAME AS name FROM information_schema.tables WHERE table_schema=DATABASE()');
   await db.$transaction(async tx=>{
     await tx.execute('SET FOREIGN_KEY_CHECKS=0');
-    try {for(const {name}of tables)if(name!=='AppSchemaMigration')await tx.execute('DELETE FROM `'+name+'`');}
+    try {for(const {name}of tables)if(name.toLowerCase()!=='appschemamigration')await tx.execute('DELETE FROM `'+name+'`');}
     finally {await tx.execute('SET FOREIGN_KEY_CHECKS=1');}
   });
   user=await db.user.create({data:{name:'Integration admin',pinHash:'test-only',role:'ADMIN'}});
@@ -89,6 +91,39 @@ test('upgrade repairs the reported missing-pump-column error and remains repeata
   await execFileAsync(process.execPath,[check],options);
   await db.query('SELECT coolingPump1,coolingPump2 FROM WeeklyStartup');
   assert.equal(await db.user.count(),usersBefore,'upgrade must preserve users');
+});
+test('stock-map upgrade creates missing positions and preserves existing operational data',async()=>{
+  const usersBefore=await db.user.count();
+  const lotsBefore=await db.rawMaterialLot.count();
+  // Reproduce an installation from before the stock-map migration.
+  await db.execute('DROP TABLE ProductionStorageMovement');
+  await db.execute('DROP TABLE ProductionStorageBalance');
+  await db.execute('DROP TABLE StorageLocation');
+  await db.execute('ALTER TABLE Production DROP COLUMN productionUnitSnapshot');
+  await db.execute('ALTER TABLE Product DROP COLUMN productionUnit');
+  await db.execute('DELETE FROM AppSchemaMigration WHERE name=?',['2026-09-22-stock-map.sql']);
+  await assert.rejects(load('lib/stock-map').getStorageLocations(),{code:'ER_NO_SUCH_TABLE'});
+  const options={cwd:root,env:{...process.env,DATABASE_URL:url}};
+  await assert.rejects(execFileAsync(process.execPath,[path.join(root,'scripts/check-production-db.mjs')],options),error=>{
+    assert.match(error.stderr,/StorageLocation.id/);return true;
+  });
+  await execFileAsync(process.execPath,[path.join(root,'scripts/prepare-production-db.mjs')],options);
+  await execFileAsync(process.execPath,[path.join(root,'scripts/check-production-db.mjs')],options);
+  const locations=await load('lib/stock-map').getStorageMapData();
+  assert.ok(locations.some(row=>row.warehouseCode==='W1'));
+  assert.ok(locations.some(row=>row.warehouseCode==='W2'));
+  assert.ok(locations.some(row=>row.zoneType==='STACK'));
+  assert.ok(locations.some(row=>row.zoneType==='PALLET'));
+  assert.ok(locations.every(row=>row.totalPackages===0));
+  assert.equal(await db.user.count(),usersBefore);
+  assert.equal(await db.rawMaterialLot.count(),lotsBefore);
+  location=locations[0];
+});
+test('schema identifiers follow the server case rules',async()=>{
+  const {columnKey,tableNameKey}=await import('../scripts/schema-identifiers.mjs');
+  for(const mode of [1,2])assert.equal(columnKey('WeeklyStartup','startupDate',mode),columnKey('weeklystartup','STARTUPDATE',mode));
+  assert.notEqual(tableNameKey('WeeklyStartup',0),tableNameKey('weeklystartup',0));
+  assert.equal(columnKey('WeeklyStartup','startupDate',0),columnKey('WeeklyStartup','STARTUPDATE',0));
 });
 test('database scripts load local Next environment files without overriding host settings',async()=>{
   const {pathToFileURL}=require('node:url');

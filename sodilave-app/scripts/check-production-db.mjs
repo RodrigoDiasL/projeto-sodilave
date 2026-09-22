@@ -1,12 +1,16 @@
 // Read-only verification: run with the same DATABASE_URL as the application.
+import { columnKey } from "./schema-identifiers.mjs";
 import fs from "node:fs/promises";
 import path from "node:path";
 import crypto from "node:crypto";
 import { query, closeDb } from "./mysql-client.mjs";
 
 try {
+  const [server] = await query("SELECT DATABASE() AS databaseName, @@lower_case_table_names AS lowerCaseTableNames");
+  const key = (table,column)=>columnKey(table,column,server.lowerCaseTableNames);
+  console.log(`Base de dados: ${server.databaseName} (lower_case_table_names=${server.lowerCaseTableNames}).`);
   const columns = await query("SELECT TABLE_NAME AS tableName,COLUMN_NAME AS columnName FROM information_schema.columns WHERE table_schema=DATABASE()");
-  const available = new Set(columns.map(row=>`${row.tableName}.${row.columnName}`));
+  const available = new Set(columns.map(row=>key(row.tableName,row.columnName)));
   const required = {
     WeeklyStartup:["id","status","startupDate","finalizedAt","coolingPump1","coolingPump2"],
     WeeklyShutdown:["weeklyStartupId","status","finalizedAt"],
@@ -15,12 +19,14 @@ try {
     Production:["unitsPerPackageSnapshot","productionUnitSnapshot"],
     ProductionStockConsumption:["productionId","rawMaterialLotId","quantityKg"],
     LotDispatch:["cancelledAt","cancelledById","cancelReason"],
+    StorageLocation:["id","warehouseCode","warehouseName","zoneType","rowNumber","columnNumber","code","active"],
+    Product:["productionUnit"],
     ProductionStorageBalance:["productionId","locationId","quantityPackages"],
     ProductionStorageMovement:["lotDispatchId","movementType","fromLocationId","toLocationId"],
     ShiftPeerConfirmation:["operatorId","shiftStart"],
     AppSchemaMigration:["name","checksum"],
   };
-  const missing=Object.entries(required).flatMap(([table,names])=>names.map(name=>`${table}.${name}`)).filter(name=>!available.has(name));
+  const missing=Object.entries(required).flatMap(([table,names])=>names.filter(name=>!available.has(key(table,name))).map(name=>`${table}.${name}`));
   if(missing.length)throw new Error(`Estrutura SQL incompleta: ${missing.join(", ")}. Execute npm run db:upgrade nesta pasta com a mesma configuração da aplicação e volte a verificar.`);
   const applied=new Map((await query("SELECT name,checksum FROM AppSchemaMigration")).map(row=>[row.name,row.checksum]));
   const folder=path.join(process.cwd(),"database","migrations");

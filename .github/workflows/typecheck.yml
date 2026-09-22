@@ -9,21 +9,10 @@ on:
 jobs:
   validate:
     runs-on: ubuntu-latest
-    services:
-      mysql:
-        image: mysql:8.4
-        env:
-          MYSQL_DATABASE: typecheck
-          MYSQL_USER: typecheck
-          MYSQL_PASSWORD: typecheck
-          MYSQL_ROOT_PASSWORD: root-typecheck
-        ports:
-          - 3306:3306
-        options: >-
-          --health-cmd="mysqladmin ping -h 127.0.0.1 -utypecheck -ptypecheck"
-          --health-interval=5s
-          --health-timeout=5s
-          --health-retries=20
+    strategy:
+      fail-fast: false
+      matrix:
+        lower_case_table_names: [0, 1]
     defaults:
       run:
         working-directory: sodilave-app
@@ -44,6 +33,25 @@ jobs:
           node-version: 22
           cache: npm
           cache-dependency-path: sodilave-app/package-lock.json
+      - name: Start MySQL with platform case rules
+        run: |
+          docker run -d --name sodilave-mysql \
+            -e MYSQL_DATABASE=typecheck \
+            -e MYSQL_USER=typecheck \
+            -e MYSQL_PASSWORD=typecheck \
+            -e MYSQL_ROOT_PASSWORD=root-typecheck \
+            -p 3306:3306 \
+            --health-cmd="mysqladmin ping -h 127.0.0.1 -utypecheck -ptypecheck" \
+            --health-interval=2s --health-timeout=5s --health-retries=60 \
+            mysql:8.4 --lower-case-table-names=${{ matrix.lower_case_table_names }}
+          for attempt in {1..60}; do
+            if [ "$(docker inspect --format='{{.State.Health.Status}}' sodilave-mysql)" = healthy ]; then
+              exit 0
+            fi
+            sleep 2
+          done
+          docker logs sodilave-mysql
+          exit 1
       - name: Install dependencies
         run: npm ci --include=dev
       - name: Validate production environment
@@ -56,6 +64,7 @@ jobs:
         run: npm run test:integration
         env:
           TEST_DATABASE_URL: mysql://typecheck:typecheck@localhost:3306/typecheck
+          TEST_LOWER_CASE_TABLE_NAMES: ${{ matrix.lower_case_table_names }}
       - name: Typecheck
         run: npm run typecheck
       - name: Production build

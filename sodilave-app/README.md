@@ -191,3 +191,20 @@ O arranque exige **bomba 1 ou bomba 2** ao finalizar. Um rascunho pode ainda nã
 bomba escolhida, mas nunca pode ter as duas. Submissões de separadores antigos com
 ambas as caixas assinaladas são rejeitadas no servidor. Rascunhos antigos com as
 duas flags precisam de uma escolha explícita: não se presume qual bomba funcionava.
+
+### MySQL no Windows e mapa de stock
+
+`db:check` e `db:upgrade` respeitam agora `lower_case_table_names` do servidor:
+`weeklystartup` corresponde a `WeeklyStartup` nos modos 1/2, enquanto o modo 0
+mantém a distinção necessária no Linux. Os comandos indicam o nome da base e o
+modo usado, sem mostrar credenciais. O CI executa os fluxos em MySQL nos modos 0 e 1.
+
+A verificação inclui `StorageLocation`, `ProductionStorageBalance` e
+`ProductionStorageMovement`. Se faltar a estrutura do mapa, `npm run db:upgrade`
+aplica a migração `2026-09-22-stock-map.sql`, incluindo as posições dos armazéns.
+Execute `npm run db:check` a seguir. Não é necessário apagar ou recriar a base.
+
+Os ícones de garrafões são importados pelo componente `MachineIcon` e incorporados
+na compilação com um URL próprio. O mesmo componente é usado no arranque,
+produção, check-ups, painel e lista de máquinas; inclui um ícone alternativo se a
+imagem não carregar.

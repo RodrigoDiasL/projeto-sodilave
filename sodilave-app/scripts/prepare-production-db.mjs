@@ -1,3 +1,4 @@
+import { tableNameKey } from "./schema-identifiers.mjs";
 import fs from "node:fs/promises";
 import path from "node:path";
 import crypto from "node:crypto";
@@ -5,12 +6,13 @@ import bcrypt from "bcryptjs";
 import { db, query, execute, closeDb, splitSqlStatements } from "./mysql-client.mjs";
 
 async function databaseState() {
-  const rows = await query(
-    "SELECT COUNT(*) AS totalTables, SUM(CASE WHEN table_name = 'User' THEN 1 ELSE 0 END) AS userTable FROM information_schema.tables WHERE table_schema = DATABASE()"
-  );
+  const [server] = await query("SELECT DATABASE() AS databaseName, @@lower_case_table_names AS lowerCaseTableNames");
+  const rows = await query("SELECT TABLE_NAME AS tableName FROM information_schema.tables WHERE table_schema=DATABASE()");
+  const normalize = name => tableNameKey(name,server.lowerCaseTableNames);
+  console.log(`Base de dados: ${server.databaseName} (lower_case_table_names=${server.lowerCaseTableNames}).`);
   return {
-    totalTables: Number(rows?.[0]?.totalTables ?? 0),
-    hasUserTable: Number(rows?.[0]?.userTable ?? 0) > 0,
+    totalTables: rows.length,
+    hasUserTable: rows.some(row=>normalize(row.tableName)===normalize("User")),
   };
 }
 

@@ -1,4 +1,5 @@
 "use client";
+import { MachineIcon } from "@/components/MachineIcon";
 import { useState } from "react";
 import { useRouter } from "next/navigation";
 import { saveGeneralCheck, saveMachineCheckup } from "@/app/actions/checkups";
@@ -65,7 +66,7 @@ export function CheckupForms({ machines, machineRecords, generalRecord }: { mach
       return <section key={machine.id} className="panel checkup-machine-card">
         <div className="checkup-machine-summary">
           <div className="machine-form-heading">
-            <img src={["5", "6"].includes(machine.code) ? "/maq-tampas.png" : "/maq-garrafoes.png?v=5"} alt=""/>
+            <MachineIcon code={machine.code}/>
             <div><h2>Máquina {machine.code}</h2><p>{machine.name} · {stateLabel}</p></div>
           </div>
           <button type="button" className="btn secondary" onClick={() => setMachineOpen(machine.id, !open)}>
