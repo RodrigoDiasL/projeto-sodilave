@@ -48,6 +48,9 @@ export type DbApi = {
   machineEvent: AnyRepo;
   lotDispatch: AnyRepo;
   lotDispatchLine: AnyRepo;
+  storageLocation: AnyRepo;
+  productionStorageBalance: AnyRepo;
+  productionStorageMovement: AnyRepo;
   query<T = any[]>(sql: string, params?: any[]): Promise<T>;
   execute(sql: string, params?: any[]): Promise<number>;
   $queryRaw<T = any[]>(strings: TemplateStringsArray, ...values: any[]): Promise<T>;
@@ -193,7 +196,7 @@ async function getByIds(client: SqlClient, table: string, ids: number[]) {
 
 const updatedAtTables = new Set([
   "User", "Machine", "Product", "RawMaterial", "RawMaterialLot", "ProductionLotRule",
-  "Production", "MachineCheckup", "ShiftGeneralCheck", "WeeklyStartup", "WeeklyShutdown", "Maintenance",
+  "Production", "MachineCheckup", "ShiftGeneralCheck", "WeeklyStartup", "WeeklyShutdown", "Maintenance", "ProductionStorageBalance",
 ]);
 
 function prepareData(table: string, data: Record<string, any>) {
@@ -703,6 +706,9 @@ function createDb(client: SqlClient): DbApi {
     machineEvent: machineEventRepo(client),
     lotDispatch: simpleRepo(client, "LotDispatch"),
     lotDispatchLine: simpleRepo(client, "LotDispatchLine"),
+    storageLocation: simpleRepo(client, "StorageLocation"),
+    productionStorageBalance: simpleRepo(client, "ProductionStorageBalance"),
+    productionStorageMovement: simpleRepo(client, "ProductionStorageMovement"),
 
     async query<T = any[]>(sql: string, params: any[] = []): Promise<T> {
       return await queryRows<any>(client, sql, params) as T;
