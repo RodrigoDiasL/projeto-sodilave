@@ -9,6 +9,21 @@ on:
 jobs:
   validate:
     runs-on: ubuntu-latest
+    services:
+      mysql:
+        image: mysql:8.4
+        env:
+          MYSQL_DATABASE: typecheck
+          MYSQL_USER: typecheck
+          MYSQL_PASSWORD: typecheck
+          MYSQL_ROOT_PASSWORD: root-typecheck
+        ports:
+          - 3306:3306
+        options: >-
+          --health-cmd="mysqladmin ping -h 127.0.0.1 -utypecheck -ptypecheck"
+          --health-interval=5s
+          --health-timeout=5s
+          --health-retries=20
     defaults:
       run:
         working-directory: sodilave-app
@@ -18,6 +33,8 @@ jobs:
       SESSION_SECRET: typecheck-only-secret-with-more-than-32-characters
       APP_URL: https://producao.sodilave.pt
       APP_VERSION: 0.9.8
+      INITIAL_ADMIN_NAME: CI Admin
+      INITIAL_ADMIN_PIN: "12345678"
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -31,6 +48,8 @@ jobs:
         run: npm ci --include=dev
       - name: Validate production environment
         run: npm run verify:production
+      - name: Bootstrap SQL database
+        run: npm run db:upgrade
       - name: Typecheck
         run: npm run typecheck
       - name: Production build
