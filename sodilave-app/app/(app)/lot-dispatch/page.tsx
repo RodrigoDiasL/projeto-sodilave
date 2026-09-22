@@ -17,7 +17,7 @@ export default async function LotDispatchPage() {
     />
 
     <div className="notice">
-      Uma produção finalizada entra automaticamente no stock de produto acabado. Ao registar uma saída para cliente, a quantidade expedida é abatida ao lote ou lotes selecionados.
+      Uma produção finalizada e localizada entra no stock de produto acabado. Ao registar uma saída, indique as posições físicas de onde o produto foi retirado; a aplicação abate automaticamente essas estibas/paletes.
     </div>
 
     <LotDispatchForm lots={lots} employeeName={user.name}/>
@@ -30,8 +30,9 @@ export default async function LotDispatchPage() {
       {recent.length === 0
         ? <p className="empty-state">Ainda não existem saídas de lotes registadas.</p>
         : <div className="responsive-table"><table>
-          <thead><tr><th>Data</th><th>Cliente</th><th>Encomenda</th><th>Fatura</th><th>Artigo</th><th>Quantidade</th><th>Lotes</th><th>Funcionário</th></tr></thead>
+          <thead><tr><th>Saída</th><th>Data</th><th>Cliente</th><th>Encomenda</th><th>Fatura</th><th>Artigo</th><th>Quantidade</th><th>Lotes</th><th>Funcionário</th></tr></thead>
           <tbody>{recent.map((row) => <tr key={row.id}>
+            <td><strong>#{row.id}</strong></td>
             <td>{new Date(`${row.dispatchDate}T12:00:00`).toLocaleDateString("pt-PT")}</td>
             <td><strong>{row.customerName}</strong></td>
             <td>{row.orderReference}</td>
