@@ -27,7 +27,7 @@ export function ProductionStorageSelector({
     [locations, warehouseCode, zoneType],
   );
   const selected = useMemo(
-    () => locations.filter((location) => (allocations[location.id] ?? 0) > 0),
+    () => locations.filter((location) => allocations[location.id] !== undefined),
     [locations, allocations],
   );
   const allocatedTotal = selected.reduce((sum, location) => sum + (allocations[location.id] ?? 0), 0);
@@ -52,7 +52,7 @@ export function ProductionStorageSelector({
   };
 
   const changeAllocation = (locationId: number, value: number) => {
-    const safe = Number.isFinite(value) ? Math.max(0, Math.min(Math.trunc(value), Math.max(quantity, value))) : 0;
+    const safe = Number.isFinite(value) ? Math.max(0, Math.min(Math.trunc(value), quantity || Math.trunc(value))) : 0;
     setAllocations((current) => ({ ...current, [locationId]: safe }));
   };
 
