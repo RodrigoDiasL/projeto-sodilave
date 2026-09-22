@@ -44,7 +44,7 @@ export default async function EditProductionPage({ params }: { params: Promise<{
 
   return <>
     <PageIntro title={`${production.status === "FINALIZED" ? "Corrigir" : "Continuar"} produção ${displayLot}`} subtitle={user.role === "ADMIN" ? "O administrador pode concluir ou corrigir este registo sem confirmação de um colega." : "As correções de produções finalizadas só são permitidas até ao fim do respetivo turno."} />
-    <ProductionForm {...data} products={products} machines={[production.machine]} fixedMachine={production.machine} initial={initial} />
+    <ProductionForm {...data} products={products} machines={[production.machine]} fixedMachine={production.machine} initial={initial} storageLocked={production.status === "FINALIZED"} />
     <SecondWorkerConfirmationPortals workers={data.workers} selector="form.machine-production-form" disabled={user.role === "ADMIN" || Boolean(peerConfirmation)} />
   </>;
 }
