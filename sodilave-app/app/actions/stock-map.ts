@@ -2,7 +2,7 @@
 
 import { revalidatePath } from "next/cache";
 import { requireAdmin } from "@/lib/auth";
-import { db } from "@/lib/db";
+import { db, type DbTransaction } from "@/lib/db";
 
 const positiveId = (fd: FormData, key: string) => {
   const value = Number(fd.get(key) || 0);
@@ -16,7 +16,7 @@ const reason = (fd: FormData) => {
   return value;
 };
 
-async function getProductionCapacity(tx: any, productionId: number) {
+async function getProductionCapacity(tx: DbTransaction, productionId: number) {
   const rows = await tx.query<any[]>(
     `SELECT
        p.id,
