@@ -41,7 +41,7 @@ export type RecentLotDispatch = {
 };
 
 export async function getAvailableFinishedLots(): Promise<AvailableFinishedLot[]> {
-  const rows = await db.query<any[]>(\`
+  const rows = await db.query<any[]>(`
     SELECT
       p.id AS productionId,
       COALESCE(pla.labelCode, p.productionLot) AS lotCode,
@@ -77,7 +77,7 @@ export async function getAvailableFinishedLots(): Promise<AvailableFinishedLot[]
       AND b.quantityPackages > 0
       AND COALESCE(p.unitsPerPackageSnapshot, pr.unitsPerPackage, 0) > 0
     ORDER BY p.startedAt ASC, p.id ASC, l.warehouseCode, FIELD(l.zoneType,'STACK','PALLET'), l.rowNumber, l.columnNumber
-  \`);
+  `);
 
   const grouped = new Map<number, AvailableFinishedLot>();
   for (const row of rows) {
@@ -122,7 +122,7 @@ export async function getAvailableFinishedLots(): Promise<AvailableFinishedLot[]
 
 export async function getRecentLotDispatches(limit = 30): Promise<RecentLotDispatch[]> {
   const safeLimit = Math.max(1, Math.min(100, Math.trunc(limit)));
-  const rows = await db.query<any[]>(\`
+  const rows = await db.query<any[]>(`
     SELECT
       d.id,
       d.customerName,
@@ -152,8 +152,8 @@ export async function getRecentLotDispatches(limit = 30): Promise<RecentLotDispa
     ) lines ON lines.lotDispatchId = d.id
     WHERE d.cancelledAt IS NULL
     ORDER BY d.dispatchDate DESC, d.id DESC
-    LIMIT \${safeLimit}
-  \`);
+    LIMIT ${safeLimit}
+  `);
 
   return rows.map((row) => ({
     id: Number(row.id),
