@@ -2,6 +2,32 @@
 
 Este guia corresponde à arquitetura sem ORM. A aplicação comunica diretamente com MariaDB/MySQL através de `mysql2/promise`.
 
+## 0. Versão candidata e preparação do alojamento
+
+A versão funcional `d98069d` de `refactor/remove-prisma` passou os testes SQL,
+HTTP, TypeScript, build e auditoria de dependências no CI. Este guia inclui ainda
+a correção de fuso horário para instalar a aplicação no cPanel. Instalar a revisão
+mais recente deste ramo após o respetivo CI estar verde e registar o SHA instalado.
+A promoção para `production` deve levar exatamente a revisão validada no alojamento.
+
+Antes de executar comandos, confirmar no cPanel:
+
+- Application root e versão Node atualmente configuradas;
+- se há Terminal/SSH e repositório Git já associado;
+- se a base do alojamento está vazia, tem dados de teste ou dados reais a preservar;
+- certificado HTTPS e URL da aplicação.
+
+Os caminhos `/home/sodilave/...` abaixo são exemplos; usar os caminhos que o
+próprio cPanel apresenta para a conta. Não enviar passwords, PINs ou chaves em
+capturas de ecrã. O código, ficheiros de ambiente e backups devem ficar fora da
+pasta pública do website institucional.
+
+Se existir uma instalação anterior, guardar uma cópia dos seus ficheiros e
+configuração e exportar a base através de **Backup / phpMyAdmin** antes da alteração.
+Durante a migração, impedir novas gravações/parar a aplicação no painel. Num
+primeiro arranque, começar por uma base dedicada; não importar a base de testes
+local sem decidir quais os dados que devem transitar.
+
 ## 1. Requisitos
 
 - Node.js 22
@@ -14,7 +40,7 @@ O website institucional `www.sodilave.pt` é independente desta aplicação.
 
 ## 2. Repositório
 
-Diretório utilizado:
+Exemplo de diretório:
 
 ```text
 /home/sodilave/repos/projeto-sodilave
@@ -26,7 +52,25 @@ Aplicação:
 /home/sodilave/repos/projeto-sodilave/sodilave-app
 ```
 
-Para produção definitiva, o servidor deve ficar na branch `production`. Durante testes desta refatoração pode ser usada a branch `refactor/remove-prisma`.
+Para esta primeira instalação, usar o ramo `refactor/remove-prisma`. As branches
+`main` e `production` ainda não contêm esta versão. Não fazer `git pull` numa branch
+antiga esperando obter automaticamente a refatoração.
+
+Num clone existente, com cópias guardadas e a aplicação parada:
+
+```bash
+git status --short
+git fetch origin
+git switch refactor/remove-prisma
+git pull --ff-only origin refactor/remove-prisma
+git rev-parse HEAD
+```
+
+Se houver alterações locais ou qualquer comando falhar, resolver antes de avançar;
+não usar `reset --hard` nem apagar configurações para forçar a atualização. Se não
+houver Git no alojamento, descarregar o código desta revisão no GitHub e carregar
+apenas os ficheiros da aplicação para uma pasta nova. Não carregar `node_modules`,
+`.next` nem os ficheiros `.env` do computador de desenvolvimento.
 
 ## 3. Base de dados
 
@@ -60,6 +104,7 @@ Configurar pelo menos:
 
 ```text
 NODE_ENV=production
+TZ=Europe/Lisbon
 APP_URL=https://producao.sodilave.pt
 APP_VERSION=0.9.8
 DATABASE_URL=mysql://...
@@ -69,7 +114,30 @@ BACKUP_DIR=/home/sodilave/backups/producao-db
 BACKUP_RETENTION_DAYS=30
 ```
 
-`SESSION_SECRET` deve ter pelo menos 32 caracteres.
+`SESSION_SECRET` deve ser aleatório, com pelo menos 32 caracteres. Para gerar uma
+nova chave, no terminal privado do alojamento:
+
+```bash
+node -e "console.log(require('node:crypto').randomBytes(48).toString('hex'))"
+```
+
+Guardar o resultado no ambiente da aplicação; não o enviar por mensagem. Manter a
+chave existente numa atualização, salvo quando se pretende terminar as sessões.
+
+`TZ=Europe/Lisbon` define a hora de operação (incluindo verão/inverno). As ligações
+SQL da aplicação e das migrações fixam a sessão em UTC, independentemente do fuso
+do MySQL partilhado. A opção não converte nem corrige datas históricas já gravadas.
+
+Os comandos de Terminal também precisam da mesma configuração da aplicação.
+Não presumir que as variáveis da interface Node.js são automaticamente exportadas
+para o Terminal. Pode guardar a configuração em `.env.production` na pasta da
+aplicação, com permissões `600`, a partir de `.env.production.example`. O Next.js e
+os scripts de migração leem esse ficheiro; variáveis do processo têm prioridade.
+Se a senha SQL contiver `@`, `:`, `/`, `#`, `%` ou outros caracteres reservados,
+codificar esses caracteres no componente de senha da `DATABASE_URL`.
+
+Não copiar `.env.local` de desenvolvimento: teria prioridade sobre
+`.env.production` e poderia selecionar a base errada.
 
 Na primeira preparação de uma base vazia também são necessários:
 
@@ -82,7 +150,21 @@ O PIN tem exatamente 8 algarismos. Depois de o primeiro administrador ser criado
 
 ## 6. Instalar dependências
 
-Executar **Run NPM Install** no cPanel.
+No painel Node.js, copiar a linha que o cPanel apresenta para ativar o ambiente
+virtual da aplicação. Executá-la no **Terminal**, entrar na pasta `sodilave-app` e
+confirmar:
+
+```bash
+node --version
+export NODE_ENV=production
+npm ci --include=dev
+```
+
+A versão deve ser `v22.x`. Os tipos/TypeScript são necessários ao build, mesmo em
+modo Production. Preservar a ligação `node_modules` gerida pelo CloudLinux; não a
+substituir por uma pasta copiada do Windows. Se apenas houver interface gráfica,
+usar **Run NPM Install** com `NPM_CONFIG_INCLUDE=dev` e confirmar com o alojamento
+como executar os scripts de migração/build.
 
 A aplicação não executa qualquer geração de cliente ou motor nativo. A dependência de base de dados em runtime é `mysql2`.
 
@@ -102,11 +184,15 @@ Configuração de produção validada com sucesso.
 
 ## 8. Preparar a base de dados
 
-Antes da primeira utilização:
+Com a configuração validada e o backup concluído (se havia dados):
 
 ```bash
-npm run db:production
+npm run db:production && npm run db:check
 ```
+
+Confirmar no resultado o nome da base de dados pretendida. `db:check` tem de
+terminar sem colunas em falta nem migrações pendentes. Não continuar para o
+arranque se um destes passos falhar.
 
 Este comando não depende de ferramentas externas de ORM. O script:
 
@@ -175,7 +261,14 @@ Confirmar:
 - perfil Auditor sem permissões de escrita;
 - `/api/health`.
 
-Antes destes testes, usar apenas dados de teste.
+Ensaiar operações que criam dados numa base de validação separada. Na base real,
+confirmar login, perfis e consultas; registar apenas as operações reais da fábrica.
+Não executar `npm run test:integration`, `npm run test:http` nem `db:seed` sobre a
+base operacional: os testes SQL eliminam os dados da base descartável.
+
+Confirmar também a hora/turno no dashboard, mapa de stock, ícones das sete máquinas,
+ordens de paletização e emparelhamento de `/display`. Depois destes testes, a
+revisão instalada pode ser promovida a `production` e usada nas próximas atualizações.
 
 ## 12. Backups
 
@@ -206,11 +299,11 @@ production
  ↓
 git pull no cPanel
  ↓
-npm install
+npm ci --include=dev
  ↓
 backup da BD
  ↓
-npm run db:production
+npm run db:production && npm run db:check
  ↓
 npm run build:production
  ↓
@@ -228,3 +321,24 @@ Restart Application
 - Manter a base de dados acessível apenas localmente.
 - Fazer backup antes de qualquer migração.
 - Não executar o seed de desenvolvimento na base real.
+
+
+## 15. Falhas de instalação e recuperação
+
+- `Unknown column` / `Table does not exist`: confirmar a base selecionada e concluir
+  `db:production` + `db:check`. Não eliminar tabelas para contornar a verificação.
+- Erro Passenger/503: consultar o log indicado no painel, confirmar `app.js`, Node
+  22, build `.next/BUILD_ID` e as variáveis. Não usar `npm run dev` em produção.
+- Formulários devolvem 403: `APP_URL` deve ser exatamente a origem HTTPS do navegador.
+- `ENOMEM` / processo morto durante o build: consultar os limites de memória do
+  alojamento. Não aumentar limites Node às cegas nem copiar módulos do Windows;
+  combinar um build Linux compatível ou recursos adicionais com o fornecedor.
+- Backup CLI indisponível: usar a exportação SQL do cPanel/phpMyAdmin antes de migrar.
+- Se o deploy falhar, manter a aplicação parada enquanto se identifica a causa.
+  As migrações SQL não têm reversão automática; não repor código antigo assumindo
+  compatibilidade. Uma reposição completa exige ficheiros/configuração/base do
+  mesmo ponto e uma decisão sobre quaisquer dados escritos depois do backup.
+
+Referências da configuração do alojamento:
+- https://docs.cloudlinux.com/cloudlinuxos/lve_manager/
+- https://docs.cpanel.net/knowledge-base/web-services/how-to-install-a-node.js-application/

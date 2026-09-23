@@ -609,3 +609,10 @@ test('admin relocates whole stacks atomically, preserving quantities and rejecti
   const movements=await db.query('SELECT * FROM ProductionStorageMovement WHERE productionId IN (?,?)',[...productions.map(p=>p.id)]);
   assert.equal(movements.length,5);
 });
+
+test('application and migration connections use UTC regardless of the hosting default timezone',async()=>{
+  const samples=await Promise.all(Array.from({length:4},()=>db.query("SELECT @@session.time_zone AS zone, NOW(3) AS clock")));
+  for(const [row] of samples){assert.equal(row.zone,'+00:00');assert.ok(Math.abs(row.clock.getTime()-Date.now())<5000);}
+  const script="import('./scripts/mysql-client.mjs').then(async ({query,closeDb})=>{try{const [r]=await query('SELECT @@session.time_zone AS zone');if(r.zone!=='+00:00')throw new Error('SQL timezone mismatch');}finally{await closeDb();}})";
+  await execFileAsync(process.execPath,['--input-type=module','-e',script],{cwd:root,env:{...process.env,DATABASE_URL:url,TZ:'Europe/Lisbon'}});
+});

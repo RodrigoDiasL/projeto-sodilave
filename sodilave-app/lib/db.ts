@@ -66,7 +66,7 @@ if (!databaseUrl) throw new Error("DATABASE_URL é obrigatório.");
 function createPoolFromUrl(urlText: string) {
   const url = new URL(urlText);
   if (url.protocol !== "mysql:") throw new Error("DATABASE_URL deve usar mysql://.");
-  return mysql.createPool({
+  const configuredPool = mysql.createPool({
     host: url.hostname,
     port: Number(url.port || 3306),
     user: decodeURIComponent(url.username),
@@ -84,6 +84,14 @@ function createPoolFromUrl(urlText: string) {
     timezone: "Z",
     charset: "utf8mb4",
   });
+  // mysql2's timezone option controls Date conversion, not SQL NOW()/defaults.
+  // Queue this before the first application query on each physical connection.
+  configuredPool.pool.on("connection", connection => {
+    connection.query("SET SESSION time_zone = '+00:00'", error => {
+      if (error) connection.destroy();
+    });
+  });
+  return configuredPool;
 }
 
 const globalForMysql = globalThis as typeof globalThis & { sodilaveMysqlPool?: Pool };

@@ -20,6 +20,13 @@ export const db = mysql.createPool({
   timezone: "Z",
 });
 
+// Keep migrations/default timestamps aligned with the application's UTC storage.
+db.pool.on("connection", connection => {
+  connection.query("SET SESSION time_zone = '+00:00'", error => {
+    if (error) connection.destroy();
+  });
+});
+
 export async function query(sql, params = []) {
   const [rows] = await db.query(sql, params);
   return rows;
