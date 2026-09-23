@@ -33,7 +33,7 @@ const activityLabels: Record<ActivityTone, string> = {
 };
 
 function UptimeCard({ machine }: { machine: MachineUptime }) {
-  return <article className="uptime-card">
+  return <article className={`uptime-card ${machine.status === "RUNNING" ? "running" : "stopped"} ${machine.code === "7" ? "machine-wide" : ""}`}>
     <div className="uptime-card-heading">
       <div>
         <strong>Máquina {machine.code}</strong>
@@ -72,6 +72,7 @@ export function AdminOperationsDashboard({
   hasStartup,
   hasRunning,
   stoppedCount,
+  pastProductionEnabled,
 }: {
   name: string;
   data: AdminDashboardData;
@@ -79,6 +80,7 @@ export function AdminOperationsDashboard({
   hasStartup: boolean;
   hasRunning: boolean;
   stoppedCount: number;
+  pastProductionEnabled: boolean;
 }) {
   return <>
     <DashboardRefresh />
@@ -107,7 +109,7 @@ export function AdminOperationsDashboard({
           <div><h2>Uptime das máquinas</h2><p>Semana atual e média de todos os ciclos semanais registados</p></div>
         </div>
         <div className="uptime-grid">
-          {data.uptime.length ? data.uptime.map((machine) => <UptimeCard machine={machine} key={machine.id} />) : <p className="empty-state">Não existem dados das máquinas prioritárias.</p>}
+          {data.uptime.length ? data.uptime.map((machine) => <UptimeCard machine={machine} key={machine.id} />) : <p className="empty-state">Não existem dados das máquinas.</p>}
         </div>
         <AdminProductionCounters stats={productionStats} />
       </main>
@@ -115,8 +117,8 @@ export function AdminOperationsDashboard({
       <aside className="admin-actions-panel panel">
         <div className="admin-panel-title"><div><h2>Registo e gestão</h2><p>Acesso rápido</p></div></div>
         <nav className="admin-side-actions">
-          <ActionLink href="/production" title="Registar produção" icon={<ClipboardList />} disabled={!hasStartup || !hasRunning} />
-          <ActionLink href="/production#historica" title="Produção histórica" icon={<CalendarDays />} />
+          <ActionLink href="/production" title="Registar produção" icon={<ClipboardList />} disabled={!pastProductionEnabled && (!hasStartup || !hasRunning)} />
+          {pastProductionEnabled && <ActionLink href="/production#passada" title="Registo de produção passada" icon={<CalendarDays />} />}
           <ActionLink href="/checkups" title="Verificações de turno" icon={<ShieldCheck />} disabled={!hasStartup || !hasRunning} />
           <ActionLink href="/lot-dispatch" title="Saída de Lotes" icon={<Truck />} />
           <ActionLink href="/stock-map" title="Mapa de Stock" icon={<Warehouse />} />

@@ -1,10 +1,11 @@
 "use server";
 
+import { assertPastProductionEnabled } from "@/lib/operation-settings";
 import { RecordStatus, TestMoment, TestResult, TestType } from "@/lib/db-types";
 import { revalidatePath } from "next/cache";
 import { db } from "@/lib/db";
 import { requireOperationalUser } from "@/lib/auth";
-import { getShift, getShiftWindow, getShiftWindowForDate, type ShiftCode } from "@/lib/shift";
+import { formatLocalDateInput, getShift, getShiftWindow, getShiftWindowForDate, type ShiftCode } from "@/lib/shift";
 import { generateProductionLot, getActiveCommercialLotForProduct, validateCommercialLotMixture } from "@/lib/lot";
 import { assertMachineRunning } from "@/lib/active-machines";
 import { saveRecordConfirmation, verifySecondWorker } from "@/lib/second-worker-confirmation";
@@ -84,10 +85,9 @@ export async function saveProduction(formData: FormData) {
   const historicalShiftRaw = String(formData.get("historicalShift") || "").trim();
   let historicalWindow: ReturnType<typeof getShiftWindowForDate> | null = null;
   if (historicalDate || historicalShiftRaw) {
-    if (user.role !== "ADMIN") throw new Error("Apenas administradores podem registar produções de outras datas.");
     if (!historicalDate || !["A", "B", "C"].includes(historicalShiftRaw)) throw new Error("Selecione uma data e um turno válidos.");
     historicalWindow = getShiftWindowForDate(historicalDate, historicalShiftRaw as ShiftCode);
-    if (historicalWindow.start > new Date()) throw new Error("Não é possível registar uma produção num turno futuro.");
+    if (historicalWindow.end > new Date()) throw new Error("Selecione um turno já terminado para registar produção passada.");
   }
 
   let existing: ExistingProduction | null = null;
@@ -106,6 +106,14 @@ export async function saveProduction(formData: FormData) {
       if (new Date() >= window.end) throw new Error("Esta produção só podia ser alterada até ao fim do turno em que foi registada.");
     }
   }
+
+  if (existing && historicalWindow && getShiftWindow(existing.startedAt).start.getTime() !== historicalWindow.start.getTime()) {
+    throw new Error("A data e o turno de uma produção já guardada não podem ser alterados.");
+  }
+  if (existing?.status === RecordStatus.DRAFT && getShiftWindow(existing.startedAt).end <= new Date()) {
+    historicalWindow = getShiftWindow(existing.startedAt);
+  }
+  if (historicalWindow) await assertPastProductionEnabled();
 
   const secondWorker = finalize && user.role !== "ADMIN" ? await verifySecondWorker(formData, user.id) : null;
   const machineId = asNum(formData.get("machineId"));
@@ -180,7 +188,7 @@ export async function saveProduction(formData: FormData) {
 
   const firstFinalization = finalize && existing?.status !== RecordStatus.FINALIZED;
   if (storageUnlocated && !historicalWindow) {
-    throw new Error("A opção sem localização só pode ser usada em registos históricos de administrador.");
+    throw new Error("A opção sem localização só pode ser usada em registos de produção passada.");
   }
   if (firstFinalization && quantityProduced !== null && quantityProduced > 0 && !storageUnlocated) {
     const allocatedPackages = [...storageAllocations.values()].reduce((sum, value) => sum + value, 0);
@@ -256,7 +264,7 @@ export async function saveProduction(formData: FormData) {
     },
   });
   if (historicalWindow && otherProductionsInShift > 0) {
-    throw new Error("Já existe uma produção desta máquina para a data e turno selecionados. O registo histórico não pode criar duplicações.");
+    throw new Error("Já existe uma produção desta máquina para a data e turno selecionados. O registo de produção passada não pode criar duplicações.");
   }
   if (finalize && otherProductionsInShift > 0 && !exceptionReason) {
     throw new Error("Já existe uma produção desta máquina neste turno. Indique o motivo da produção adicional.");
@@ -275,6 +283,15 @@ export async function saveProduction(formData: FormData) {
   const status = finalize || existing?.status === RecordStatus.FINALIZED ? RecordStatus.FINALIZED : RecordStatus.DRAFT;
 
   const production = await db.$transaction(async (tx) => {
+    if (historicalWindow) {
+      // Serialize past-shift inserts and the administrator's permission toggle.
+      await assertPastProductionEnabled(tx, true);
+      const duplicate = await tx.production.count({ where: {
+        machineId, startedAt: { gte: recordWindow.start, lt: recordWindow.end },
+        status: { not: RecordStatus.CANCELLED }, ...(productionId ? { id: { not: productionId } } : {}),
+      } });
+      if (duplicate) throw new Error("Já existe uma produção para esta máquina, dia e turno.");
+    }
     let lockedExisting: ExistingProduction | null = existing;
     if (productionId) {
       const locked = await tx.query<ExistingProduction[]>(
@@ -364,7 +381,7 @@ export async function saveProduction(formData: FormData) {
             quantityPackages,
             lotDispatchId: null,
             createdById: user.id,
-            reason: historicalWindow ? "Localização registada na introdução histórica da produção." : "Entrada em stock após finalização da produção.",
+            reason: historicalWindow ? "Localização registada na produção passada." : "Entrada em stock após finalização da produção.",
           },
         });
       }
@@ -435,7 +452,7 @@ export async function saveProduction(formData: FormData) {
           secondWorkerId: secondWorker?.id ?? null,
           secondWorkerName: secondWorker?.name ?? null,
           stockReconciled: status === RecordStatus.FINALIZED,
-          historicalDate: historicalWindow ? historicalDate : null,
+          historicalDate: historicalWindow ? formatLocalDateInput(historicalWindow.start) : null,
           historicalShift: historicalWindow?.code ?? null,
           storageUnlocated: firstFinalization ? storageUnlocated : null,
           storageAllocations: firstFinalization ? [...storageAllocations.entries()].map(([locationId, quantityPackages]) => ({ locationId, quantityPackages })) : null,

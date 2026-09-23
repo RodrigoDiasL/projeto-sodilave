@@ -1,9 +1,11 @@
+import { getPastProductionEnabled } from "@/lib/operation-settings";
+import { getShiftWindow, formatLocalDateInput } from "@/lib/shift";
 import { notFound } from "next/navigation";
 import { PageIntro } from "@/components/PageIntro";
 import { ProductionForm } from "@/components/ProductionForm";
 import { SecondWorkerConfirmationPortals } from "@/components/SecondWorkerConfirmationPortals";
 import { db } from "@/lib/db";
-import { requireUser } from "@/lib/auth";
+import { requireOperationalUser } from "@/lib/auth";
 import { getProductionFormData } from "@/lib/production-form-data";
 import { productionToInitial } from "@/lib/production-initial";
 import { getShiftPeerConfirmation } from "@/lib/second-worker-confirmation";
@@ -12,7 +14,7 @@ type CavityDataRow = { rightInitialWeightG: unknown; rightMidWeightG: unknown };
 type CavityTestRow = { type: string; moment: string; result: string };
 
 export default async function EditProductionPage({ params }: { params: Promise<{ id: string }> }) {
-  const user = await requireUser();
+  const user = await requireOperationalUser();
   const { id } = await params;
   const production = await db.production.findUnique({
     where: { id: Number(id) },
@@ -20,9 +22,15 @@ export default async function EditProductionPage({ params }: { params: Promise<{
   });
   if (!production || production.status === "CANCELLED") notFound();
   if (production.status === "FINALIZED" && user.role !== "ADMIN") {
-    const { getShiftWindow } = await import("@/lib/shift");
     if (new Date() >= getShiftWindow(production.startedAt).end) notFound();
   }
+
+  const pastDraft = production.status === "DRAFT" && getShiftWindow(production.startedAt).end <= new Date();
+  if (pastDraft && !await getPastProductionEnabled()) return <>
+    <PageIntro title="Registo de produção passada" subtitle="Este rascunho pertence a um turno já terminado."/>
+    <div className="notice">O registo de produção passada está desativado. Peça a um administrador para o ativar nas definições.</div>
+  </>;
+  const historicalContext = pastDraft ? { date: formatLocalDateInput(production.startedAt), shiftCode: getShiftWindow(production.startedAt).code } : undefined;
 
   let cavityData: CavityDataRow | undefined;
   let cavityTests: CavityTestRow[] = [];
@@ -44,7 +52,7 @@ export default async function EditProductionPage({ params }: { params: Promise<{
 
   return <>
     <PageIntro title={`${production.status === "FINALIZED" ? "Corrigir" : "Continuar"} produção ${displayLot}`} subtitle={user.role === "ADMIN" ? "O administrador pode concluir ou corrigir este registo sem confirmação de um colega." : "As correções de produções finalizadas só são permitidas até ao fim do respetivo turno."} />
-    <ProductionForm {...data} products={products} machines={[production.machine]} fixedMachine={production.machine} initial={initial} storageLocked={production.status === "FINALIZED"} />
+    <ProductionForm {...data} products={products} machines={[production.machine]} fixedMachine={production.machine} initial={initial} historicalContext={historicalContext} storageLocked={production.status === "FINALIZED"} />
     <SecondWorkerConfirmationPortals workers={data.workers} selector="form.machine-production-form" disabled={user.role === "ADMIN" || Boolean(peerConfirmation)} />
   </>;
 }

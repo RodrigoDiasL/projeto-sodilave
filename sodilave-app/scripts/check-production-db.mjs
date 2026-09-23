@@ -24,6 +24,8 @@ try {
     ProductionStorageBalance:["productionId","locationId","quantityPackages"],
     ProductionStorageMovement:["lotDispatchId","movementType","fromLocationId","toLocationId"],
     ShiftPeerConfirmation:["operatorId","shiftStart"],
+    OperationSettings:["id","pastProductionEnabled","updatedById","updatedAt"],
+    ShiftGeneralCheck:["purgePneumaticBarrels","purgeCleanAirBarrels","purgeFilters"],
     AppSchemaMigration:["name","checksum"],
   };
   const missing=Object.entries(required).flatMap(([table,names])=>names.filter(name=>!available.has(key(table,name))).map(name=>`${table}.${name}`));

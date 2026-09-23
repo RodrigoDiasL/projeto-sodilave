@@ -232,3 +232,111 @@ test('invalid dispatch rolls back and cancelled production cannot regain finishe
   await assert.rejects(load('app/actions/stock-map').addUnlocatedStock(fd({productionId:production.id,locationId:location.id,quantityPackages:1,reason:'Must fail'})),/finalizadas/);
   assert.equal((await getAvailableFinishedLots()).length,0);
 });
+
+test('past production is globally gated for admins and operators, including old drafts and direct requests',async()=>{
+  const {saveOperationSettings}=load('app/actions/operation-settings');
+  const {getPastProductionEnabled}=load('lib/operation-settings');
+  const {getShiftWindow,formatLocalDateInput}=load('lib/shift');
+  assert.equal(await getPastProductionEnabled(),false);
+  const day=new Date();day.setDate(day.getDate()-2);
+  const input=fd({intent:'draft',machineId:machine.id,productId:product.id,historicalDate:formatLocalDateInput(day),historicalShift:'A'});
+  await assert.rejects(saveProduction(input),/desativado/);
+  user.role='OPERATOR';
+  await assert.rejects(saveOperationSettings(fd({pastProductionEnabled:'on'})),/access-denied/);
+  await assert.rejects(saveProduction(input),/desativado/);
+  user.role='ADMIN';await saveOperationSettings(fd({pastProductionEnabled:'on'}));
+  assert.equal(await getPastProductionEnabled(),true);
+  await db.machine.update({where:{id:machine.id},data:{status:'STOPPED'}});
+  user.role='OPERATOR';
+  const attempts=await Promise.allSettled([saveProduction(input),saveProduction(input)]);
+  assert.equal(attempts.filter(r=>r.status==='fulfilled').length,1,'past-shift duplicates must be serialized');
+  const saved=attempts.find(r=>r.status==='fulfilled').value;
+  const row=await db.production.findUnique({where:{id:saved.id}});
+  assert.equal(formatLocalDateInput(row.startedAt),formatLocalDateInput(day));
+  assert.equal(row.shiftCode,'A');assert.equal(row.operatorId,user.id);
+  input.set('productionId',String(saved.id));
+  await saveProduction(input);
+  input.set('historicalShift','B');
+  await assert.rejects(saveProduction(input),/não podem ser alterados/);
+  input.set('historicalDate',formatLocalDateInput());input.set('historicalShift',getShiftWindow().code);
+  await assert.rejects(saveProduction(input),/já terminado/);
+  user.role='ADMIN';await saveOperationSettings(fd({}));
+  // Omitting the hidden date/shift must not bypass the global switch.
+  input.delete('historicalDate');input.delete('historicalShift');
+  await assert.rejects(saveProduction(input),/desativado/);
+  user.role='OPERATOR';await assert.rejects(saveProduction(input),/desativado/);
+  user.role='AUDITOR';await assert.rejects(saveProduction(input),/access-denied/);
+  user.role='ADMIN';
+  await db.machine.update({where:{id:machine.id},data:{status:'RUNNING'}});
+});
+
+test('shift checkups save atomically with one peer confirmation at the end and all three purges',async()=>{
+  const {saveShiftCheckups}=load('app/actions/checkups');
+  const {getShiftWindow}=load('lib/shift');
+  const secondMachine=await db.machine.create({data:{code:'2',name:'Second test machine',status:'RUNNING'}});
+  const peer=await db.user.create({data:{name:'Second worker',role:'OPERATOR',pinHash:await require('bcryptjs').hash('12345678',4)}});
+  await db.user.update({where:{id:user.id},data:{role:'OPERATOR'}});user.role='OPERATOR';
+  const input=fd({intent:'draft',shiftStart:getShiftWindow().start.toISOString(),chillerLargeC:5,chillerSmallC:6,ambientTempC:22,purgePneumaticBarrels:'on',purgeCleanAirBarrels:'on',purgeFilters:'on'});
+  for(const m of [machine,secondMachine]) {
+    input.append('machineIds',String(m.id));
+    for(const [key,value]of Object.entries({oilTempC:40,oilLevel:'NORMAL',waterPressure:3,airPressure:6}))input.set(`m${m.id}_${key}`,String(value));
+  }
+  try {
+    const draft=await saveShiftCheckups(input);
+    assert.equal(draft.finalized,false);
+    assert.equal((await db.query('SELECT * FROM ShiftPeerConfirmation')).length,0,'drafts do not require a peer');
+    input.set('generalId',String(draft.general.id));
+    for(const m of draft.machines)input.set(`m${m.machineId}_checkupId`,String(m.id));
+    input.set('intent','finalize');input.set('secondWorkerId',String(peer.id));input.set('secondWorkerPin','12345678');
+    input.delete(`m${secondMachine.id}_oilTempC`);
+    await assert.rejects(saveShiftCheckups(input),/Máquina 2/);
+    assert.equal((await db.shiftGeneralCheck.findUnique({where:{id:draft.general.id}})).status,'DRAFT','general write rolls back');
+    assert.equal((await db.machineCheckup.findUnique({where:{id:draft.machines[0].id}})).status,'DRAFT','first machine rolls back');
+    assert.equal((await db.query('SELECT * FROM ShiftPeerConfirmation')).length,0,'confirmation rolls back with invalid checks');
+    assert.equal((await db.query('SELECT * FROM RecordConfirmation')).length,0);
+    input.set(`m${secondMachine.id}_oilTempC`,'42');
+    const final=await saveShiftCheckups(input);
+    assert.equal(final.finalized,true);assert.equal(final.general.id,draft.general.id);
+    assert.equal((await db.query('SELECT * FROM ShiftPeerConfirmation')).length,1);
+    assert.equal((await db.query("SELECT * FROM RecordConfirmation WHERE entity IN ('ShiftGeneralCheck','MachineCheckup')")).length,3);
+    const general=await db.shiftGeneralCheck.findUnique({where:{id:draft.general.id}});
+    for(const key of ['purgePneumaticBarrels','purgeCleanAirBarrels','purgeFilters'])assert.equal(Number(general[key]),1);
+    // Re-submit without PIN and without IDs: reuse this shift's rows, no duplicates.
+    input.delete('secondWorkerId');input.delete('secondWorkerPin');input.delete('generalId');
+    for(const m of final.machines)input.delete(`m${m.machineId}_checkupId`);
+    await saveShiftCheckups(input);
+    assert.equal(await db.shiftGeneralCheck.count(),1);assert.equal(await db.machineCheckup.count(),2);
+    input.set('machineIds',String(machine.id));
+    await assert.rejects(saveShiftCheckups(input),/máquinas em funcionamento mudaram/);
+    input.set('shiftStart','2000-01-01T00:00:00.000Z');
+    await assert.rejects(saveShiftCheckups(input),/turno mudou/);
+  } finally {user.role='ADMIN';await db.user.update({where:{id:user.id},data:{role:'ADMIN'}});}
+});
+
+test('dashboard includes all seven machines in numeric order',async()=>{
+  for(const code of ['3','4','5','6','7'])await db.machine.create({data:{code,name:`Máquina ${code}`}});
+  const data=await load('lib/admin-dashboard').getAdminDashboardData(new Date());
+  assert.deepEqual(data.uptime.map(m=>m.code),['1','2','3','4','5','6','7']);
+});
+
+test('an authorized operator can finalize a past production and book stock in its original shift',async()=>{
+  const {saveOperationSettings}=load('app/actions/operation-settings');
+  const {formatLocalDateInput}=load('lib/shift');
+  const row=await db.production.findFirst({where:{status:'DRAFT',machineId:machine.id}});
+  assert.ok(row);
+  await saveOperationSettings(fd({pastProductionEnabled:'on'}));
+  await db.user.update({where:{id:user.id},data:{role:'OPERATOR'}});user.role='OPERATOR';
+  await db.machine.update({where:{id:machine.id},data:{status:'STOPPED'}});
+  const before=Number((await db.rawMaterialLot.findUnique({where:{id:lot.id}})).quantityAvailable);
+  try {
+    const result=await saveProduction(fd({productionId:row.id,intent:'finalize',machineId:machine.id,productId:product.id,
+      historicalDate:formatLocalDateInput(row.startedAt),historicalShift:'A',quantityProduced:1,initialWeightG:100,midWeightG:100,
+      materialLotId_0:lot.id,percentage_0:100,quantityKg_0:1,storageUnlocated:'on',
+      leakStart:'CONFORMING',leakMid:'CONFORMING',dropStart:'CONFORMING',dropMid:'CONFORMING'}));
+    assert.equal(result.id,row.id);
+    const saved=await db.production.findUnique({where:{id:row.id}});
+    assert.equal(saved.status,'FINALIZED');assert.equal(saved.startedAt.getTime(),row.startedAt.getTime());
+    assert.equal(Number((await db.rawMaterialLot.findUnique({where:{id:lot.id}})).quantityAvailable),before-1);
+    assert.equal((await db.query("SELECT * FROM RecordConfirmation WHERE entity='Production' AND entityId=?",[row.id])).length,1);
+  } finally {user.role='ADMIN';await db.user.update({where:{id:user.id},data:{role:'ADMIN'}});}
+});

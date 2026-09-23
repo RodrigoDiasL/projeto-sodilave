@@ -36,7 +36,7 @@ type CavitySummary = {
   nonConformingCount: bigint | number;
 };
 
-const priorityCodes = ["2", "3", "4", "7", "5", "6"];
+const priorityCodes = ["1", "2", "3", "4", "5", "6", "7"];
 
 function hasText(value: string | null | undefined) {
   return Boolean(value?.trim());

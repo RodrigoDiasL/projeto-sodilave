@@ -19,9 +19,9 @@ export async function getConfirmationWorkers(currentUserId?: number): Promise<Co
   return users;
 }
 
-export async function getShiftPeerConfirmation(currentUserId: number, at = new Date()): Promise<ConfirmationWorker | null> {
+export async function getShiftPeerConfirmation(currentUserId: number, at = new Date(), client: DbTransaction = db): Promise<ConfirmationWorker | null> {
   const window = getShiftWindow(at);
-  const rows = await db.query<{ id: number; name: string }[]>(
+  const rows = await client.query<{ id: number; name: string }[]>(
     `SELECT u.id, u.name
      FROM ShiftPeerConfirmation c
      INNER JOIN User u ON u.id = c.confirmedById
@@ -36,15 +36,15 @@ export async function getShiftPeerConfirmation(currentUserId: number, at = new D
   return rows[0] ?? null;
 }
 
-export async function verifySecondWorker(formData: FormData, currentUserId: number) {
-  const currentUser = await db.user.findUnique({
+export async function verifySecondWorker(formData: FormData, currentUserId: number, client: DbTransaction = db) {
+  const currentUser = await client.user.findUnique({
     where: { id: currentUserId },
     select: { role: true, active: true },
   });
   if (!currentUser?.active) throw new Error("O utilizador atual já não está ativo.");
   if (currentUser.role === "ADMIN") return null;
 
-  const existingConfirmation = await getShiftPeerConfirmation(currentUserId);
+  const existingConfirmation = await getShiftPeerConfirmation(currentUserId, new Date(), client);
   if (existingConfirmation) return existingConfirmation;
 
   const secondWorkerId = Number(formData.get("secondWorkerId") || 0);
@@ -53,7 +53,7 @@ export async function verifySecondWorker(formData: FormData, currentUserId: numb
   if (secondWorkerId === currentUserId) throw new Error("A confirmação tem de ser feita por um segundo trabalhador.");
   if (!/^\d{8}$/.test(secondWorkerPin)) throw new Error("O segundo trabalhador deve introduzir um PIN válido de 8 algarismos.");
 
-  const worker = await db.user.findFirst({
+  const worker = await client.user.findFirst({
     where: { id: secondWorkerId, active: true, role: { in: ["OPERATOR", "PRODUCTION_MANAGER"] } },
     select: { id: true, name: true, pinHash: true },
   });
@@ -62,7 +62,7 @@ export async function verifySecondWorker(formData: FormData, currentUserId: numb
   }
 
   const window = getShiftWindow();
-  await db.$executeRaw`
+  await client.$executeRaw`
     INSERT INTO ShiftPeerConfirmation (operatorId, confirmedById, shiftCode, shiftStart, confirmedAt)
     VALUES (${currentUserId}, ${worker.id}, ${window.code}, ${window.start}, NOW(3))
     ON DUPLICATE KEY UPDATE confirmedById = VALUES(confirmedById), shiftCode = VALUES(shiftCode), confirmedAt = VALUES(confirmedAt)

@@ -1,98 +1,89 @@
 "use client";
 import { MachineIcon } from "@/components/MachineIcon";
+import { SecondWorkerConfirmation } from "@/components/SecondWorkerConfirmation";
 import { useState } from "react";
 import { useRouter } from "next/navigation";
-import { saveGeneralCheck, saveMachineCheckup } from "@/app/actions/checkups";
+import { saveShiftCheckups } from "@/app/actions/checkups";
 
 type Machine = { id: number; code: string; name: string };
-
-export function CheckupForms({ machines, machineRecords, generalRecord }: { machines: Machine[]; machineRecords: any[]; generalRecord?: any }) {
+export function CheckupForms({ machines, machineRecords, generalRecord, workers, needsConfirmation, shiftStart }: {
+  machines: Machine[]; machineRecords: any[]; generalRecord?: any;
+  workers: { id: number; name: string }[]; needsConfirmation: boolean; shiftStart: string;
+}) {
   const [msg, setMsg] = useState("");
   const [error, setError] = useState("");
-  const [openMachines, setOpenMachines] = useState<number[]>(() =>
-    machines.filter((machine) => !machineRecords.some((row) => row.machineId === machine.id)).map((machine) => machine.id),
-  );
+  const [busy, setBusy] = useState(false);
+  const [generalId, setGeneralId] = useState(generalRecord?.id ?? "");
+  const [recordIds, setRecordIds] = useState<Record<number, number>>(() => Object.fromEntries(machines.map(m => [m.id, machineRecords.find(r => r.machineId === m.id)?.id])));
+  const [openMachines, setOpenMachines] = useState<number[]>(() => machines.filter(m => !machineRecords.some(r => r.machineId === m.id)).map(m => m.id));
   const router = useRouter();
-
-  const setMachineOpen = (machineId: number, open: boolean) => {
-    setOpenMachines((current) => open
-      ? current.includes(machineId) ? current : [...current, machineId]
-      : current.filter((id) => id !== machineId));
-  };
-
-  const run = async (fd: FormData, general = false) => {
-    setMsg(""); setError("");
-    if (fd.get("intent") === "finalize" && !confirm("Finalizar esta verificação de turno? Poderá alterá-la até ao fim do turno.")) return;
+  if (!machines.length) return <div className="notice">Não existem máquinas em funcionamento para verificar.</div>;
+  return <form className="machine-forms-stack" onSubmit={async event => {
+    event.preventDefault();
+    const form = event.currentTarget;
+    const submitter = (event.nativeEvent as SubmitEvent).submitter;
+    const data = new FormData(form, submitter);
+    setMsg(""); setError(""); setBusy(true);
     try {
-      const r = general ? await saveGeneralCheck(fd) : await saveMachineCheckup(fd);
-      setMsg(r.finalized ? "Verificação guardada. Pode ser alterada até ao fim do turno." : "Rascunho gravado. Pode completar mais tarde.");
-      if (!general) {
-        const machineId = Number(fd.get("machineId"));
-        if (machineId) setMachineOpen(machineId, false);
-      }
+      const result = await saveShiftCheckups(data);
+      setGeneralId(result.general.id);
+      setRecordIds(Object.fromEntries(result.machines.map(m => [m.machineId, m.id])));
+      setMsg(result.finalized ? "Todas as verificações do turno foram guardadas e finalizadas." : "Rascunho de todas as verificações guardado. Pode completar mais tarde.");
+      const pin = form.elements.namedItem("secondWorkerPin") as HTMLInputElement | null;
+      if (pin) pin.value = "";
       router.refresh();
-    } catch (e) {
-      setError(e instanceof Error ? e.message : "Erro ao guardar.");
-    }
-  };
-
-  return <div className="machine-forms-stack">
-    <form action={(fd) => run(fd, true)} className="panel form-stack">
-      <input type="hidden" name="generalId" value={generalRecord?.id ?? ""}/>
+    } catch (e) { setError(e instanceof Error ? e.message : "Erro ao guardar as verificações."); }
+    finally { setBusy(false); }
+  }}>
+    <input type="hidden" name="shiftStart" value={shiftStart}/>
+    <input type="hidden" name="generalId" value={generalId}/>
+    <section className="panel form-stack">
       <h2>Verificação geral do turno</h2>
-      {generalRecord?.status === "FINALIZED" && <div className="notice">Esta verificação está finalizada, mas pode ser alterada enquanto o turno estiver a decorrer.</div>}
       <div className="two-col">
         <label>Refrigerador grande (°C)<input name="chillerLargeC" type="number" step="0.1" defaultValue={generalRecord?.chillerLargeC ?? ""}/></label>
         <label>Refrigerador pequeno (°C)<input name="chillerSmallC" type="number" step="0.1" defaultValue={generalRecord?.chillerSmallC ?? ""}/></label>
         <label>Temperatura ambiente da produção (°C)<input name="ambientTempC" type="number" step="0.1" defaultValue={generalRecord?.ambientTempC ?? ""}/></label>
       </div>
       <section className="subpanel">
-        <label className="check"><input type="checkbox" name="cleanDispatch" defaultChecked={generalRecord?.cleanDispatch}/>Limpeza da zona de expedição</label>
-        <label className="check"><input type="checkbox" name="cleanStorage" defaultChecked={generalRecord?.cleanStorage}/>Limpeza da zona de armazenamento</label>
-        <label className="check"><input type="checkbox" name="cleanProduction" defaultChecked={generalRecord?.cleanProduction}/>Limpeza da zona de produção</label>
+        {([
+          ["cleanDispatch", "Limpeza da zona de expedição"], ["cleanStorage", "Limpeza da zona de armazenamento"], ["cleanProduction", "Limpeza da zona de produção"],
+          ["purgePneumaticBarrels", "Purga de barrilotes do ar pneumático"], ["purgeCleanAirBarrels", "Purga de barrilotes do ar limpo"], ["purgeFilters", "Purga de filtros"],
+        ] as const).map(([name, label]) => <label className="check" key={name}><input type="checkbox" name={name} defaultChecked={Boolean(generalRecord?.[name])}/>{label}</label>)}
       </section>
       <label>Observações<textarea name="generalNotes" defaultValue={generalRecord?.notes ?? ""}/></label>
-      <div className="button-row">
-        {generalRecord?.status !== "FINALIZED" && <button className="btn secondary" name="intent" value="draft" formNoValidate>Gravar rascunho</button>}
-        <button className="btn primary" name="intent" value="finalize">{generalRecord?.status === "FINALIZED" ? "Guardar alterações" : "Finalizar verificação geral"}</button>
-      </div>
-    </form>
-
-    {machines.map((machine) => {
-      const record = machineRecords.find((row) => row.machineId === machine.id);
+    </section>
+    {machines.map(machine => {
+      const record = machineRecords.find(row => row.machineId === machine.id);
       const open = openMachines.includes(machine.id);
-      const stateLabel = record?.status === "FINALIZED" ? "Finalizada" : record ? "Rascunho gravado" : "Por preencher";
-
+      const prefix = `m${machine.id}_`;
       return <section key={machine.id} className="panel checkup-machine-card">
+        <input type="hidden" name="machineIds" value={machine.id}/>
+        <input type="hidden" name={prefix + "checkupId"} value={recordIds[machine.id] ?? ""}/>
         <div className="checkup-machine-summary">
-          <div className="machine-form-heading">
-            <MachineIcon code={machine.code}/>
-            <div><h2>Máquina {machine.code}</h2><p>{machine.name} · {stateLabel}</p></div>
-          </div>
-          <button type="button" className="btn secondary" onClick={() => setMachineOpen(machine.id, !open)}>
-            {open ? "Fechar" : record ? "Abrir / editar" : "Preencher"}
-          </button>
+          <div className="machine-form-heading"><MachineIcon code={machine.code}/><div><h2>Máquina {machine.code}</h2><p>{machine.name} · {record?.status === "FINALIZED" ? "Finalizada" : recordIds[machine.id] ? "Rascunho gravado" : "Por preencher"}</p></div></div>
+          <button type="button" className="btn secondary" aria-expanded={open} aria-controls={`checkup-${machine.id}`} onClick={() => setOpenMachines(current => open ? current.filter(id => id !== machine.id) : [...current, machine.id])}>{open ? "Fechar" : "Abrir / editar"}</button>
         </div>
-
-        {open && <form action={(fd) => run(fd)} className="form-stack checkup-machine-form">
-          <input type="hidden" name="machineId" value={machine.id}/>
-          <input type="hidden" name="checkupId" value={record?.id ?? ""}/>
-          {record?.status === "FINALIZED" && <div className="notice">Esta verificação está finalizada, mas pode ser alterada enquanto o turno estiver a decorrer.</div>}
+        <div id={`checkup-${machine.id}`} hidden={!open} className="form-stack checkup-machine-form">
           <section className="subpanel"><div className="two-col">
-            <label>Temperatura do óleo hidráulico (°C)<input name="oilTempC" type="number" step="0.1" defaultValue={record?.oilTempC ?? ""}/></label>
-            <label>Nível do óleo hidráulico<select name="oilLevel" defaultValue={record?.oilLevel ?? ""}><option value="">Selecione</option><option value="LOW">Baixo</option><option value="NORMAL">Normal</option><option value="HIGH">Alto</option></select></label>
-            <label>Pressão de água no sistema (bar)<input name="waterPressure" type="number" step="0.1" min="0" defaultValue={record?.waterPressure ?? ""}/></label>
-            <label>Pressão de ar (bar)<input name="airPressure" type="number" step="0.1" min="0" defaultValue={record?.airPressure ?? ""}/></label>
-          </div><label className="check"><input type="checkbox" name="cleanMachineArea" defaultChecked={record?.cleanMachineArea}/>Limpeza de aparadeiras, tapetes e mesa de embalamento</label></section>
-          <label>Observações<textarea name="notes" defaultValue={record?.notes ?? ""}/></label>
-          <div className="button-row">
-            {record?.status !== "FINALIZED" && <button className="btn secondary" name="intent" value="draft" formNoValidate>Gravar rascunho</button>}
-            <button className="btn primary" name="intent" value="finalize">{record?.status === "FINALIZED" ? "Guardar alterações" : "Finalizar verificação"}</button>
-          </div>
-        </form>}
+            <label>Temperatura do óleo hidráulico (°C)<input name={prefix + "oilTempC"} type="number" step="0.1" defaultValue={record?.oilTempC ?? ""}/></label>
+            <label>Nível do óleo hidráulico<select name={prefix + "oilLevel"} defaultValue={record?.oilLevel ?? ""}><option value="">Selecione</option><option value="LOW">Baixo</option><option value="NORMAL">Normal</option><option value="HIGH">Alto</option></select></label>
+            <label>Pressão de água no sistema (bar)<input name={prefix + "waterPressure"} type="number" step="0.1" min="0" defaultValue={record?.waterPressure ?? ""}/></label>
+            <label>Pressão de ar (bar)<input name={prefix + "airPressure"} type="number" step="0.1" min="0" defaultValue={record?.airPressure ?? ""}/></label>
+          </div><label className="check"><input type="checkbox" name={prefix + "cleanMachineArea"} defaultChecked={Boolean(record?.cleanMachineArea)}/>Limpeza de aparadeiras, tapetes e mesa de embalamento</label></section>
+          <label>Observações<textarea name={prefix + "notes"} defaultValue={record?.notes ?? ""}/></label>
+        </div>
       </section>;
     })}
-    {error && <div className="alert error">{error}</div>}
-    {msg && <div className="alert success">{msg}</div>}
-  </div>;
+    <section className="panel form-stack">
+      <h2>Concluir verificações do turno</h2>
+      <p className="muted">Grave todas as verificações em conjunto. Pode alterar os registos até ao fim do turno.</p>
+      {needsConfirmation && <SecondWorkerConfirmation workers={workers}/>}
+      {error && <div className="alert error" role="alert">{error}</div>}
+      {msg && <div className="alert success" role="status">{msg}</div>}
+      <div className="button-row">
+        <button className="btn secondary" name="intent" value="draft" formNoValidate disabled={busy}>Gravar rascunho</button>
+        <button className="btn primary" name="intent" value="finalize" disabled={busy}>{busy ? "A guardar…" : "Finalizar verificações do turno"}</button>
+      </div>
+    </section>
+  </form>;
 }

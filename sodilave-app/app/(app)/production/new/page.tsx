@@ -1,4 +1,6 @@
 import Link from "next/link";
+import { getPastProductionEnabled } from "@/lib/operation-settings";
+import { ProductionPeriodSelector } from "@/components/ProductionPeriodSelector";
 import { redirect } from "next/navigation";
 import { PageIntro } from "@/components/PageIntro";
 import { ProductionForm } from "@/components/ProductionForm";
@@ -7,22 +9,32 @@ import { getProductionFormData } from "@/lib/production-form-data";
 import { getShiftWindow, getShiftWindowForDate, type ShiftCode } from "@/lib/shift";
 import { db } from "@/lib/db";
 import { previousProductionToDefaults, productionToInitial } from "@/lib/production-initial";
-import { requireUser } from "@/lib/auth";
+import { requireOperationalUser } from "@/lib/auth";
 import { getActiveWeeklyStartup } from "@/lib/active-machines";
 import { getShiftPeerConfirmation } from "@/lib/second-worker-confirmation";
 
 export default async function NewProductionPage({ searchParams }: { searchParams: Promise<{ extraMachine?: string; date?: string; shift?: string }> }) {
-  const user = await requireUser();
+  const user = await requireOperationalUser();
   const q = await searchParams;
 
+  const pastProductionEnabled = await getPastProductionEnabled();
   const historicalRequested = Boolean(q.date || q.shift);
-  if (historicalRequested && user.role !== "ADMIN") redirect("/production/new");
+  if (historicalRequested && !pastProductionEnabled) redirect("/production/new");
 
   let historicalWindow: ReturnType<typeof getShiftWindowForDate> | null = null;
   if (historicalRequested) {
     if (!q.date || !["A", "B", "C"].includes(String(q.shift))) redirect("/production");
-    historicalWindow = getShiftWindowForDate(q.date, q.shift as ShiftCode);
-    if (historicalWindow.start > new Date()) redirect("/production");
+    let selectionError = "";
+    try {
+      historicalWindow = getShiftWindowForDate(q.date, q.shift as ShiftCode);
+      if (historicalWindow.end > new Date()) selectionError = "Selecione um turno já terminado. Para o turno em curso, use o registo do turno atual.";
+    } catch { selectionError = "Selecione uma data válida."; }
+    if (selectionError) return <>
+      <PageIntro title="Registo de produção passada" subtitle="Escolha o dia e o turno a registar."/>
+      <ProductionPeriodSelector enabled={pastProductionEnabled} date={q.date} shift={q.shift}/>
+      <div className="alert error" role="alert">{selectionError}</div>
+    </>;
+
   }
 
   const data = await getProductionFormData({ allActiveMachines: Boolean(historicalWindow), currentUserId: user.id });
@@ -56,15 +68,16 @@ export default async function NewProductionPage({ searchParams }: { searchParams
 
   return <>
     <PageIntro
-      title={historicalWindow ? "Produção histórica" : "Produção do turno"}
+      title={historicalWindow ? "Registo de produção passada" : "Produção do turno"}
       subtitle={historicalWindow
-        ? `Registo administrativo relativo a ${window.start.toLocaleDateString("pt-PT")} · ${window.label}.`
+        ? `Registo relativo a ${window.start.toLocaleDateString("pt-PT")} · ${window.label}.`
         : "Preencha o registo de cada máquina em funcionamento. Cada máquina tem o seu próprio rascunho."}
     />
+    <ProductionPeriodSelector key={`${q.date ?? "current"}:${q.shift ?? ""}`} enabled={pastProductionEnabled} date={q.date} shift={q.shift}/>
     <div className="notice">
       <strong>{window.label}:</strong> {window.hours}.
       {historicalWindow
-        ? " Modo histórico: só é permitida uma produção normal por máquina neste dia e turno."
+        ? " Produção passada: só é permitida uma produção normal por máquina neste dia e turno."
         : " Só pode existir uma produção normal por máquina; produções adicionais exigem justificação."}
       {peerConfirmation && ` Colega de turno já confirmado: ${peerConfirmation.name}.`}
     </div>
@@ -83,7 +96,7 @@ export default async function NewProductionPage({ searchParams }: { searchParams
         );
         const defaults = !primary && previousIsUsable && previous ? previousProductionToDefaults(previous) : undefined;
 
-        return <section key={machine.id} id={`machine-${machine.id}`} className="machine-production-section">
+        return <section key={`${machine.id}:${window.start.toISOString()}`} id={`machine-${machine.id}`} className="machine-production-section">
           {primary?.status === "FINALIZED"
             ? <div className="panel finalized-summary"><h2>Máquina {machine.code}</h2><p>Produção principal já finalizada: <strong>{primary.productionLot}</strong>.</p><Link className="btn secondary" href={`/production/details/${primary.id}`}>Ver detalhes</Link></div>
             : <ProductionForm {...data} products={machineProducts} machines={[machine]} fixedMachine={machine} initial={primary ? productionToInitial(primary) : defaults as any} historicalContext={historicalContext} />}

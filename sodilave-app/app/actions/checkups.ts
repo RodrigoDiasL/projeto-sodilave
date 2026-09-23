@@ -2,86 +2,103 @@
 import { revalidatePath } from "next/cache";
 import { db } from "@/lib/db";
 import { requireOperationalUser } from "@/lib/auth";
-import { getShift, getShiftWindow } from "@/lib/shift";
-import { OilLevel, RecordStatus } from "@/lib/db-types";
-import { assertMachineRunning } from "@/lib/active-machines";
+import { getShiftWindow } from "@/lib/shift";
+import { OilLevel } from "@/lib/db-types";
 import { saveRecordConfirmation, verifySecondWorker } from "@/lib/second-worker-confirmation";
 
-const n = (v: FormDataEntryValue | null) => v === null || v === "" ? null : Number(v);
-const checkOptional = (v: number | null, min: number, max: number, label: string) => {
-  if (v !== null && (!Number.isFinite(v) || v < min || v > max)) throw new Error(`${label} tem um valor inválido.`);
-};
-function assertWithinOriginalShift(observedAt:Date){const window=getShiftWindow(observedAt);if(new Date()>=window.end)throw new Error("Esta verificação só pode ser alterada durante o turno em que foi registada.");}
-
-export async function saveMachineCheckup(formData: FormData) {
-  const user = await requireOperationalUser();
-  const intent = String(formData.get("intent") || "draft");
-  const finalize = intent === "finalize";
-  if (!["draft", "finalize"].includes(intent)) throw new Error("Ação inválida.");
-  const secondWorker = finalize ? await verifySecondWorker(formData, user.id) : null;
-  const id = n(formData.get("checkupId"));
-  const machineId = n(formData.get("machineId"));
-  if (machineId === null || !Number.isInteger(machineId) || machineId <= 0) throw new Error("Selecione uma máquina para guardar a verificação de turno.");
-  const existing = id ? await db.machineCheckup.findUnique({ where: { id }, select: { id: true, status: true, observedAt:true, finalizedAt:true } }) : null;
-  if(existing?.status===RecordStatus.CANCELLED)throw new Error("Esta verificação foi cancelada.");
-  if(existing?.status===RecordStatus.FINALIZED)assertWithinOriginalShift(existing.observedAt);
-  const effectiveStatus=existing?.status===RecordStatus.FINALIZED?RecordStatus.FINALIZED:(finalize?RecordStatus.FINALIZED:RecordStatus.DRAFT);
-  const oilTempC = n(formData.get("oilTempC")), waterPressure = n(formData.get("waterPressure")), airPressure = n(formData.get("airPressure"));
-  checkOptional(oilTempC, -20, 150, "A temperatura do óleo"); checkOptional(waterPressure, 0, 50, "A pressão de água"); checkOptional(airPressure, 0, 50, "A pressão de ar");
-  const oilLevelValue = String(formData.get("oilLevel") || "");
-  const oilLevel = Object.values(OilLevel).includes(oilLevelValue as OilLevel) ? oilLevelValue as OilLevel : null;
-  if ((finalize||effectiveStatus===RecordStatus.FINALIZED) && (oilTempC === null || waterPressure === null || airPressure === null || oilLevel === null)) throw new Error("Preencha todos os campos obrigatórios antes de finalizar a verificação de turno.");
-  await assertMachineRunning(machineId);
-  const shiftCode=existing?.id?undefined:getShift().code;
-  const data = { machineId, shiftCode, status:effectiveStatus, oilTempC, oilLevel, waterPressure, airPressure,
-    cleanMachineArea: formData.get("cleanMachineArea") === "on",
-    hasBreakdown:false,breakdownStoppedMachine:false,breakdownDescription:null,
-    notes: String(formData.get("notes") || "").trim().slice(0, 500) || null, finalizedAt: effectiveStatus===RecordStatus.FINALIZED ? (existing?.finalizedAt??new Date()) : null };
-
-  const row=await db.$transaction(async tx=>{
-    const current=id?await tx.machineCheckup.findUnique({where:{id},select:{id:true,status:true}}):null;
-    if(id&&!current)throw new Error("Esta verificação já não existe.");
-    if(current?.status===RecordStatus.CANCELLED)throw new Error("Esta verificação foi cancelada.");
-    const saved=current
-      ? await tx.machineCheckup.update({where:{id:current.id},data})
-      : await tx.machineCheckup.create({data:{...data,shiftCode:getShift().code,operatorId:user.id}});
-    if(finalize&&secondWorker)await saveRecordConfirmation("MachineCheckup",saved.id,secondWorker.id,tx);
-    await tx.auditLog.create({data:{userId:user.id,action:current?"EDIT":finalize?"FINALIZE":"CREATE",entity:"MachineCheckup",entityId:String(saved.id),details:{status:effectiveStatus,secondWorkerId:secondWorker?.id??null,secondWorkerName:secondWorker?.name??null}}});
-    return saved;
-  });
-
-  revalidatePath("/checkups"); revalidatePath("/admin/checkups"); revalidatePath("/dashboard"); return { ok: true, id: row.id, finalized: effectiveStatus===RecordStatus.FINALIZED };
+function numberField(fd: FormData, key: string, min: number, max: number, label: string) {
+  const raw = fd.get(key);
+  if (raw === null || raw === "") return null;
+  const value = Number(raw);
+  if (!Number.isFinite(value) || value < min || value > max) throw new Error(`${label} tem um valor inválido.`);
+  return value;
+}
+function recordId(fd: FormData, key: string) {
+  const raw = fd.get(key);
+  if (!raw) return null;
+  const id = Number(raw);
+  if (!Number.isInteger(id) || id <= 0) throw new Error("Identificador da verificação inválido.");
+  return id;
 }
 
-export async function saveGeneralCheck(formData: FormData) {
+export async function saveShiftCheckups(fd: FormData) {
   const user = await requireOperationalUser();
-  const intent = String(formData.get("intent") || "draft");
-  const finalize = intent === "finalize";
+  const intent = String(fd.get("intent") || "draft");
   if (!["draft", "finalize"].includes(intent)) throw new Error("Ação inválida.");
-  const secondWorker = finalize ? await verifySecondWorker(formData, user.id) : null;
-  const id = n(formData.get("generalId"));
-  const existing = id ? await db.shiftGeneralCheck.findUnique({ where: { id }, select: { id: true, status: true, observedAt:true, finalizedAt:true } }) : null;
-  if(existing?.status===RecordStatus.CANCELLED)throw new Error("Esta verificação foi cancelada.");
-  if(existing?.status===RecordStatus.FINALIZED)assertWithinOriginalShift(existing.observedAt);
-  const effectiveStatus=existing?.status===RecordStatus.FINALIZED?RecordStatus.FINALIZED:(finalize?RecordStatus.FINALIZED:RecordStatus.DRAFT);
-  const chillerLargeC = n(formData.get("chillerLargeC")), chillerSmallC = n(formData.get("chillerSmallC")), ambientTempC = n(formData.get("ambientTempC"));
-  checkOptional(chillerLargeC, -30, 80, "A temperatura do refrigerador grande"); checkOptional(chillerSmallC, -30, 80, "A temperatura do refrigerador pequeno"); checkOptional(ambientTempC, -10, 60, "A temperatura ambiente");
-  if ((finalize||effectiveStatus===RecordStatus.FINALIZED) && (chillerLargeC === null || chillerSmallC === null || ambientTempC === null)) throw new Error("Preencha as temperaturas dos refrigeradores antes de finalizar.");
-  const data = { shiftCode: existing?undefined:getShift().code, status:effectiveStatus, chillerLargeC, chillerSmallC, ambientTempC,
-    cleanDispatch: formData.get("cleanDispatch") === "on", cleanStorage: formData.get("cleanStorage") === "on", cleanProduction: formData.get("cleanProduction") === "on",
-    notes: String(formData.get("generalNotes") || "").trim().slice(0, 500) || null, finalizedAt: effectiveStatus===RecordStatus.FINALIZED ? (existing?.finalizedAt??new Date()) : null };
-
-  const row=await db.$transaction(async tx=>{
-    const current=id?await tx.shiftGeneralCheck.findUnique({where:{id},select:{id:true,status:true}}):null;
-    if(id&&!current)throw new Error("Esta verificação já não existe.");
-    if(current?.status===RecordStatus.CANCELLED)throw new Error("Esta verificação foi cancelada.");
-    const saved=current
-      ? await tx.shiftGeneralCheck.update({where:{id:current.id},data})
-      : await tx.shiftGeneralCheck.create({data:{...data,shiftCode:getShift().code,operatorId:user.id}});
-    if(finalize&&secondWorker)await saveRecordConfirmation("ShiftGeneralCheck",saved.id,secondWorker.id,tx);
-    await tx.auditLog.create({data:{userId:user.id,action:current?"EDIT":finalize?"FINALIZE":"CREATE",entity:"ShiftGeneralCheck",entityId:String(saved.id),details:{status:effectiveStatus,secondWorkerId:secondWorker?.id??null,secondWorkerName:secondWorker?.name??null}}});
-    return saved;
+  const window = getShiftWindow();
+  if (fd.get("shiftStart") !== window.start.toISOString()) throw new Error("O turno mudou. Atualize a página antes de guardar as verificações.");
+  const machineIds = fd.getAll("machineIds").map(Number);
+  if (!machineIds.length || machineIds.some(id => !Number.isInteger(id) || id <= 0) || new Set(machineIds).size !== machineIds.length) {
+    throw new Error("Selecione todas as máquinas em funcionamento.");
+  }
+  const result = await db.$transaction(async tx => {
+    // Same lock order as weekly startup/shutdown; also serializes duplicate submissions.
+    await tx.query("SELECT id FROM Machine ORDER BY id FOR UPDATE");
+    const startup = await tx.weeklyStartup.findFirst({ where: { status: "FINALIZED", shutdown: null } });
+    const machines = await tx.machine.findMany({ where: { active: true, status: "RUNNING" }, orderBy: { id: "asc" } });
+    if (!startup) throw new Error("Não existe um arranque semanal ativo.");
+    if (machines.length !== machineIds.length || machines.some(m => !machineIds.includes(m.id))) {
+      throw new Error("As máquinas em funcionamento mudaram. Atualize a página antes de guardar.");
+    }
+    const period = { observedAt: { gte: window.start, lt: window.end }, status: { not: "CANCELLED" } };
+    const getRecord = async (repo: typeof tx.machineCheckup, id: number | null, machineId?: number) => {
+      const row = id ? await repo.findUnique({ where: { id } }) : await repo.findFirst({
+        where: { ...period, ...(machineId ? { machineId } : {}) }, orderBy: { updatedAt: "desc" },
+      });
+      if (id && !row) throw new Error("Esta verificação já não existe.");
+      if (row && (row.status === "CANCELLED" || row.observedAt < window.start || row.observedAt >= window.end || (machineId && row.machineId !== machineId))) {
+        throw new Error("Esta verificação não pertence à máquina e ao turno atuais ou foi cancelada.");
+      }
+      return row;
+    };
+    const general = await getRecord(tx.shiftGeneralCheck, recordId(fd, "generalId"));
+    const records = [];
+    for (const machine of machines) records.push({ machine, row: await getRecord(tx.machineCheckup, recordId(fd, `m${machine.id}_checkupId`), machine.id) });
+    const needsConfirmation = intent === "finalize" || general?.status === "FINALIZED" || records.some(({ row }) => row?.status === "FINALIZED");
+    const secondWorker = needsConfirmation ? await verifySecondWorker(fd, user.id, tx) : null;
+    const save = async (repo: typeof tx.machineCheckup, entity: string, row: any, data: Record<string, unknown>) => {
+      const finalized = intent === "finalize" || row?.status === "FINALIZED";
+      const values = { ...data, status: finalized ? "FINALIZED" : "DRAFT", finalizedAt: finalized ? row?.finalizedAt ?? new Date() : null };
+      const saved = row ? await repo.update({ where: { id: row.id }, data: values })
+        : await repo.create({ data: { ...values, operatorId: user.id, shiftCode: window.code, observedAt: new Date() } });
+      if (finalized && secondWorker) await saveRecordConfirmation(entity, saved.id, secondWorker.id, tx);
+      await tx.auditLog.create({ data: { userId: user.id, action: row ? "EDIT" : finalized ? "FINALIZE" : "CREATE", entity, entityId: String(saved.id), details: { status: values.status, secondWorkerId: secondWorker?.id ?? null } } });
+      return { id: saved.id, finalized };
+    };
+    const chillerLargeC = numberField(fd, "chillerLargeC", -30, 80, "A temperatura do refrigerador grande");
+    const chillerSmallC = numberField(fd, "chillerSmallC", -30, 80, "A temperatura do refrigerador pequeno");
+    const ambientTempC = numberField(fd, "ambientTempC", -10, 60, "A temperatura ambiente");
+    if ((intent === "finalize" || general?.status === "FINALIZED") && [chillerLargeC, chillerSmallC, ambientTempC].some(v => v === null)) {
+      throw new Error("Preencha as três temperaturas da verificação geral antes de finalizar.");
+    }
+    const savedGeneral = await save(tx.shiftGeneralCheck, "ShiftGeneralCheck", general, {
+      chillerLargeC, chillerSmallC, ambientTempC,
+      ...Object.fromEntries(["cleanDispatch", "cleanStorage", "cleanProduction", "purgePneumaticBarrels", "purgeCleanAirBarrels", "purgeFilters"].map(key => [key, fd.get(key) === "on"])),
+      notes: String(fd.get("generalNotes") || "").trim().slice(0, 500) || null,
+    });
+    const savedMachines = [];
+    for (const { machine, row } of records) {
+      const prefix = `m${machine.id}_`;
+      const oilTempC = numberField(fd, prefix + "oilTempC", -20, 150, `Máquina ${machine.code}: temperatura do óleo`);
+      const waterPressure = numberField(fd, prefix + "waterPressure", 0, 50, `Máquina ${machine.code}: pressão de água`);
+      const airPressure = numberField(fd, prefix + "airPressure", 0, 50, `Máquina ${machine.code}: pressão de ar`);
+      const value = String(fd.get(prefix + "oilLevel") || "");
+      const oilLevel = Object.values(OilLevel).includes(value as OilLevel) ? value : null;
+      if ((intent === "finalize" || row?.status === "FINALIZED") && [oilTempC, waterPressure, airPressure, oilLevel].some(v => v === null)) {
+        throw new Error(`Máquina ${machine.code}: preencha a temperatura, o nível de óleo e as pressões antes de finalizar.`);
+      }
+      const saved = await save(tx.machineCheckup, "MachineCheckup", row, {
+        machineId: machine.id, oilTempC, waterPressure, airPressure, oilLevel,
+        cleanMachineArea: fd.get(prefix + "cleanMachineArea") === "on",
+        hasBreakdown: false, breakdownStoppedMachine: false, breakdownDescription: null,
+        notes: String(fd.get(prefix + "notes") || "").trim().slice(0, 500) || null,
+      });
+      savedMachines.push({ machineId: machine.id, ...saved });
+    }
+    // Do not save a submission that crossed the shift boundary while waiting for locks.
+    if (new Date() >= window.end) throw new Error("O turno mudou. Atualize a página antes de guardar.");
+    return { general: savedGeneral, machines: savedMachines, finalized: savedGeneral.finalized && savedMachines.every(m => m.finalized) };
   });
-
-  revalidatePath("/checkups"); revalidatePath("/admin/checkups"); revalidatePath("/dashboard"); return { ok: true, id: row.id, finalized: effectiveStatus===RecordStatus.FINALIZED };
+  for (const path of ["/checkups", "/admin/checkups", "/dashboard"]) revalidatePath(path);
+  return result;
 }

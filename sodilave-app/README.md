@@ -208,3 +208,24 @@ Os ícones de garrafões são importados pelo componente `MachineIcon` e incorpo
 na compilação com um URL próprio. O mesmo componente é usado no arranque,
 produção, check-ups, painel e lista de máquinas; inclui um ícone alternativo se a
 imagem não carregar.
+
+
+### Produção passada e verificações do turno
+
+Após atualizar o ramo, execute `npm run db:upgrade` e `npm run db:check` antes de
+iniciar a aplicação. A migração `2026-09-23-past-production-and-shift-purges.sql`
+adiciona a definição global e os três campos de purga; os registos antigos mantêm
+esses campos como não registados.
+
+Em **Controlos de Administrador → Definições de operação**, ative **Permitir
+registo de produção passada**. A opção vem desligada por defeito e aplica-se a
+colaboradores, responsáveis de produção e administradores. Quando ativa, o
+seletor de dia e turno surge junto da data atual no registo de produção. Apenas
+turnos terminados são aceites. Desativar impede novos registos e a conclusão de
+rascunhos de turnos passados; mantém as consultas e as permissões existentes de
+correção de produções já finalizadas.
+
+As verificações gerais e das máquinas são gravadas numa única operação. A
+confirmação do segundo trabalhador surge uma vez, no fim do formulário. Fechar
+uma secção de máquina mantém os valores preenchidos. Uma validação falhada não
+finaliza parte das verificações nem guarda a confirmação do colega.
