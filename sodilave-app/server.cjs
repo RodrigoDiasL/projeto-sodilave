@@ -10,9 +10,16 @@ let server;
 
 async function start() {
   await app.prepare();
-  server = http.createServer((req, res) => handle(req, res));
+  server = http.createServer((req, res) => {
+    Promise.resolve().then(() => handle(req, res)).catch(error => {
+      console.error("[sodilave] pedido falhou", { name: error?.name, code: error?.code });
+      if (!res.headersSent) { res.writeHead(500, { "Content-Type": "text/plain; charset=utf-8" }); res.end("Não foi possível concluir o pedido."); }
+      else res.destroy();
+    });
+  });
   server.requestTimeout = 60_000;
-  server.headersTimeout = 65_000;
+  server.headersTimeout = 15_000;
+  server.maxRequestsPerSocket = 100;
   server.keepAliveTimeout = 5_000;
 
   server.listen(port, hostname, () => {

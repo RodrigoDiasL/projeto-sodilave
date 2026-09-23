@@ -37,6 +37,10 @@ if (appUrl) {
   }
 }
 
+if (process.env.TRUSTED_PROXY_IP_HEADER && !/^[a-z0-9-]+$/i.test(process.env.TRUSTED_PROXY_IP_HEADER)) {
+  failures.push("TRUSTED_PROXY_IP_HEADER deve ser um nome de cabeçalho HTTP válido.");
+}
+
 if (process.env.INITIAL_ADMIN_PIN && !/^\d{8}$/.test(process.env.INITIAL_ADMIN_PIN)) {
   failures.push("INITIAL_ADMIN_PIN, quando definido, deve ter exatamente 8 algarismos.");
 }

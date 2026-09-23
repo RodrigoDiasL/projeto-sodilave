@@ -31,6 +31,7 @@ export async function saveShiftCheckups(fd: FormData) {
   if (!machineIds.length || machineIds.some(id => !Number.isInteger(id) || id <= 0) || new Set(machineIds).size !== machineIds.length) {
     throw new Error("Selecione todas as máquinas em funcionamento.");
   }
+  const secondWorker = intent === "finalize" ? await verifySecondWorker(fd, user.id) : null;
   const result = await db.$transaction(async tx => {
     // Same lock order as weekly startup/shutdown; also serializes duplicate submissions.
     await tx.query("SELECT id FROM Machine ORDER BY id FOR UPDATE");
@@ -54,14 +55,13 @@ export async function saveShiftCheckups(fd: FormData) {
     const general = await getRecord(tx.shiftGeneralCheck, recordId(fd, "generalId"));
     const records = [];
     for (const machine of machines) records.push({ machine, row: await getRecord(tx.machineCheckup, recordId(fd, `m${machine.id}_checkupId`), machine.id) });
-    const needsConfirmation = intent === "finalize" || general?.status === "FINALIZED" || records.some(({ row }) => row?.status === "FINALIZED");
-    const secondWorker = needsConfirmation ? await verifySecondWorker(fd, user.id, tx) : null;
+    if (intent === "draft" && (general?.status === "FINALIZED" || records.some(({ row }) => row?.status === "FINALIZED"))) throw new Error("Use Finalizar verificações do turno para alterar verificações já finalizadas.");
     const save = async (repo: typeof tx.machineCheckup, entity: string, row: any, data: Record<string, unknown>) => {
       const finalized = intent === "finalize" || row?.status === "FINALIZED";
       const values = { ...data, status: finalized ? "FINALIZED" : "DRAFT", finalizedAt: finalized ? row?.finalizedAt ?? new Date() : null };
       const saved = row ? await repo.update({ where: { id: row.id }, data: values })
         : await repo.create({ data: { ...values, operatorId: user.id, shiftCode: window.code, observedAt: new Date() } });
-      if (finalized && secondWorker) await saveRecordConfirmation(entity, saved.id, secondWorker.id, tx);
+      if (finalized && secondWorker) await saveRecordConfirmation(entity, saved.id, secondWorker, user.id, tx);
       await tx.auditLog.create({ data: { userId: user.id, action: row ? "EDIT" : finalized ? "FINALIZE" : "CREATE", entity, entityId: String(saved.id), details: { status: values.status, secondWorkerId: secondWorker?.id ?? null } } });
       return { id: saved.id, finalized };
     };

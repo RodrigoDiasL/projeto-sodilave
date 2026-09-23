@@ -15,6 +15,8 @@ if(!url || !['sodilave_test','typecheck'].includes(new URL(url).pathname.slice(1
 process.env.DATABASE_URL=url;
 process.env.NODE_ENV='test';
 let user;
+const testCookies=new Map();
+const cookieOptions=new Map();
 const cache=new Map();
 const root=path.resolve(__dirname,'..');
 function load(file) {
@@ -25,9 +27,18 @@ function load(file) {
   const nativeRequire=createRequire(file);
   const localRequire=(name)=>{
     if(name==='next/cache')return {revalidatePath(){}};
+    if(name==='next/headers')return {
+      cookies:async()=>({get:name=>testCookies.has(name)?{value:testCookies.get(name)}:undefined,set:(name,value,options)=>{testCookies.set(name,value);cookieOptions.set(name,options);},delete:name=>testCookies.delete(name)}),
+      headers:async()=>new Headers(),
+    };
+    if(name==='next/navigation')return {redirect:location=>{throw new Error('redirect:'+location);}};
     if(name==='@/lib/auth')return {
-      requireOperationalUser:async()=>{if(user.role==='AUDITOR')throw new Error('access-denied');return user;},
-      requireAdmin:async()=>{if(user.role!=='ADMIN')throw new Error('access-denied');return user;},
+      requireUser:async()=>{if(!user)throw new Error('access-denied');return user;},
+      requireOperationalUser:async()=>{if(!user||!['ADMIN','OPERATOR','PRODUCTION_MANAGER'].includes(user.role))throw new Error('access-denied');return user;},
+      requireAdmin:async()=>{if(!user||user.role!=='ADMIN')throw new Error('access-denied');return user;},
+      requireProductionManager:async()=>{if(!user||!['ADMIN','PRODUCTION_MANAGER'].includes(user.role))throw new Error('access-denied');return user;},
+      createSession:(...args)=>load('lib/auth').createSession(...args),
+      destroySession:(...args)=>load('lib/auth').destroySession(...args),
     };
     if(name.startsWith('@/'))return load(name.slice(2));
     if(name.startsWith('.'))return load(path.resolve(path.dirname(file),name));
@@ -58,6 +69,7 @@ before(async()=>{
     try {for(const {name}of tables)if(name.toLowerCase()!=='appschemamigration')await tx.execute('DELETE FROM `'+name+'`');}
     finally {await tx.execute('SET FOREIGN_KEY_CHECKS=1');}
   });
+  await db.execute('INSERT INTO CredentialLock (id) VALUES (1)');
   user=await db.user.create({data:{name:'Integration admin',pinHash:'test-only',role:'ADMIN'}});
   machine=await db.machine.create({data:{code:'1',name:'Test machine'}});
   product=await db.product.create({data:{code:'TEST',name:'Test product',unitsPerPackage:10}});
@@ -339,4 +351,173 @@ test('an authorized operator can finalize a past production and book stock in it
     assert.equal(Number((await db.rawMaterialLot.findUnique({where:{id:lot.id}})).quantityAvailable),before-1);
     assert.equal((await db.query("SELECT * FROM RecordConfirmation WHERE entity='Production' AND entityId=?",[row.id])).length,1);
   } finally {user.role='ADMIN';await db.user.update({where:{id:user.id},data:{role:'ADMIN'}});}
+});
+
+test('every operational mutation rejects anonymous users and auditors; admin mutations reject operators',async()=>{
+  const account=user;
+  const operational=['startup','shutdown','checkups','production','lot-dispatch','incidents','intermediate-startup','maintenance','stock-map','operation-settings','production-admin','admin'];
+  try {
+    for(const role of [null,'AUDITOR']) {
+      user=role?{...account,role}:null;
+      for(const file of operational)for(const action of Object.values(load(`app/actions/${file}`))) {
+        if(typeof action==='function')await assert.rejects(action(new FormData()),/access-denied/,`${file}: ${role??'anonymous'}`);
+      }
+    }
+    user={...account,role:'OPERATOR'};
+    for(const file of ['stock-map','operation-settings','production-admin','admin','maintenance'])for(const action of Object.values(load(`app/actions/${file}`))) {
+      if(typeof action==='function')await assert.rejects(action(new FormData()),/access-denied/,`${file}: operator`);
+    }
+    for(const role of ['OPERATOR','AUDITOR']) {
+      user={...account,role};
+      for(const action of Object.values(load('app/actions/lots')))await assert.rejects(action(new FormData()),/Apenas administradores/);
+    }
+  } finally {user=account;}
+});
+
+test('authentication attempts are atomic, persist across rollbacks and expire',async()=>{
+  const {reserveAuthAttempt}=load('lib/auth-rate-limit');
+  const results=await Promise.allSettled(Array.from({length:12},()=>reserveAuthAttempt('test:concurrent',4)));
+  assert.equal(results.filter(r=>r.status==='fulfilled').length,4);
+  assert.equal(results.filter(r=>r.status==='rejected').length,8);
+  assert.ok(results.filter(r=>r.status==='rejected').every(r=>/Demasiadas tentativas/.test(r.reason.message)));
+  await db.execute("UPDATE AuthRateLimit SET resetAt=DATE_SUB(NOW(3), INTERVAL 1 SECOND) WHERE bucket='test:concurrent'");
+  await reserveAuthAttempt('test:concurrent',4);
+  const [row]=await db.query("SELECT attempts FROM AuthRateLimit WHERE bucket='test:concurrent'");
+  assert.equal(row.attempts,1);
+});
+
+test('login uses a shared budget and revocable sessions; PIN changes reject replay and obsolete credentials',async()=>{
+  const auth=load('lib/auth');
+  const {loginAction,logoutAction}=load('app/actions/auth');
+  const pin='87654321';
+  const pinHash=await require('bcryptjs').hash(pin,4);
+  await db.user.update({where:{id:user.id},data:{pinHash}});
+  await db.execute("DELETE FROM AuthRateLimit WHERE bucket LIKE 'login:%'");
+  await assert.rejects(loginAction(undefined,fd({pin})),/redirect:\/dashboard/);
+  const token=testCookies.get('sodilave_session');
+  assert.ok(token);
+  assert.equal(cookieOptions.get('sodilave_session').httpOnly,true);
+  assert.equal(cookieOptions.get('sodilave_session').sameSite,'lax');
+  const session=await auth.getSession();
+  assert.equal(session.id,user.id);assert.equal('pinHash' in session,false);
+  await assert.rejects(logoutAction(),/redirect:\/login/);
+  testCookies.set('sodilave_session',token);
+  assert.equal(await auth.getSession(),null,'logging out invalidates a copied token');
+  await assert.rejects(loginAction(undefined,fd({pin})),/redirect:\/dashboard/);
+  const activeToken=testCookies.get('sodilave_session');
+  const {updateUser}=load('app/actions/admin');
+  await updateUser(fd({id:user.id,name:user.name,role:'ADMIN',active:'on',pin:'11223344'}));
+  testCookies.set('sodilave_session',activeToken);
+  assert.equal(await auth.getSession(),null,'PIN reset revokes open sessions');
+  await assert.rejects(auth.createSession({userId:user.id,name:user.name,role:'ADMIN'},pinHash),/credenciais foram alteradas/);
+  await db.execute("INSERT INTO AuthRateLimit (bucket,attempts,resetAt) VALUES ('login:global',30,TIMESTAMPADD(SECOND,60,NOW(3))) ON DUPLICATE KEY UPDATE attempts=30,resetAt=VALUES(resetAt)");
+  const blocked=await loginAction(undefined,fd({pin:'11223344'}));
+  assert.match(blocked.error,/Demasiadas tentativas/);
+  testCookies.set('sodilave_session','not-a-valid-token');
+  assert.equal(await auth.getSession(),null);
+});
+
+test('duplicate PIN creation is serialized and PINs are not silently truncated',async()=>{
+  const {createUser}=load('app/actions/admin');
+  await assert.rejects(createUser(fd({name:'Bad PIN',role:'OPERATOR',pin:'123456789'})),/exatamente 8/);
+  const results=await Promise.allSettled([
+    createUser(fd({name:'Concurrent A',role:'OPERATOR',pin:'45678901'})),
+    createUser(fd({name:'Concurrent B',role:'OPERATOR',pin:'45678901'})),
+  ]);
+  assert.equal(results.filter(r=>r.status==='fulfilled').length,1);
+  assert.equal(results.filter(r=>r.status==='rejected').length,1);
+});
+
+test('SQL values remain data with NO_BACKSLASH_ESCAPES; empty single-record filters are rejected',async()=>{
+  await db.$transaction(async tx=>{
+    await tx.execute("SET SESSION sql_mode=CONCAT(@@sql_mode,',NO_BACKSLASH_ESCAPES')");
+    try {
+      const payload="x' OR 1=1 -- ";
+      const rows=await tx.query('SELECT id FROM User WHERE name=?',[payload]);
+      assert.equal(rows.length,0);
+      const [literal]=await tx.query('SELECT ? AS value',[payload]);
+      assert.equal(literal.value,payload);
+    } finally {await tx.execute("SET SESSION sql_mode=REPLACE(@@sql_mode,'NO_BACKSLASH_ESCAPES','')");}
+  });
+  const before=await db.user.count();
+  await assert.rejects(db.user.update({where:{id:undefined},data:{active:false}}),/identificador explícito/);
+  await assert.rejects(db.user.delete({where:{}}),/identificador explícito/);
+  assert.equal(await db.user.count(),before);
+});
+
+test('intermediate startup is serialized and incident times cannot falsify machine history',async()=>{
+  const {registerIntermediateStartup}=load('app/actions/intermediate-startup');
+  const {registerIncident}=load('app/actions/incidents');
+  await db.machine.update({where:{id:machine.id},data:{status:'STOPPED'}});
+  const input=fd({machineId:machine.id,reason:'Security concurrency test'});
+  const result=await Promise.allSettled([registerIntermediateStartup(input),registerIntermediateStartup(input)]);
+  assert.equal(result.filter(r=>r.status==='fulfilled').length,1);
+  const tomorrow=new Date(Date.now()+86400000).toISOString();
+  await assert.rejects(registerIncident(fd({machineId:machine.id,description:'Invalid future stop',stoppedMachine:'on',occurredAt:tomorrow})),/não pode estar no futuro/);
+  assert.equal((await db.machine.findUnique({where:{id:machine.id}})).status,'RUNNING');
+});
+
+test('normal production cannot be duplicated by simultaneous drafts or reassigned to a different machine',async()=>{
+  const input=fd({intent:'draft',machineId:machine.id,productId:product.id});
+  const results=await Promise.allSettled([saveProduction(input),saveProduction(input)]);
+  assert.equal(results.filter(r=>r.status==='fulfilled').length,1);
+  const row=results.find(r=>r.status==='fulfilled').value;
+  input.set('productionId',String(row.id));
+  const other=await db.machine.findFirst({where:{code:'2'}});input.set('machineId',String(other.id));
+  await assert.rejects(saveProduction(input),/máquina.*não pode ser alterada/);
+  await load('app/actions/production-admin').cancelProduction(fd({id:row.id}));
+});
+
+test('invalid product configuration and lot rules leave prior data intact',async()=>{
+  const {createProduct,updateProduct,createLotRule}=load('app/actions/admin');
+  const count=await db.product.count();
+  await assert.rejects(createProduct(fd({code:'INVALID',name:'Invalid',unitsPerPackage:10,machineIds:2147483647})),/máquinas selecionadas/);
+  assert.equal(await db.product.count(),count);
+  const previous=await db.product.findUnique({where:{id:product.id}});
+  await assert.rejects(updateProduct(fd({id:product.id,code:product.code,name:'Must roll back',unitsPerPackage:5,machineIds:2147483647,active:'on'})),/máquinas selecionadas/);
+  assert.equal((await db.product.findUnique({where:{id:product.id}})).name,previous.name);
+  const rules=await db.productionLotRule.count({where:{active:true}});
+  await assert.rejects(createLotRule(fd({name:'',prefix:'X',template:'Y'})),/obrigatório/);
+  assert.equal(await db.productionLotRule.count({where:{active:true}}),rules);
+});
+
+test('real session guards deny auditors writes and enforce database expiry and current roles',async()=>{
+  const auth=load('lib/auth');
+  const account=await db.user.create({data:{name:'Security auditor',role:'AUDITOR',pinHash:'test-auditor-hash'}});
+  await auth.createSession({userId:account.id,name:account.name,role:'AUDITOR'},account.pinHash);
+  await assert.rejects(auth.requireOperationalUser(),/redirect:\/access-denied/);
+  await assert.rejects(auth.requireAdmin(),/redirect:\/access-denied/);
+  assert.equal((await auth.requireAuditAccess()).id,account.id);
+  await db.user.update({where:{id:account.id},data:{active:false}});
+  assert.equal(await auth.getSession(),null);
+  await db.user.update({where:{id:account.id},data:{active:true}});
+  await db.execute('UPDATE AuthSession SET expiresAt=DATE_SUB(NOW(3),INTERVAL 1 SECOND) WHERE userId=?',[account.id]);
+  assert.equal(await auth.getSession(),null);
+});
+
+test('second-worker PIN guessing is limited across requests without caching failed confirmation',async()=>{
+  const {verifySecondWorker}=load('lib/second-worker-confirmation');
+  const operator=await db.user.create({data:{name:'Security operator',role:'OPERATOR',pinHash:'test-operator-hash'}});
+  const peer=await db.user.findFirst({where:{name:'Second worker'}});
+  await db.execute('DELETE FROM AuthRateLimit WHERE bucket=?',[`peer:target:${peer.id}`]);
+  for(let i=0;i<5;i++)await assert.rejects(verifySecondWorker(fd({secondWorkerId:peer.id,secondWorkerPin:'00000000'}),operator.id),/incorreto/);
+  await assert.rejects(verifySecondWorker(fd({secondWorkerId:peer.id,secondWorkerPin:'12345678'}),operator.id),/Demasiadas tentativas/);
+  assert.equal((await db.query('SELECT * FROM ShiftPeerConfirmation WHERE operatorId=?',[operator.id])).length,0);
+});
+
+test('backup failures leave no archive; successful archives are private and never written under public', {skip:process.platform==='win32'},async()=>{
+  const temp=fs.mkdtempSync(path.join(require('node:os').tmpdir(),'sodilave-backup-'));
+  const fake=path.join(temp,'dump');const backup=path.join(temp,'backup');
+  fs.writeFileSync(fake,"#!/usr/bin/env node\nprocess.stdout.write('SQL test output');process.exit(process.env.FAIL_DUMP==='1'?1:0);\n",{mode:0o700});
+  const env={...process.env,MYSQLDUMP_BIN:fake,BACKUP_DIR:backup,FAIL_DUMP:'1'};
+  try {
+    await assert.rejects(execFileAsync(process.execPath,['scripts/backup-database.mjs'],{cwd:root,env}));
+    assert.deepEqual(fs.readdirSync(backup),[]);
+    env.FAIL_DUMP='0';await execFileAsync(process.execPath,['scripts/backup-database.mjs'],{cwd:root,env});
+    const files=fs.readdirSync(backup);assert.equal(files.length,1);assert.match(files[0],/\.sql\.gz$/);
+    assert.equal(fs.statSync(path.join(backup,files[0])).mode & 0o777,0o600);
+    assert.equal(require('node:zlib').gunzipSync(fs.readFileSync(path.join(backup,files[0]))).toString(),'SQL test output');
+    env.BACKUP_DIR=path.join(root,'public','backups');
+    await assert.rejects(execFileAsync(process.execPath,['scripts/backup-database.mjs'],{cwd:root,env}),error=>/pasta publicada/.test(error.stderr));
+  } finally {fs.rmSync(temp,{recursive:true,force:true});}
 });

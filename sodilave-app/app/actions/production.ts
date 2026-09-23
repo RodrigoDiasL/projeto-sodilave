@@ -29,6 +29,7 @@ type ExistingProduction = {
   startedAt: Date;
   shiftCode: string;
   productId: number;
+  machineId: number;
   quantityProduced?: number | null;
   unitsPerPackageSnapshot?: number | null;
   productionUnitSnapshot?: string | null;
@@ -94,7 +95,7 @@ export async function saveProduction(formData: FormData) {
   if (productionId) {
     existing = await db.production.findUnique({
       where: { id: productionId },
-      select: { id: true, status: true, operatorId: true, productionLot: true, startedAt: true, shiftCode: true, productId: true, quantityProduced: true, unitsPerPackageSnapshot: true, productionUnitSnapshot: true },
+      select: { id: true, status: true, operatorId: true, productionLot: true, startedAt: true, shiftCode: true, productId: true, machineId: true, quantityProduced: true, unitsPerPackageSnapshot: true, productionUnitSnapshot: true },
     });
     if (!existing) throw new Error("A produção em aberto já não existe.");
     if (existing.status === RecordStatus.CANCELLED) throw new Error("Esta produção foi cancelada.");
@@ -124,6 +125,8 @@ export async function saveProduction(formData: FormData) {
   if (!Number.isInteger(machineId) || machineId <= 0 || !Number.isInteger(productId) || productId <= 0) {
     throw new Error("Máquina e produto têm valores inválidos.");
   }
+
+  if (existing && machineId !== existing.machineId) throw new Error("A máquina de uma produção já guardada não pode ser alterada.");
 
   const exceptionReason = String(formData.get("exceptionReason") || "").trim();
   const exceptionNotes = String(formData.get("exceptionNotes") || "").trim().slice(0, 500);
@@ -283,6 +286,19 @@ export async function saveProduction(formData: FormData) {
   const status = finalize || existing?.status === RecordStatus.FINALIZED ? RecordStatus.FINALIZED : RecordStatus.DRAFT;
 
   const production = await db.$transaction(async (tx) => {
+    // Lock before checking weekly/machine state and shift uniqueness. This also
+    // protects against two tabs submitting the same normal production at once.
+    await tx.query("SELECT id FROM Machine WHERE id=? FOR UPDATE", [machineId]);
+    if (!historicalWindow && (!existing || (user.role !== "ADMIN" && existing.status !== RecordStatus.FINALIZED))) {
+      const activeStartup = await tx.weeklyStartup.findFirst({ where: { status: RecordStatus.FINALIZED, shutdown: null } });
+      const currentMachine = await tx.machine.findFirst({ where: { id: machineId, active: true, status: "RUNNING" } });
+      if (!activeStartup || !currentMachine) throw new Error("A máquina ou o ciclo semanal já não estão em funcionamento. Atualize a página.");
+    }
+    const simultaneous = await tx.production.count({ where: {
+      machineId, startedAt: { gte: recordWindow.start, lt: recordWindow.end }, status: { not: RecordStatus.CANCELLED },
+      ...(productionId ? { id: { not: productionId } } : {}),
+    } });
+    if (simultaneous > 0 && !exceptionReason) throw new Error("Já existe uma produção desta máquina neste turno. Atualize a página ou indique o motivo de uma produção adicional.");
     if (historicalWindow) {
       // Serialize past-shift inserts and the administrator's permission toggle.
       await assertPastProductionEnabled(tx, true);
@@ -295,7 +311,7 @@ export async function saveProduction(formData: FormData) {
     let lockedExisting: ExistingProduction | null = existing;
     if (productionId) {
       const locked = await tx.query<ExistingProduction[]>(
-        "SELECT id, status, operatorId, productionLot, startedAt, shiftCode, productId, quantityProduced, unitsPerPackageSnapshot, productionUnitSnapshot FROM Production WHERE id=? FOR UPDATE",
+        "SELECT id, status, operatorId, productionLot, startedAt, shiftCode, productId, machineId, quantityProduced, unitsPerPackageSnapshot, productionUnitSnapshot FROM Production WHERE id=? FOR UPDATE",
         [productionId],
       );
       lockedExisting = locked[0] ?? null;
@@ -435,7 +451,7 @@ export async function saveProduction(formData: FormData) {
     }
 
     if (finalize && secondWorker) {
-      await saveRecordConfirmation("Production", saved.id, secondWorker.id, tx);
+      await saveRecordConfirmation("Production", saved.id, secondWorker, user.id, tx);
     }
 
     const action = finalize ? "FINALIZE" : lockedExisting ? "EDIT" : "CREATE";

@@ -6,7 +6,7 @@ import { ConfirmDeleteButton } from "@/components/ConfirmDeleteButton";
 
 export default async function Page() {
   const current = await requireAdmin();
-  const rows = await db.user.findMany({ orderBy: { name: "asc" } });
+  const rows = await db.user.findMany({ select: { id:true,name:true,role:true,active:true }, orderBy: { name: "asc" } });
   return <AdminPage title="Utilizadores e PINs" subtitle="Criar colaboradores, alterar PINs, funções e estado de acesso.">
     <form action={createUser} className="inline-form">
       <input name="name" placeholder="Nome" maxLength={120} required/>

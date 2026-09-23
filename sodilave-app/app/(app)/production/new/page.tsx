@@ -99,13 +99,13 @@ export default async function NewProductionPage({ searchParams }: { searchParams
         return <section key={`${machine.id}:${window.start.toISOString()}`} id={`machine-${machine.id}`} className="machine-production-section">
           {primary?.status === "FINALIZED"
             ? <div className="panel finalized-summary"><h2>Máquina {machine.code}</h2><p>Produção principal já finalizada: <strong>{primary.productionLot}</strong>.</p><Link className="btn secondary" href={`/production/details/${primary.id}`}>Ver detalhes</Link></div>
-            : <ProductionForm {...data} products={machineProducts} machines={[machine]} fixedMachine={machine} initial={primary ? productionToInitial(primary) : defaults as any} historicalContext={historicalContext} />}
+            : <ProductionForm draftScope={`${user.id}:${window.start.toISOString()}`} {...data} products={machineProducts} machines={[machine]} fixedMachine={machine} initial={primary ? productionToInitial(primary) : defaults as any} historicalContext={historicalContext} />}
           {!primary && previousIsUsable && <div className="notice muted">Produto e lotes de matéria-prima preenchidos com base no último registo finalizado do turno anterior. Confirme ou altere antes de gravar.</div>}
           {!primary && previous && !previousIsUsable && <div className="notice muted">O registo anterior não foi pré-preenchido porque o produto deixou de estar autorizado nesta máquina ou um dos lotes já não está disponível.</div>}
           {extras.map((row) => row.status === "DRAFT"
-            ? <ProductionForm key={row.id} {...data} products={machineProducts} machines={[machine]} fixedMachine={machine} additional initial={productionToInitial(row)} />
+            ? <ProductionForm key={row.id} draftScope={`${user.id}:${window.start.toISOString()}`} {...data} products={machineProducts} machines={[machine]} fixedMachine={machine} additional initial={productionToInitial(row)} />
             : <div key={row.id} className="panel finalized-summary"><p>Produção adicional finalizada: <strong>{row.productionLot}</strong></p><Link className="btn secondary" href={`/production/details/${row.id}`}>Ver detalhes</Link></div>)}
-          {!historicalWindow && extraMachineId === machine.id && <ProductionForm {...data} products={machineProducts} machines={[machine]} fixedMachine={machine} additional />}
+          {!historicalWindow && extraMachineId === machine.id && <ProductionForm draftScope={`${user.id}:${window.start.toISOString()}`} {...data} products={machineProducts} machines={[machine]} fixedMachine={machine} additional />}
           {!historicalWindow && <div className="additional-production-link"><Link className="btn secondary" href={`/production/new?${contextQuery}extraMachine=${machine.id}#machine-${machine.id}`}>+ Registar produção adicional nesta máquina</Link></div>}
         </section>;
       })}

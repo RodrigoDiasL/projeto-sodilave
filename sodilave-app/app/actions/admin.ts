@@ -2,10 +2,16 @@
 import bcrypt from "bcryptjs";
 import { revalidatePath } from "next/cache";
 import { requireAdmin } from "@/lib/auth";
-import { db } from "@/lib/db";
+import { db, type DbTransaction } from "@/lib/db";
 import { assertPinAvailable, assertValidPin } from "@/lib/pin-policy";
 import { cancelProduction } from "@/app/actions/production-admin";
 import { RecordStatus, UserRole } from "@/lib/db-types";
+
+async function lockCredentials(tx: DbTransaction, adminId: number) {
+  await tx.query("SELECT id FROM CredentialLock WHERE id=1 FOR UPDATE");
+  const admin = await tx.user.findFirst({ where: { id: adminId, active: true, role: "ADMIN" } });
+  if (!admin) throw new Error("O acesso de administrador foi alterado. Inicie sessão novamente.");
+}
 
 const text = (fd: FormData, key: string, max = 120) => String(fd.get(key) || "").trim().slice(0, max);
 const positiveNumber = (fd: FormData, key: string, label: string, max = 999999999) => {
@@ -24,25 +30,27 @@ const machineIds = (fd: FormData) => {
   if (!ids.length) throw new Error("Selecione pelo menos uma máquina que possa produzir este produto.");
   return [...new Set(ids)];
 };
-async function replaceProductMachines(productId:number, ids:number[]){
-  const valid = await db.machine.findMany({where:{id:{in:ids},active:true},select:{id:true}});
-  if(valid.length!==ids.length) throw new Error("Uma das máquinas selecionadas é inválida ou está inativa.");
-  await db.$transaction(async tx=>{
-    await tx.$executeRaw`DELETE FROM ProductMachine WHERE productId=${productId}`;
-    for(const machineId of ids) await tx.$executeRaw`INSERT INTO ProductMachine (productId,machineId) VALUES (${productId},${machineId})`;
-  });
+async function replaceProductMachines(tx: DbTransaction, productId: number, ids: number[]) {
+  const valid = await tx.machine.findMany({ where: { id: { in: ids }, active: true }, select: { id: true } });
+  if (valid.length !== ids.length) throw new Error("Uma das máquinas selecionadas é inválida ou está inativa.");
+  await tx.$executeRaw`DELETE FROM ProductMachine WHERE productId=${productId}`;
+  for (const machineId of ids) await tx.$executeRaw`INSERT INTO ProductMachine (productId,machineId) VALUES (${productId},${machineId})`;
 }
 
 export async function createUser(formData: FormData) {
   const admin = await requireAdmin();
   const name = requireText(text(formData, "name"), "O nome");
-  const pin = text(formData, "pin", 8);
+  const pin = String(formData.get("pin") || "").trim();
   const role = text(formData, "role", 20) as UserRole;
   assertValidPin(pin);
-  await assertPinAvailable(pin);
   if (!Object.values(UserRole).includes(role)) throw new Error("Perfil inválido.");
-  const row = await db.user.create({ data: { name, pinHash: await bcrypt.hash(pin, 12), role, active: true } });
-  await db.auditLog.create({ data: { userId: admin.id, action: "CREATE", entity: "User", entityId: String(row.id) } });
+  const pinHash = await bcrypt.hash(pin, 12);
+  await db.$transaction(async tx => {
+    await lockCredentials(tx, admin.id);
+    await assertPinAvailable(pin, undefined, tx);
+    const row = await tx.user.create({ data: { name, pinHash, role, active: true } });
+    await tx.auditLog.create({ data: { userId: admin.id, action: "CREATE", entity: "User", entityId: String(row.id) } });
+  });
   revalidatePath("/admin/users");
 }
 
@@ -50,19 +58,29 @@ export async function updateUser(formData: FormData) {
   const admin = await requireAdmin();
   const id = positiveId(formData);
   const name = requireText(text(formData, "name"), "O nome");
-  const pin = text(formData, "pin", 8);
+  const pin = String(formData.get("pin") || "").trim();
   const role = text(formData, "role", 20) as UserRole;
   const active = formData.get("active") === "on";
   if (!Object.values(UserRole).includes(role)) throw new Error("Perfil inválido.");
   if (pin) {
     assertValidPin(pin, "O novo PIN");
-    await assertPinAvailable(pin, id);
   }
   if (id === admin.id && (!active || role !== UserRole.ADMIN)) throw new Error("Não pode retirar o seu próprio acesso de administrador nem desativar a conta com sessão iniciada.");
   const data: { name: string; role: UserRole; active: boolean; pinHash?: string } = { name, role, active };
   if (pin) data.pinHash = await bcrypt.hash(pin, 12);
-  await db.user.update({ where: { id }, data });
-  await db.auditLog.create({ data: { userId: admin.id, action: "EDIT", entity: "User", entityId: String(id), details: { name, role, active, pinChanged: Boolean(pin) } } });
+  await db.$transaction(async tx => {
+    await lockCredentials(tx, admin.id);
+    const current = await tx.user.findUnique({ where: { id } });
+    if (!current) throw new Error("O utilizador já não existe.");
+    if (pin) await assertPinAvailable(pin, id, tx);
+    await tx.user.update({ where: { id }, data });
+    if (pin || current.role !== role || Boolean(current.active) !== active) {
+      await tx.execute("UPDATE User SET sessionVersion=sessionVersion+1 WHERE id=?", [id]);
+      await tx.execute("DELETE FROM AuthSession WHERE userId=?", [id]);
+      await tx.execute("DELETE FROM ShiftPeerConfirmation WHERE operatorId=? OR confirmedById=?", [id, id]);
+    }
+    await tx.auditLog.create({ data: { userId: admin.id, action: "EDIT", entity: "User", entityId: String(id), details: { name, role, active, pinChanged: Boolean(pin) } } });
+  });
   revalidatePath("/admin/users");
 }
 
@@ -75,11 +93,14 @@ export async function createProduct(formData: FormData) {
   const admin=await requireAdmin();
   const ids=machineIds(formData);
   const unitsPerPackage = positiveNumber(formData, "unitsPerPackage", "As unidades por embalagem", 100000);
+  if (!Number.isInteger(unitsPerPackage)) throw new Error("As unidades por embalagem devem ser um número inteiro.");
   const productionUnit = text(formData, "productionUnit", 16) || "BAG";
   if (!["BAG","PALLET"].includes(productionUnit)) throw new Error("A unidade de produção é inválida.");
-  const row=await db.product.create({ data: { code: requireText(text(formData, "code", 40), "O código"), name: requireText(text(formData, "name"), "A designação"), unitsPerPackage, productionUnit, active: true } });
-  await replaceProductMachines(row.id,ids);
-  await db.auditLog.create({data:{userId:admin.id,action:"CREATE",entity:"Product",entityId:String(row.id),details:{machineIds:ids}}});
+  await db.$transaction(async tx => {
+  const row=await tx.product.create({ data: { code: requireText(text(formData, "code", 40), "O código"), name: requireText(text(formData, "name"), "A designação"), unitsPerPackage, productionUnit, active: true } });
+  await replaceProductMachines(tx,row.id,ids);
+  await tx.auditLog.create({data:{userId:admin.id,action:"CREATE",entity:"Product",entityId:String(row.id),details:{machineIds:ids}}});
+  });
   revalidatePath("/admin/products"); revalidatePath("/production");
 }
 
@@ -88,17 +109,20 @@ export async function updateProduct(formData: FormData) {
   const id = positiveId(formData);
   const ids=machineIds(formData);
   const unitsPerPackage = positiveNumber(formData, "unitsPerPackage", "As unidades por embalagem", 100000);
+  if (!Number.isInteger(unitsPerPackage)) throw new Error("As unidades por embalagem devem ser um número inteiro.");
   const productionUnit = text(formData, "productionUnit", 16) || "BAG";
   if (!["BAG","PALLET"].includes(productionUnit)) throw new Error("A unidade de produção é inválida.");
-  await db.product.update({ where: { id }, data: {
+  await db.$transaction(async tx => {
+  await tx.product.update({ where: { id }, data: {
     code: requireText(text(formData, "code", 40), "O código"),
     name: requireText(text(formData, "name"), "A designação"),
     unitsPerPackage,
     productionUnit,
     active: formData.get("active") === "on",
   }});
-  await replaceProductMachines(id,ids);
-  await db.auditLog.create({data:{userId:admin.id,action:"EDIT",entity:"Product",entityId:String(id),details:{machineIds:ids}}});
+  await replaceProductMachines(tx,id,ids);
+  await tx.auditLog.create({data:{userId:admin.id,action:"EDIT",entity:"Product",entityId:String(id),details:{machineIds:ids}}});
+  });
   revalidatePath("/admin/products"); revalidatePath(`/admin/products/${id}`); revalidatePath("/production");
 }
 
@@ -171,8 +195,12 @@ export async function updateRawMaterialLot(formData: FormData) {
 
 export async function createLotRule(formData: FormData) {
   await requireAdmin();
-  await db.productionLotRule.updateMany({ data: { active: false } });
-  await db.productionLotRule.create({ data: { name: requireText(text(formData, "name"), "O nome"), prefix: requireText(text(formData, "prefix", 20), "O prefixo"), template: requireText(text(formData, "template", 200), "O modelo"), active: true } });
+  const data = { name: requireText(text(formData, "name"), "O nome"), prefix: requireText(text(formData, "prefix", 20), "O prefixo"), template: requireText(text(formData, "template", 200), "O modelo"), active: true };
+  await db.$transaction(async tx => {
+    await tx.query("SELECT id FROM ProductionLotRule ORDER BY id FOR UPDATE");
+    await tx.productionLotRule.updateMany({ data: { active: false } });
+    await tx.productionLotRule.create({ data });
+  });
   revalidatePath("/admin/lot-rules");
 }
 
@@ -200,8 +228,13 @@ export async function deleteRawMaterialLot(formData: FormData) {
 export async function deleteUser(formData: FormData) {
   const admin = await requireAdmin(); const id = positiveId(formData);
   if (id === admin.id) throw new Error("Não pode eliminar o utilizador com sessão iniciada.");
-  const references = await Promise.all([db.production.count({ where: { operatorId: id } }), db.machineCheckup.count({ where: { operatorId: id } }), db.shiftGeneralCheck.count({ where: { operatorId: id } })]);
-  if (references.some(Boolean)) await db.user.update({ where: { id }, data: { active: false } }); else await db.user.delete({ where: { id } });
+  await db.$transaction(async tx => {
+    await lockCredentials(tx, admin.id);
+    await tx.execute("UPDATE User SET active=0, sessionVersion=sessionVersion+1, updatedAt=NOW(3) WHERE id=?", [id]);
+    await tx.execute("DELETE FROM AuthSession WHERE userId=?", [id]);
+    await tx.execute("DELETE FROM ShiftPeerConfirmation WHERE operatorId=? OR confirmedById=?", [id, id]);
+    await tx.auditLog.create({ data: { userId: admin.id, action: "DEACTIVATE", entity: "User", entityId: String(id) } });
+  });
   revalidatePath("/admin/users");
 }
 export async function deleteLotRule(formData: FormData) {
@@ -221,6 +254,7 @@ export async function deleteMachineCheckup(formData: FormData) {
   const admin = await requireAdmin();
   const id = positiveId(formData);
   await db.$transaction(async (tx) => {
+    await tx.query("SELECT id FROM Machine ORDER BY id FOR UPDATE");
     const row = await tx.machineCheckup.findUnique({ where: { id }, select: { status: true } });
     if (!row) throw new Error("A verificação já não existe.");
     if (row.status === RecordStatus.CANCELLED) throw new Error("A verificação já está cancelada.");
@@ -234,6 +268,7 @@ export async function deleteGeneralCheckup(formData: FormData) {
   const admin = await requireAdmin();
   const id = positiveId(formData);
   await db.$transaction(async (tx) => {
+    await tx.query("SELECT id FROM Machine ORDER BY id FOR UPDATE");
     const row = await tx.shiftGeneralCheck.findUnique({ where: { id }, select: { status: true } });
     if (!row) throw new Error("A verificação já não existe.");
     if (row.status === RecordStatus.CANCELLED) throw new Error("A verificação já está cancelada.");

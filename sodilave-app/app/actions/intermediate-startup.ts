@@ -13,6 +13,7 @@ export async function registerIntermediateStartup(fd:FormData){
  if(!Number.isInteger(machineId)||machineId<=0||!reason)throw new Error("Selecione a máquina e indique o motivo.");
 
  await db.$transaction(async tx=>{
+   await tx.query("SELECT id FROM Machine ORDER BY id FOR UPDATE");
    const activeStartup=await tx.weeklyStartup.findFirst({where:{status:"FINALIZED",shutdown:null},select:{id:true}});
    if(!activeStartup)throw new Error("É necessário existir um arranque semanal ativo.");
    const machine=await tx.machine.findFirst({where:{id:machineId,active:true}});

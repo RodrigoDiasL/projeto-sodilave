@@ -12,6 +12,7 @@ export function CheckupForms({ machines, machineRecords, generalRecord, workers,
 }) {
   const [msg, setMsg] = useState("");
   const [error, setError] = useState("");
+  const [allFinalized, setAllFinalized] = useState(generalRecord?.status === "FINALIZED" && machines.every(m => machineRecords.some(r => r.machineId === m.id && r.status === "FINALIZED")));
   const [busy, setBusy] = useState(false);
   const [generalId, setGeneralId] = useState(generalRecord?.id ?? "");
   const [recordIds, setRecordIds] = useState<Record<number, number>>(() => Object.fromEntries(machines.map(m => [m.id, machineRecords.find(r => r.machineId === m.id)?.id])));
@@ -27,6 +28,7 @@ export function CheckupForms({ machines, machineRecords, generalRecord, workers,
     try {
       const result = await saveShiftCheckups(data);
       setGeneralId(result.general.id);
+      setAllFinalized(result.finalized);
       setRecordIds(Object.fromEntries(result.machines.map(m => [m.machineId, m.id])));
       setMsg(result.finalized ? "Todas as verificações do turno foram guardadas e finalizadas." : "Rascunho de todas as verificações guardado. Pode completar mais tarde.");
       const pin = form.elements.namedItem("secondWorkerPin") as HTMLInputElement | null;
@@ -81,8 +83,8 @@ export function CheckupForms({ machines, machineRecords, generalRecord, workers,
       {error && <div className="alert error" role="alert">{error}</div>}
       {msg && <div className="alert success" role="status">{msg}</div>}
       <div className="button-row">
-        <button className="btn secondary" name="intent" value="draft" formNoValidate disabled={busy}>Gravar rascunho</button>
-        <button className="btn primary" name="intent" value="finalize" disabled={busy}>{busy ? "A guardar…" : "Finalizar verificações do turno"}</button>
+        {!allFinalized && <button className="btn secondary" name="intent" value="draft" formNoValidate disabled={busy}>Gravar rascunho</button>}
+        <button className="btn primary" name="intent" value="finalize" disabled={busy}>{busy ? "A guardar…" : allFinalized ? "Guardar alterações" : "Finalizar verificações do turno"}</button>
       </div>
     </section>
   </form>;

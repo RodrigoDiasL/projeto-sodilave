@@ -1,3 +1,5 @@
+import "./load-env.mjs";
+import { randomUUID } from "node:crypto";
 import fs from "node:fs/promises";
 import { createWriteStream } from "node:fs";
 import path from "node:path";
@@ -19,6 +21,12 @@ const database = decodeURIComponent(url.pathname.replace(/^\//, ""));
 if (!user || !database) throw new Error("DATABASE_URL está incompleto.");
 
 const backupDir = path.resolve(process.env.BACKUP_DIR || path.join(process.cwd(), "backups", "database"));
+for (const publicFolder of ["public", ".next"]) {
+  const relative = path.relative(path.resolve(publicFolder), backupDir);
+  if (relative === "" || (!relative.startsWith(".." + path.sep) && relative !== ".." && !path.isAbsolute(relative))) {
+    throw new Error("BACKUP_DIR não pode ficar numa pasta publicada pela aplicação.");
+  }
+}
 const retentionDays = Number(process.env.BACKUP_RETENTION_DAYS || "30");
 if (!Number.isInteger(retentionDays) || retentionDays < 1) throw new Error("BACKUP_RETENTION_DAYS é inválido.");
 
@@ -34,8 +42,9 @@ function resolveDumpBinary() {
 await fs.mkdir(backupDir, { recursive: true, mode: 0o700 });
 
 const stamp = new Date().toISOString().replace(/[-:]/g, "").replace(/\.\d{3}Z$/, "Z").replace("T", "-");
-const filename = `sodilave-${stamp}.sql.gz`;
+const filename = `sodilave-${stamp}-${randomUUID().slice(0,8)}.sql.gz`;
 const target = path.join(backupDir, filename);
+const temporary = target + ".partial";
 const dumpBinary = resolveDumpBinary();
 
 const args = [
@@ -56,20 +65,21 @@ const child = spawn(dumpBinary, args, {
 
 let stderr = "";
 child.stderr.setEncoding("utf8");
-child.stderr.on("data", (chunk) => { stderr += chunk; });
+child.stderr.on("data", (chunk) => { stderr = (stderr + chunk).slice(-4000); });
 
 const exitPromise = new Promise((resolve, reject) => {
   child.once("error", reject);
   child.once("close", (code) => code === 0 ? resolve() : reject(new Error(stderr.trim() || `${dumpBinary} terminou com código ${code}.`)));
 });
 
+const copyPromise = pipeline(child.stdout, createGzip({ level: 9 }), createWriteStream(temporary, { mode: 0o600, flags: "wx" }));
 try {
-  await Promise.all([
-    pipeline(child.stdout, createGzip({ level: 9 }), createWriteStream(target, { mode: 0o600 })),
-    exitPromise,
-  ]);
+  await Promise.all([copyPromise, exitPromise]);
+  await fs.rename(temporary, target);
 } catch (error) {
-  await fs.rm(target, { force: true });
+  child.kill();
+  await Promise.allSettled([copyPromise, exitPromise]);
+  await fs.rm(temporary, { force: true });
   throw error;
 }
 

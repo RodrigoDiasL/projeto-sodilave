@@ -1,4 +1,5 @@
 "use server";
+import { AuthRateLimitError, reserveLoginAttempt } from "@/lib/auth-rate-limit";
 import bcrypt from "bcryptjs";
 import { redirect } from "next/navigation";
 import { db } from "@/lib/db";
@@ -8,7 +9,13 @@ export async function loginAction(_: { error?: string } | undefined, formData: F
   const pin = String(formData.get("pin") || "").trim();
   if (!/^\d{8}$/.test(pin)) return { error: "Introduza um PIN válido de 8 algarismos." };
 
-  const users = await db.user.findMany({ where: { active: true } });
+  try { await reserveLoginAttempt(); }
+  catch (error) {
+    if (error instanceof AuthRateLimitError) return { error: error.message };
+    console.error("[sodilave] controlo de autenticação indisponível");
+    return { error: "Não foi possível iniciar sessão. Tente novamente dentro de instantes." };
+  }
+  const users = await db.user.findMany({ where: { active: true }, select: { id: true, name: true, role: true, pinHash: true } });
   const matches = [];
   for (const user of users) {
     if (await bcrypt.compare(pin, user.pinHash)) matches.push(user);
@@ -20,7 +27,7 @@ export async function loginAction(_: { error?: string } | undefined, formData: F
   }
   if (matches.length === 1) {
     const user = matches[0];
-    await createSession({ userId: user.id, role: user.role, name: user.name });
+    await createSession({ userId: user.id, role: user.role, name: user.name }, user.pinHash);
     redirect("/dashboard");
   }
   return { error: "PIN incorreto." };

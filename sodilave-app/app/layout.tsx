@@ -3,6 +3,8 @@ import "./globals.css";
 import "./bugfixes.css";
 import { ThemeToggle } from "@/components/ThemeToggle";
 
+export const dynamic = "force-dynamic";
+
 export const metadata: Metadata = { title: "Sodilave | Gestão de Produção", description: "Aplicação interna de gestão de produção" };
 
 export default function RootLayout({children}:{children:React.ReactNode}){

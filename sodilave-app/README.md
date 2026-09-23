@@ -229,3 +229,16 @@ As verificações gerais e das máquinas são gravadas numa única operação. A
 confirmação do segundo trabalhador surge uma vez, no fim do formulário. Fechar
 uma secção de máquina mantém os valores preenchidos. Uma validação falhada não
 finaliza parte das verificações nem guarda a confirmação do colega.
+
+### Segurança e atualização de sessões
+
+Consulte [SECURITY.md](./SECURITY.md) para as constatações, correções, limites e
+configuração da auditoria de 23/09/2026. Esta atualização exige `npm ci`,
+`npm run db:upgrade` e `npm run db:check`. As sessões antigas são invalidadas;
+os utilizadores devem voltar a introduzir o PIN. A alteração de PIN, perfil ou
+estado de acesso também termina as sessões desse utilizador.
+
+`APP_URL` tem de corresponder à origem HTTPS usada no navegador em produção.
+Os testes adicionais são `npm run audit:security` e, após compilar e com uma base
+de testes configurada, `npm run test:http`. Não usar a base operacional nos testes
+SQL de integração: estes apagam os dados da base descartável.

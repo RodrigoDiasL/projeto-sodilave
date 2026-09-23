@@ -54,6 +54,8 @@ jobs:
           exit 1
       - name: Install dependencies
         run: npm ci --include=dev
+      - name: Dependency security audit
+        run: npm run audit:security
       - name: Validate production environment
         run: npm run verify:production
       - name: Bootstrap SQL database
@@ -69,3 +71,5 @@ jobs:
         run: npm run typecheck
       - name: Production build
         run: npm run build
+      - name: Production HTTP security checks
+        run: npm run test:http

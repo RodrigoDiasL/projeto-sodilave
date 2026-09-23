@@ -74,7 +74,11 @@ function createPoolFromUrl(urlText: string) {
     database: decodeURIComponent(url.pathname.replace(/^\//, "")),
     waitForConnections: true,
     connectionLimit: 8,
-    queueLimit: 0,
+    queueLimit: 32,
+    connectTimeout: 5000,
+    maxPreparedStatements: 256,
+    maxIdle: 8,
+    idleTimeout: 60000,
     enableKeepAlive: true,
     keepAliveInitialDelay: 0,
     timezone: "Z",
@@ -94,12 +98,12 @@ const ident = (name: string) => {
 const sqlValue = (value: any) => typeof value === "boolean" ? (value ? 1 : 0) : value;
 
 async function queryRows<T = any>(client: SqlClient, sql: string, params: any[] = []): Promise<T[]> {
-  const [rows] = await client.query(sql, params.map(sqlValue));
+  const [rows] = await client.execute({ sql, timeout: 15000 }, params.map(sqlValue));
   return rows as T[];
 }
 
 async function executeSql(client: SqlClient, sql: string, params: any[] = []) {
-  const [result] = await client.execute<ResultSetHeader>(sql, params.map(sqlValue));
+  const [result] = await client.execute<ResultSetHeader>({ sql, timeout: 15000 }, params.map(sqlValue));
   return result;
 }
 
@@ -243,6 +247,13 @@ async function deleteRows(client: SqlClient, table: string, where: Record<string
   return { count: result.affectedRows };
 }
 
+function assertSingleRecordWhere(where: Record<string, any> | undefined) {
+  if (!where || !Object.values(where).some(v => v !== undefined && v !== null)) {
+    throw new Error("Uma operação sobre um registo requer um identificador explícito.");
+  }
+  if (!buildWhere(where).sql) throw new Error("O filtro do registo é inválido.");
+}
+
 function simpleRepo(client: SqlClient, table: string) {
   const api = {
     async findMany(args: QueryArgs = {}) {
@@ -259,6 +270,7 @@ function simpleRepo(client: SqlClient, table: string) {
       return rows[0] ?? null;
     },
     async findUnique(args: QueryArgs & { where: Record<string, any> }) {
+      assertSingleRecordWhere(args.where);
       return api.findFirst(args);
     },
     async findUniqueOrThrow(args: QueryArgs & { where: Record<string, any> }) {
@@ -275,6 +287,7 @@ function simpleRepo(client: SqlClient, table: string) {
       return insertRow(client, table, args.data);
     },
     async update(args: { where: Record<string, any>; data: Record<string, any> }) {
+      assertSingleRecordWhere(args.where);
       await updateRows(client, table, args.where, args.data);
       const row = await api.findUnique({ where: args.where });
       if (!row) throw new Error(`${table} não encontrado após atualização.`);
@@ -753,12 +766,13 @@ function createDb(client: SqlClient): DbApi {
       if ("beginTransaction" in client && client !== pool) return fn(dbObject);
       const connection = await pool.getConnection();
       try {
+        await connection.query("SET SESSION innodb_lock_wait_timeout=5");
         await connection.beginTransaction();
         const result = await fn(createDb(connection));
         await connection.commit();
         return result;
       } catch (error) {
-        await connection.rollback();
+        try { await connection.rollback(); } catch { connection.destroy(); }
         throw error;
       } finally {
         connection.release();
