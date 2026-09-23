@@ -28,6 +28,8 @@ try {
     AuthSession:["id","userId","sessionVersion","expiresAt"],
     AuthRateLimit:["bucket","attempts","resetAt"],
     CredentialLock:["id"],
+    ProductionDisplayDevice:["id","pairingHash","tokenHash","expiresAt","revokedAt"],
+    MachineDisplayOrder:["machineId","weeklyStartupId","commercialLotId","destination","notes"],
     OperationSettings:["id","pastProductionEnabled","updatedById","updatedAt"],
     ShiftGeneralCheck:["purgePneumaticBarrels","purgeCleanAirBarrels","purgeFilters"],
     AppSchemaMigration:["name","checksum"],

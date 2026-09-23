@@ -62,3 +62,20 @@ Fontes oficiais consultadas:
 - https://nextjs.org/blog/august-2026-security-release
 - https://nextjs.org/blog/nextjs-security-update-september-22-2026
 - https://nextjs.org/docs/app/guides/content-security-policy
+
+### Ecrãs de produção e correções de posições (2026-09-23)
+
+- Emparelhamento de uma utilização, código aleatório de 8 algarismos válido por
+  10 minutos e limite partilhado de 10 tentativas/minuto. A base de dados guarda
+  apenas SHA-256 do código e da credencial aleatória de 256 bits.
+- Cookie próprio HttpOnly/Secure/SameSite=Strict; acesso de consulta apenas ao
+  endpoint do painel, expiração de 90 dias e revogação administrativa. A credencial
+  não é colocada em URLs, armazenamento JavaScript ou registos de auditoria.
+- Endpoint sem cache e sem dados pessoais, PINs, clientes ou quantidades de stock.
+  A TV oculta as instruções quando perde ligação ou quando os dados ficam antigos.
+- Correções de localização exigem administrador, motivo, stock esperado e transação
+  SQL. Reenvios e stock alterado são rejeitados; destino ocupado não é misturado.
+- Testes adicionais cobrem emparelhamento concorrente/repetido/expirado/revogado,
+  permissões, mudança de turno, lotes fechados/cancelados, movimentos concorrentes,
+  conservação do stock e acesso HTTP anónimo/forjado. A configuração física da TV,
+  do router, de HTTPS e do modo quiosque depende do equipamento da empresa.

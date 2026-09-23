@@ -45,3 +45,33 @@ test('patched image dependency still optimizes the machine icon',async()=>{
   const response=await fetch(base+'/_next/image?url=%2Fmachine-jerrycan.png&w=128&q=75');
   assert.equal(response.status,200);assert.match(response.headers.get('content-type'),/^image\//);
 });
+test('TV landing exposes no production data, API requires its own device token and pairing rejects cross-site/large bodies',async()=>{
+  const page=await fetch(base+'/display');assert.equal(page.status,200);
+  assert.doesNotMatch(await page.text(),/DISPLAY-ACTUAL|TEST-COMMERCIAL/);
+  const api=await fetch(base+'/api/production-display');assert.equal(api.status,401);assert.match(api.headers.get('cache-control'),/no-store/);
+  const forged=await fetch(base+'/api/production-display',{headers:{cookie:'__Host-sodilave_display='+'a'.repeat(64)}});assert.equal(forged.status,401);
+  const rejected=await fetch(base+'/api/production-display/pair',{method:'POST',headers:{origin:'https://attacker.invalid'},body:'{"code":"00000000"}'});assert.equal(rejected.status,403);
+  const large=await fetch(base+'/api/production-display/pair',{method:'POST',headers:{origin:process.env.APP_URL,'content-type':'application/json'},body:'x'.repeat(300)});assert.equal(large.status,413);
+});
+test('real pairing issues a secure read-only cookie and revocation blocks the next refresh',async()=>{
+  const database=process.env.TEST_DATABASE_URL||process.env.DATABASE_URL;
+  assert.ok(database&&['sodilave_test','typecheck'].includes(new URL(database).pathname.slice(1)),'Only a disposable integration database is allowed');
+  const connection=await require('mysql2/promise').createConnection(database);
+  const {randomUUID,createHash}=require('node:crypto');const id=randomUUID(),code='90807060';
+  try {
+    const [[admin]]=await connection.execute("SELECT id FROM User WHERE role='ADMIN' AND active=1 LIMIT 1");
+    await connection.execute("DELETE FROM AuthRateLimit WHERE bucket='display:pair'");
+    await connection.execute('INSERT INTO ProductionDisplayDevice (id,name,pairingHash,pairingExpiresAt,createdById) VALUES (?,?,?,DATE_ADD(NOW(3),INTERVAL 10 MINUTE),?)',[id,'HTTP TV',createHash('sha256').update(code).digest('hex'),admin.id]);
+    const response=await fetch(base+'/api/production-display/pair',{method:'POST',headers:{origin:process.env.APP_URL,'content-type':'application/json'},body:JSON.stringify({code})});
+    assert.equal(response.status,200);const cookie=response.headers.get('set-cookie');
+    assert.match(cookie,/__Host-sodilave_display=/);assert.match(cookie,/HttpOnly/i);assert.match(cookie,/Secure/i);assert.match(cookie,/SameSite=strict/i);
+    const headers={cookie:cookie.split(';')[0]};
+    const data=await fetch(base+'/api/production-display',{headers});assert.equal(data.status,200);
+    const body=await data.json();assert.ok(Array.isArray(body.machines));assert.deepEqual(Object.keys(body).sort(),['cycleActive','generatedAt','machines','shift','validUntil']);
+    assert.doesNotMatch(JSON.stringify(body),/pinHash|customerName|sessionVersion|tokenHash|quantityAvailable/);
+    const dashboard=await fetch(base+'/dashboard',{headers,redirect:'manual'});assert.equal(dashboard.headers.get('location'),'/login');
+    const replay=await fetch(base+'/api/production-display/pair',{method:'POST',headers:{origin:process.env.APP_URL,'content-type':'application/json'},body:JSON.stringify({code})});assert.equal(replay.status,400);
+    await connection.execute('UPDATE ProductionDisplayDevice SET revokedAt=NOW(3) WHERE id=?',[id]);
+    assert.equal((await fetch(base+'/api/production-display',{headers})).status,401);
+  } finally {await connection.execute('DELETE FROM ProductionDisplayDevice WHERE id=?',[id]);await connection.end();}
+});

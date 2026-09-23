@@ -10,6 +10,13 @@ function isoWeek(date: Date) {
 
 type MachineConfigRow = { majorLetter: string; minorLetter: string };
 
+export function formatProductionLot(machineCode: string, shiftCode: string, date: Date, config: MachineConfigRow = { majorLetter: "A", minorLetter: "A" }) {
+  const weekday = date.getDay();
+  const week = String(isoWeek(date)).padStart(2, "0");
+  const year = String(date.getFullYear()).slice(-2);
+  return `${config.majorLetter}${config.minorLetter}${shiftCode}${weekday}${week}${year}m${machineCode}`;
+}
+
 export async function generateProductionLot(machineCode: string, shiftCode: string, date = new Date()) {
   const rows = await db.$queryRaw<MachineConfigRow[]>`
     SELECT majorLetter, minorLetter
@@ -18,10 +25,7 @@ export async function generateProductionLot(machineCode: string, shiftCode: stri
     LIMIT 1
   `;
   const config = rows[0] ?? { majorLetter: "A", minorLetter: "A" };
-  const weekday = date.getDay();
-  const week = String(isoWeek(date)).padStart(2, "0");
-  const year = String(date.getFullYear()).slice(-2);
-  const candidate = `${config.majorLetter}${config.minorLetter}${shiftCode}${weekday}${week}${year}m${machineCode}`;
+  const candidate = formatProductionLot(machineCode, shiftCode, date, config);
 
   const exists = await db.production.findUnique({ where: { productionLot: candidate }, select: { id: true } });
   if (exists) {

@@ -242,3 +242,51 @@ estado de acesso também termina as sessões desse utilizador.
 Os testes adicionais são `npm run audit:security` e, após compilar e com uma base
 de testes configurada, `npm run test:http`. Não usar a base operacional nos testes
 SQL de integração: estes apagam os dados da base descartável.
+
+## Ecrã da zona de produção e ordens de paletização
+
+Depois de atualizar o código, executar `npm run db:upgrade` e `npm run db:check`.
+A migração `2026-09-24-production-display.sql` acrescenta apenas as tabelas de
+emparelhamento dos ecrãs e de ordens por máquina; mantém os dados existentes.
+
+1. Em **Administração → Ecrã de produção**, definir o produto/lote comercial ativo,
+   destino **Paletes** ou **Estiba / monte** e, opcionalmente, instruções para cada
+   máquina. O produto deve estar associado à máquina no catálogo.
+2. As ordens pertencem ao ciclo semanal ativo. Confirmar novas ordens depois de um
+   novo arranque semanal e sempre que mudar o produto ou o lote comercial.
+3. No mesmo menu, dar um nome ao monitor e gerar um código. Abrir o endereço da
+   aplicação seguido de `/display` no navegador da TV, ou num computador/mini-PC
+   ligado ao monitor por HDMI. Introduzir o código de 8 algarismos dentro de 10
+   minutos; só pode ser usado uma vez.
+4. Selecionar **Ecrã completo** (ou F11). Desativar a suspensão/protetor de ecrã no
+   dispositivo. O navegador precisa de acesso à mesma aplicação/rede. O endereço
+   local do computador de desenvolvimento não é acessível noutra TV através de
+   `localhost`; usar um endereço acessível à TV. Em produção, servir por HTTPS.
+
+A comunicação usa pedidos HTTPS à própria aplicação a cada 10 segundos, sem um
+serviço externo. A credencial da TV é independente da sessão de utilizador, apenas
+permite consultar este painel e expira ao fim de 90 dias. Pode ser revogada no menu
+administrativo; o ecrã bloqueia na atualização seguinte. Para voltar a ligar,
+gerar outro código. Não colocar credenciais de administrador na TV.
+
+São mostradas apenas as máquinas ativas em funcionamento dentro de um ciclo
+semanal aberto. A máquina 7 aparece em último, ocupando a largura disponível.
+O painel identifica o **lote previsto** quando ainda não há registo no turno e o
+**lote registado neste turno** quando já existe. Não usa produções de turnos
+anteriores nem registos cancelados. Uma alteração da regra de lote da máquina também substitui o lote anterior pelo
+novo código previsto, mesmo dentro do mesmo turno. O código previsto usa a mesma regra da criação
+de produção, mas não reserva um lote nem substitui o registo/validação de qualidade.
+Se a ordem não corresponder ao produto/lote registado, ou se o lote comercial tiver
+sido fechado, é apresentado um aviso e a instrução de destino fica suspensa até
+ser corrigida. Ao perder ligação, ultrapassar 30 segundos sem atualização ou mudar
+de turno sem dados novos, o ecrã oculta as instruções e pede confirmação ao responsável.
+
+## Corrigir a localização física no mapa
+
+O administrador seleciona uma posição ocupada e usa **Corrigir localização física**
+para transferir todos os lotes para uma posição livre do mesmo tipo, indicando o
+motivo. Pode corrigir entre armazéns. A operação é atómica, preserva as quantidades e
+regista cada movimento e o utilizador na auditoria. Não junta duas estibas ocupadas.
+Para mover apenas parte de um lote, continuam disponíveis os controlos individuais
+**Corrigir / mover**. Se o stock tiver mudado entretanto (por exemplo, por expedição),
+a alteração é rejeitada e é necessário atualizar o mapa antes de confirmar.

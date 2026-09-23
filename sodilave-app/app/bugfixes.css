@@ -27,3 +27,28 @@ html.dark .stock-map-cell small,html.dark .stock-location-heading span,html.dark
 html.dark .stock-admin-tools summary{color:#93c5fd}
 html.dark .stock-map-cell.selected{background:#132a44;border-color:#60a5fa}
 .checkup-machine-form[hidden]{display:none}
+
+/* Production wall display: explicit high contrast regardless of the user's theme. */
+.production-display{min-height:100dvh;background:#0a1622;color:#f1f7fc;padding:2vh 2vw;font-family:Arial,sans-serif}
+body:has(.production-display) .theme-toggle{display:none}
+.display-header{display:flex;justify-content:space-between;align-items:center;gap:1rem;margin-bottom:2vh}
+.display-header h1{font-size:clamp(1.5rem,2.2vw,3rem);margin:.35rem 0;color:#fff}
+.display-header span{letter-spacing:.15em;color:#b6cee2}.display-header p{color:#a6e7ce;margin:.5rem 0}
+.display-fullscreen{border:1px solid #7892aa;border-radius:6px;background:#132b3e;color:#fff;padding:.4rem .8rem}
+.display-grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:1.4vh 1.3vw}
+.display-machine{border:1px solid #347c66;border-left:8px solid #38d693;background:#12352e;border-radius:14px;padding:1.4vh 1.4vw;min-width:0}
+.display-machine-last{grid-column:1/-1}.display-machine-heading{display:flex;align-items:center;justify-content:space-between;gap:.5rem}
+.display-machine h2{font-size:clamp(1.3rem,1.8vw,2.4rem);margin:0;color:#fff}.display-machine-heading span{color:#a8edce}
+.display-product{font-size:clamp(1rem,1.2vw,1.7rem);margin:.5vh 0;color:#e6f2fa}.display-machine small{color:#bdd0da}
+.display-lot{display:block;font-size:clamp(1.3rem,2vw,2.8rem);line-height:1.2;overflow-wrap:anywhere;margin:.4vh 0 .8vh;color:#fff}
+.display-destination{font-weight:800;font-size:clamp(1.15rem,1.6vw,2.2rem);padding:.55vh .8vw;border-radius:6px;color:#fff;background:#12529a}
+.display-destination.stack{background:#624291}.display-destination.missing{background:#845314}
+.display-notes,.display-warning{font-size:clamp(1rem,1.2vw,1.5rem);margin:.5vh 0 0;color:#ffe3a0}.display-notes{color:#fff;overflow-wrap:anywhere}
+.display-notice,.display-pair{max-width:900px;margin:8vh auto;padding:3rem;border:1px solid #607991;border-radius:16px;background:#152838;font-size:1.3rem}
+.display-notice h2,.display-pair h2{color:#fff}.display-pair label{display:block;color:#fff}.display-pair input{display:block;width:100%;margin:1rem 0;background:#fff!important;color:#132b3e!important;letter-spacing:.3em;font-size:2rem}
+.display-pair button{padding:1rem 2rem;background:#0865c6;color:#fff;border:0;border-radius:8px}.display-device{display:flex;align-items:center;justify-content:space-between;gap:1rem;flex-wrap:wrap}
+@media(max-width:700px){.display-grid{grid-template-columns:1fr}.display-header{align-items:flex-start;flex-direction:column}.display-pair{padding:1rem}.display-machine{padding:1rem}}
+.stock-form-fields{border:0;padding:0;margin:0;min-width:0}.stock-relocation{padding:1rem 0;border-bottom:1px solid var(--border);margin-bottom:1rem}.stock-relocation h3{margin-top:0}
+/* Wide TVs show six machines in two rows, with machine 7 across the final row. */
+@media(min-width:1100px){.display-grid{grid-template-columns:repeat(3,minmax(0,1fr))}.display-machine h2{font-size:clamp(1.25rem,1.5vw,2rem)}.display-lot{font-size:clamp(1.25rem,1.7vw,2.2rem)}.display-product,.display-notes,.display-warning{font-size:clamp(1rem,1.05vw,1.35rem)}}
+.display-product{overflow-wrap:anywhere}.display-header>div{min-width:0}

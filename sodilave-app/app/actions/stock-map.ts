@@ -79,6 +79,7 @@ export async function adjustStockMap(formData: FormData) {
       [productionId],
     );
     const current = Number(balances.find((row) => Number(row.locationId) === locationId)?.quantityPackages ?? 0);
+    if (Number(formData.get("expectedQuantity")) !== current || !formData.has("expectedQuantity")) throw new Error("O stock mudou. Atualize o mapa e confirme novamente.");
     if (current === newQuantityPackages) throw new Error("A quantidade não foi alterada.");
 
     const otherTotal = balances
@@ -149,6 +150,7 @@ export async function transferStockMap(formData: FormData) {
     );
     const fromQty = Number(rows.find((row) => Number(row.locationId) === fromLocationId)?.quantityPackages ?? 0);
     const toQty = Number(rows.find((row) => Number(row.locationId) === toLocationId)?.quantityPackages ?? 0);
+    if (!formData.has("expectedQuantity") || Number(formData.get("expectedQuantity")) !== fromQty) throw new Error("O stock mudou. Atualize o mapa e confirme novamente.");
     if (quantityPackages > fromQty) throw new Error(`A posição de origem só tem ${fromQty} embalagem(ns) deste lote.`);
 
     if (quantityPackages === fromQty) {
@@ -262,3 +264,36 @@ export async function addUnlocatedStock(formData: FormData) {
   revalidatePath("/traceability");
 }
 
+
+// Move exactly the contents the administrator reviewed. The destination must be
+// empty: correcting a position must not silently merge two physical stacks.
+export async function relocateStoragePosition(formData: FormData) {
+  const admin=await requireAdmin();
+  const fromLocationId=positiveId(formData,"fromLocationId"), toLocationId=positiveId(formData,"toLocationId");
+  const correctionReason=reason(formData);
+  if(fromLocationId===toLocationId) throw new Error("Selecione uma posição diferente.");
+  let expected: {productionId:number;quantityPackages:number}[];
+  try { expected=JSON.parse(String(formData.get("expectedContents")??"")); }
+  catch { throw new Error("Atualize o mapa antes de corrigir a localização."); }
+  if(!Array.isArray(expected)||!expected.length||expected.length>500||expected.some(row=>!row || !Number.isSafeInteger(row.productionId)||row.productionId<1||!Number.isSafeInteger(row.quantityPackages)||row.quantityPackages<1)||new Set(expected.map(row=>row.productionId)).size!==expected.length) throw new Error("O conteúdo da posição é inválido. Atualize o mapa.");
+  expected.sort((a,b)=>a.productionId-b.productionId);
+  await db.$transaction(async tx=>{
+    // Same production-first lock order as dispatches and individual corrections.
+    for(const row of expected) await getProductionCapacity(tx,row.productionId);
+    const positions=await tx.query<any[]>("SELECT id,zoneType FROM StorageLocation WHERE id IN (?,?) AND active=1 ORDER BY id FOR UPDATE",[fromLocationId,toLocationId]);
+    if(positions.length!==2) throw new Error("A posição selecionada já não está disponível.");
+    if(positions[0].zoneType!==positions[1].zoneType) throw new Error("Escolha um destino do mesmo tipo: estiba ou paletes.");
+    const balances=await tx.query<any[]>("SELECT productionId,locationId,quantityPackages FROM ProductionStorageBalance WHERE locationId IN (?,?) ORDER BY locationId,productionId FOR UPDATE",[fromLocationId,toLocationId]);
+    const source=balances.filter(row=>Number(row.locationId)===fromLocationId&&Number(row.quantityPackages)>0).sort((a,b)=>a.productionId-b.productionId);
+    if(source.length!==expected.length||source.some((row,i)=>Number(row.productionId)!==expected[i].productionId||Number(row.quantityPackages)!==expected[i].quantityPackages)) throw new Error("O stock mudou desde que abriu o mapa. Atualize e confirme novamente.");
+    if(balances.some(row=>Number(row.locationId)===toLocationId&&Number(row.quantityPackages)>0)) throw new Error("A posição de destino está ocupada. Escolha uma posição livre.");
+    for(const row of expected) {
+      await tx.execute("DELETE FROM ProductionStorageBalance WHERE productionId=? AND locationId=?",[row.productionId,fromLocationId]);
+      await tx.execute(`INSERT INTO ProductionStorageBalance (productionId,locationId,quantityPackages) VALUES (?,?,?)
+        ON DUPLICATE KEY UPDATE quantityPackages=VALUES(quantityPackages),updatedAt=NOW(3)`,[row.productionId,toLocationId,row.quantityPackages]);
+      await tx.productionStorageMovement.create({data:{productionId:row.productionId,movementType:"TRANSFER",fromLocationId,toLocationId,quantityPackages:row.quantityPackages,createdById:admin.id,reason:correctionReason}});
+    }
+    await tx.auditLog.create({data:{userId:admin.id,action:"TRANSFER",entity:"StorageLocation",entityId:String(fromLocationId),details:{fromLocationId,toLocationId,contents:expected,reason:correctionReason}}});
+  });
+  for(const path of ["/stock-map","/lot-dispatch","/traceability"]) revalidatePath(path);
+}

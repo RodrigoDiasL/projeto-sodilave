@@ -355,7 +355,7 @@ test('an authorized operator can finalize a past production and book stock in it
 
 test('every operational mutation rejects anonymous users and auditors; admin mutations reject operators',async()=>{
   const account=user;
-  const operational=['startup','shutdown','checkups','production','lot-dispatch','incidents','intermediate-startup','maintenance','stock-map','operation-settings','production-admin','admin'];
+  const operational=['startup','shutdown','checkups','production','lot-dispatch','incidents','intermediate-startup','maintenance','stock-map','production-display','operation-settings','production-admin','admin'];
   try {
     for(const role of [null,'AUDITOR']) {
       user=role?{...account,role}:null;
@@ -364,7 +364,7 @@ test('every operational mutation rejects anonymous users and auditors; admin mut
       }
     }
     user={...account,role:'OPERATOR'};
-    for(const file of ['stock-map','operation-settings','production-admin','admin','maintenance'])for(const action of Object.values(load(`app/actions/${file}`))) {
+    for(const file of ['stock-map','production-display','operation-settings','production-admin','admin','maintenance'])for(const action of Object.values(load(`app/actions/${file}`))) {
       if(typeof action==='function')await assert.rejects(action(new FormData()),/access-denied/,`${file}: operator`);
     }
     for(const role of ['OPERATOR','AUDITOR']) {
@@ -520,4 +520,92 @@ test('backup failures leave no archive; successful archives are private and neve
     env.BACKUP_DIR=path.join(root,'public','backups');
     await assert.rejects(execFileAsync(process.execPath,['scripts/backup-database.mjs'],{cwd:root,env}),error=>/pasta publicada/.test(error.stderr));
   } finally {fs.rmSync(temp,{recursive:true,force:true});}
+});
+
+test('display pairing is single-use, bounded, revocable and stores only hashed credentials',async()=>{
+  const {createDisplayDevice,revokeDisplayDevice}=load('app/actions/production-display');
+  const {pairDisplay,getDisplayDevice,displayCookie,displayHash}=load('lib/production-display');
+  await db.execute("DELETE FROM AuthRateLimit WHERE bucket='display:pair'");
+  testCookies.delete(displayCookie);assert.equal(await getDisplayDevice(),null);
+  const {code}=await createDisplayDevice(fd({name:'Factory TV'}));
+  assert.match(code,/^\d{8}$/);
+  const [pending]=await db.query('SELECT * FROM ProductionDisplayDevice WHERE pairingHash=?',[displayHash(code)]);
+  assert.ok(pending);assert.equal(pending.tokenHash,null);assert.notEqual(pending.pairingHash,code);
+  const attempts=await Promise.allSettled([pairDisplay(code),pairDisplay(code)]);
+  assert.equal(attempts.filter(r=>r.status==='fulfilled').length,1);
+  const token=testCookies.get(displayCookie);assert.match(token,/^[a-f0-9]{64}$/);
+  assert.equal(cookieOptions.get(displayCookie).httpOnly,true);assert.equal(cookieOptions.get(displayCookie).sameSite,'strict');
+  assert.equal((await getDisplayDevice()).id,pending.id);
+  const [paired]=await db.query('SELECT * FROM ProductionDisplayDevice WHERE id=?',[pending.id]);
+  assert.equal(paired.pairingHash,null);assert.equal(paired.tokenHash,displayHash(token));
+  await revokeDisplayDevice(fd({id:pending.id}));assert.equal(await getDisplayDevice(),null);
+  const expired=await createDisplayDevice(fd({name:'Expired TV'}));
+  await db.execute('UPDATE ProductionDisplayDevice SET pairingExpiresAt=DATE_SUB(NOW(3),INTERVAL 1 SECOND) WHERE pairingHash=?',[displayHash(expired.code)]);
+  await assert.rejects(pairDisplay(expired.code),/inválido ou expirado/);
+  for(let i=0;i<7;i++)await assert.rejects(pairDisplay('invalid'),/inválido/);
+  await assert.rejects(pairDisplay('00000000'),/Demasiadas/);
+});
+
+test('display orders track the active cycle and current shift, rejecting stale lots and invalid assignments',async()=>{
+  const {saveDisplayOrder}=load('app/actions/production-display');
+  const {getProductionDisplayData}=load('lib/production-display');
+  const {getShiftWindow}=load('lib/shift');
+  const now=new Date();const window=getShiftWindow(now);
+  const tvMachine=await db.machine.create({data:{code:'8',name:'Display test',status:'RUNNING'}});
+  await db.execute('INSERT INTO ProductMachine (productId,machineId) VALUES (?,?)',[product.id,tvMachine.id]);
+  const [commercial]=await db.query("SELECT id FROM CommercialLot WHERE code='TEST-COMMERCIAL'");
+  const order=fd({machineId:tvMachine.id,commercialLotId:commercial.id,destination:'PALLET',notes:'Four layers'});
+  await saveDisplayOrder(order);
+  let data=await getProductionDisplayData(now);let card=data.machines.find(m=>m.id===tvMachine.id);
+  assert.equal(card.lotState,'PLANNED');assert.equal(card.destination,'PALLET');assert.match(card.lot,/TEST-COMMERCIAL \/ /);
+  const previousLot=card.lot;
+  data=await getProductionDisplayData(window.end);card=data.machines.find(m=>m.id===tvMachine.id);
+  assert.notEqual(card.lot,previousLot);assert.equal(card.lotState,'PLANNED');
+  const row=await db.production.create({data:{machineId:tvMachine.id,productId:product.id,operatorId:user.id,shiftCode:window.code,productionLot:load('lib/lot').formatProductionLot('8',window.code,window.start),status:'DRAFT',startedAt:now}});
+  card=(await getProductionDisplayData(now)).machines.find(m=>m.id===tvMachine.id);
+  assert.equal(card.lot,row.productionLot);assert.equal(card.lotState,'REGISTERED');
+  await db.execute('INSERT INTO MachineLotConfig (machineId,majorLetter,minorLetter,updatedById) VALUES (?,?,?,?)',[tvMachine.id,'B','A',user.id]);
+  card=(await getProductionDisplayData(now)).machines.find(m=>m.id===tvMachine.id);
+  assert.equal(card.lotState,'PLANNED');assert.notEqual(card.lot,row.productionLot);
+  await db.execute('DELETE FROM MachineLotConfig WHERE machineId=?',[tvMachine.id]);
+  await db.production.update({where:{id:row.id},data:{status:'CANCELLED'}});
+  card=(await getProductionDisplayData(now)).machines.find(m=>m.id===tvMachine.id);assert.equal(card.lotState,'PLANNED');
+  await db.execute("UPDATE CommercialLot SET status='CLOSED' WHERE id=?",[commercial.id]);
+  card=(await getProductionDisplayData(now)).machines.find(m=>m.id===tvMachine.id);assert.equal(card.destination,null);assert.equal(card.lot,null);assert.match(card.warning,/desatualizada/);
+  await assert.rejects(saveDisplayOrder(order),/lote comercial ativo/);
+  await db.execute("UPDATE CommercialLot SET status='ACTIVE' WHERE id=?",[commercial.id]);
+  order.set('destination','invalid');await assert.rejects(saveDisplayOrder(order),/Verifique/);
+  await db.machine.update({where:{id:tvMachine.id},data:{status:'STOPPED'}});
+  assert.ok(!(await getProductionDisplayData(now)).machines.some(m=>m.id===tvMachine.id));
+  await db.machine.update({where:{id:tvMachine.id},data:{active:false}});
+});
+
+test('admin relocates whole stacks atomically, preserving quantities and rejecting stale/replayed/occupied moves',async()=>{
+  const {relocateStoragePosition,transferStockMap,adjustStockMap}=load('app/actions/stock-map');
+  const locations=[];
+  for(let i=1;i<=3;i++)locations.push(await db.storageLocation.create({data:{warehouseCode:'MOVE',warehouseName:'Test moves',zoneType:'STACK',code:'M'+i,rowNumber:1,columnNumber:i}}));
+  const productions=[];
+  for(let i=1;i<=2;i++)productions.push(await db.production.create({data:{machineId:machine.id,productId:product.id,operatorId:user.id,shiftCode:'A',productionLot:'MOVE-'+i,status:'FINALIZED',quantityProduced:5,unitsPerPackageSnapshot:10,productionUnitSnapshot:'BAG'}}));
+  for(const p of productions)await db.productionStorageBalance.create({data:{productionId:p.id,locationId:locations[0].id,quantityPackages:5}});
+  const contents=productions.map(p=>({productionId:p.id,quantityPackages:5}));
+  const move=fd({fromLocationId:locations[0].id,toLocationId:locations[1].id,expectedContents:JSON.stringify(contents),reason:'Wrong position selected by operator'});
+  const auditBefore=await db.auditLog.count();
+  await relocateStoragePosition(move);
+  let balances=await db.query('SELECT * FROM ProductionStorageBalance WHERE productionId IN (?,?)',[...productions.map(p=>p.id)]);
+  assert.equal(balances.length,2);assert.ok(balances.every(b=>b.locationId===locations[1].id&&b.quantityPackages===5));assert.equal(await db.auditLog.count(),auditBefore+1);
+  await assert.rejects(relocateStoragePosition(move),/stock mudou/);
+  move.set('fromLocationId',locations[1].id);move.set('toLocationId',locations[2].id);
+  const individual=fd({productionId:productions[0].id,fromLocationId:locations[1].id,toLocationId:locations[0].id,quantityPackages:1,expectedQuantity:5,reason:'Partial move'});
+  await transferStockMap(individual);await assert.rejects(transferStockMap(individual),/stock mudou/);
+  await assert.rejects(relocateStoragePosition(move),/stock mudou/);
+  contents[0].quantityPackages=4;move.set('expectedContents',JSON.stringify(contents));move.set('toLocationId',locations[0].id);
+  await assert.rejects(relocateStoragePosition(move),/ocupada/);
+  await assert.rejects(adjustStockMap(fd({productionId:productions[0].id,locationId:locations[1].id,newQuantityPackages:3,expectedQuantity:5,reason:'Stale count'})),/stock mudou/);
+  move.set('toLocationId',locations[2].id);
+  const results=await Promise.allSettled([relocateStoragePosition(move),relocateStoragePosition(move)]);
+  assert.equal(results.filter(r=>r.status==='fulfilled').length,1);
+  balances=await db.query('SELECT SUM(quantityPackages) AS quantity FROM ProductionStorageBalance WHERE productionId IN (?,?)',[...productions.map(p=>p.id)]);
+  assert.equal(Number(balances[0].quantity),10);
+  const movements=await db.query('SELECT * FROM ProductionStorageMovement WHERE productionId IN (?,?)',[...productions.map(p=>p.id)]);
+  assert.equal(movements.length,5);
 });
