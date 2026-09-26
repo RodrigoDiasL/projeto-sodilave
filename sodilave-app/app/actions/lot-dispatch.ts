@@ -1,5 +1,7 @@
 "use server";
 
+import { createHash } from "node:crypto";
+import { validOrderDate, orderReference as referenceForOrder } from "@/lib/order-values";
 import { revalidatePath } from "next/cache";
 import { requireOperationalUser, requireAdmin } from "@/lib/auth";
 import { db } from "@/lib/db";
@@ -31,16 +33,16 @@ const requiredText = (fd: FormData, key: string, label: string, max = 191) => {
 export async function createLotDispatch(formData: FormData) {
   const user = await requireOperationalUser();
 
-  const customerName = requiredText(formData, "customerName", "O cliente");
-  const orderReference = requiredText(formData, "orderReference", "A encomenda");
+  const salesOrderItemId = Number(formData.get("salesOrderItemId"));
+  const requestId = String(formData.get("requestId") ?? "");
+  if (!Number.isSafeInteger(salesOrderItemId) || salesOrderItemId < 1) throw new Error("Selecione uma encomenda registada e o artigo a expedir.");
+  if (!/^[a-f0-9-]{36}$/.test(requestId)) throw new Error("Atualize a página antes de registar a saída.");
   const invoiceNumber = requiredText(formData, "invoiceNumber", "A fatura");
   const dispatchDate = requiredText(formData, "dispatchDate", "A data", 10);
-  if (!/^\d{4}-\d{2}-\d{2}$/.test(dispatchDate)) throw new Error("A data de saída é inválida.");
+  if (!validOrderDate(dispatchDate)) throw new Error("A data de saída é inválida.");
 
-  const productId = Number(formData.get("productId") || 0);
   const orderedQuantityUnits = Number(formData.get("orderedQuantityUnits") || 0);
-  if (!Number.isInteger(productId) || productId <= 0) throw new Error("Selecione o artigo da encomenda.");
-  if (!Number.isInteger(orderedQuantityUnits) || orderedQuantityUnits <= 0) {
+  if (!Number.isSafeInteger(orderedQuantityUnits) || orderedQuantityUnits <= 0 || orderedQuantityUnits > 10000000) {
     throw new Error("A quantidade da encomenda deve ser um número inteiro superior a zero.");
   }
 
@@ -51,7 +53,7 @@ export async function createLotDispatch(formData: FormData) {
     const productionId = Number(match[1]);
     const locationId = Number(match[2]);
     const quantityPackages = Number(rawValue || 0);
-    if (!Number.isInteger(quantityPackages) || quantityPackages < 0) {
+    if (!Number.isSafeInteger(productionId) || productionId < 1 || !Number.isSafeInteger(locationId) || locationId < 1 || !Number.isSafeInteger(quantityPackages) || quantityPackages < 0 || quantityPackages > 10000000) {
       throw new Error("Uma das quantidades retiradas do stock é inválida.");
     }
     if (quantityPackages > 0) {
@@ -61,11 +63,29 @@ export async function createLotDispatch(formData: FormData) {
 
   if (!allocations.size) throw new Error("Selecione pelo menos uma posição de stock para dar saída.");
 
-  const allocationRows = [...allocations.values()];
+  if (allocations.size > 200) throw new Error("Selecione no máximo 200 posições por saída.");
+  const allocationRows = [...allocations.values()].sort((a,b)=>a.productionId-b.productionId || a.locationId-b.locationId);
+  const requestHash=createHash("sha256").update(JSON.stringify({salesOrderItemId,invoiceNumber,dispatchDate,orderedQuantityUnits,allocationRows})).digest("hex");
   const productionIds = [...new Set(allocationRows.map((row) => row.productionId))];
   const productionPlaceholders = productionIds.map(() => "?").join(",");
 
   const dispatch = await db.$transaction(async (tx) => {
+    const orders=await tx.query<any[]>(`SELECT o.id,o.customerName,o.status,DATE_FORMAT(o.orderDate,'%Y-%m-%d') AS orderDate,i.productId,i.quantityUnits
+      FROM SalesOrder o INNER JOIN SalesOrderItem i ON i.salesOrderId=o.id WHERE i.id=? FOR UPDATE`,[salesOrderItemId]);
+    const order=orders[0];
+    if(!order)throw new Error("A encomenda selecionada já não existe.");
+    const existing=await tx.query<any[]>("SELECT id,requestHash,createdById,cancelledAt FROM LotDispatch WHERE requestId=?",[requestId]);
+    if(existing.length){
+      if(existing[0].requestHash!==requestHash||Number(existing[0].createdById)!==user.id)throw new Error("Este pedido já foi utilizado com outros dados. Atualize a página.");
+      if(existing[0].cancelledAt)throw new Error("Esta saída já foi anulada. Atualize a página para registar uma nova.");
+      return {id:Number(existing[0].id),salesOrderId:Number(order.id)};
+    }
+    if(order.status!=="OPEN")throw new Error("Esta encomenda foi anulada e não permite saídas.");
+    if(dispatchDate<order.orderDate)throw new Error("A saída não pode ter data anterior à encomenda.");
+    const previous=await tx.query<{orderedQuantityUnits:number}[]>("SELECT orderedQuantityUnits FROM LotDispatch WHERE salesOrderItemId=? AND cancelledAt IS NULL FOR UPDATE",[salesOrderItemId]);
+    const remaining=Number(order.quantityUnits)-previous.reduce((sum,d)=>sum+Number(d.orderedQuantityUnits),0);
+    if(orderedQuantityUnits>remaining)throw new Error(`A encomenda só tem ${remaining} artigo(s) por entregar nesta linha.`);
+    const productId=Number(order.productId),customerName=String(order.customerName),orderReference=referenceForOrder(Number(order.id));
     const product = await tx.product.findUnique({ where: { id: productId }, select: { id: true, code: true, name: true } });
     if (!product) throw new Error("O artigo selecionado já não existe.");
 
@@ -143,6 +163,9 @@ export async function createLotDispatch(formData: FormData) {
       data: {
         customerName,
         orderReference,
+        salesOrderItemId,
+        requestId,
+        requestHash,
         invoiceNumber,
         productId,
         orderedQuantityUnits,
@@ -219,7 +242,7 @@ export async function createLotDispatch(formData: FormData) {
       },
     });
 
-    return saved;
+    return {...saved,salesOrderId:Number(order.id)};
   });
 
   revalidatePath("/lot-dispatch");
@@ -227,7 +250,9 @@ export async function createLotDispatch(formData: FormData) {
   revalidatePath("/dashboard");
   revalidatePath("/traceability");
 
-  return { ok: true, id: dispatch.id };
+  revalidatePath("/orders");
+  revalidatePath(`/orders/${dispatch.salesOrderId}`);
+  return { ok: true, id: dispatch.id, salesOrderId: dispatch.salesOrderId };
 }
 
 export async function cancelLotDispatch(formData: FormData) {
@@ -237,7 +262,10 @@ export async function cancelLotDispatch(formData: FormData) {
   const reason = requiredText(formData, "reason", "O motivo da anulação", 500);
 
   await db.$transaction(async tx => {
-    // Use the same lock order as dispatch/production corrections: production first.
+    // Linked operations lock the order before productions, including cancellation.
+    const linked=await tx.query<{salesOrderId:number}[]>(`SELECT i.salesOrderId FROM LotDispatch d
+      INNER JOIN SalesOrderItem i ON i.id=d.salesOrderItemId WHERE d.id=?`,[id]);
+    if(linked.length)await tx.query("SELECT id FROM SalesOrder WHERE id=? FOR UPDATE",[linked[0].salesOrderId]);
     const lines = await tx.query<{productionId:number;quantityUnits:number}[]>(
       "SELECT productionId,quantityUnits FROM LotDispatchLine WHERE lotDispatchId=? ORDER BY productionId", [id]);
     if (!lines.length) throw new Error("Esta saída não tem lotes para repor.");
@@ -272,6 +300,7 @@ export async function cancelLotDispatch(formData: FormData) {
     await tx.lotDispatch.update({where:{id},data:{cancelledAt:new Date(),cancelledById:user.id,cancelReason:reason}});
     await tx.auditLog.create({data:{userId:user.id,action:"CANCEL",entity:"LotDispatch",entityId:String(id),details:{reason,movements}}});
   });
-  for (const path of ["/lot-dispatch","/stock-map","/dashboard","/traceability"]) revalidatePath(path);
+  for (const path of ["/lot-dispatch","/stock-map","/dashboard","/traceability","/orders"]) revalidatePath(path);
+  revalidatePath("/orders/[id]", "page");
   return {ok:true};
 }

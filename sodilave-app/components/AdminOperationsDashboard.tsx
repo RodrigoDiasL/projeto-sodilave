@@ -120,6 +120,8 @@ export function AdminOperationsDashboard({
           <ActionLink href="/production" title="Registar produção" icon={<ClipboardList />} disabled={!pastProductionEnabled && (!hasStartup || !hasRunning)} />
           {pastProductionEnabled && <ActionLink href="/production#passada" title="Registo de produção passada" icon={<CalendarDays />} />}
           <ActionLink href="/checkups" title="Verificações de turno" icon={<ShieldCheck />} disabled={!hasStartup || !hasRunning} />
+          <ActionLink href="/orders/new" title="Adicionar Encomenda" icon={<ClipboardList />} />
+          <ActionLink href="/orders" title="Encomendas e entregas" icon={<Truck />} />
           <ActionLink href="/lot-dispatch" title="Saída de Lotes" icon={<Truck />} />
           <ActionLink href="/stock-map" title="Mapa de Stock" icon={<Warehouse />} />
           <ActionLink href="/scoreboards" title="Scoreboards" icon={<Trophy />} />

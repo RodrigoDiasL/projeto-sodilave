@@ -1,4 +1,5 @@
 "use client";
+import { useFeedback } from "@/components/FeedbackProvider";
 
 import { useMemo, useState, type ReactNode } from "react";
 import { addUnlocatedStock, adjustStockMap, transferStockMap, relocateStoragePosition } from "@/app/actions/stock-map";
@@ -7,11 +8,11 @@ import type { StorageMapLocation, StorageLocationInfo, UnlocatedFinishedLot } fr
 
 // Keep expected validation errors on the form instead of the global error screen.
 function StockForm({ action, children }: { action:(fd:FormData)=>Promise<void>; children:ReactNode }) {
-  const router=useRouter();const [busy,setBusy]=useState(false);const [message,setMessage]=useState("");
+  const router=useRouter();const [busy,setBusy]=useState(false);const [message,setMessage]=useState("");const notify=useFeedback();
   return <form className="form-stack compact-admin-form" onSubmit={async event=>{
     event.preventDefault();const fd=new FormData(event.currentTarget);setBusy(true);setMessage("");
-    try {await action(fd);setMessage("Alteração guardada.");router.refresh();}
-    catch(e){setMessage(e instanceof Error?e.message:"Não foi possível guardar. Tente novamente.");}
+    try {await action(fd);setMessage("Alteração guardada.");notify("success","Alteração guardada.");router.refresh();}
+    catch(e){const message=e instanceof Error?e.message:"Não foi possível guardar. Tente novamente.";setMessage(message);notify("error",message);}
     finally{setBusy(false);}
   }}><fieldset disabled={busy} className="form-stack stock-form-fields">{children}</fieldset>{message&&<p role="status">{message}</p>}</form>;
 }

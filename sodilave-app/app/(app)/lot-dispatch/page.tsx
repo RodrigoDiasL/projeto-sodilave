@@ -1,15 +1,26 @@
+import Link from "next/link";
+import { randomUUID } from "node:crypto";
+import { getSalesOrders } from "@/lib/sales-orders";
 import { requireOperationalUser } from "@/lib/auth";
 import { PageIntro } from "@/components/PageIntro";
 import { CancelLotDispatchForm } from "@/components/CancelLotDispatchForm";
 import { LotDispatchForm } from "@/components/LotDispatchForm";
 import { getAvailableFinishedLots, getRecentLotDispatches } from "@/lib/lot-dispatch";
 
-export default async function LotDispatchPage() {
+export default async function LotDispatchPage({searchParams}:{searchParams:Promise<{order?:string;item?:string}>}) {
+  const selection=await searchParams;
   const user = await requireOperationalUser();
-  const [lots, recent] = await Promise.all([
+  const [lots, recent, orders] = await Promise.all([
     getAvailableFinishedLots(),
     getRecentLotDispatches(30),
+    getSalesOrders({pendingOnly:true,limit:500}),
   ]);
+
+  const requestedOrder=Number(selection.order);
+  if(Number.isSafeInteger(requestedOrder)&&requestedOrder>0&&!orders.some(order=>order.id===requestedOrder)){
+    const [selected]=await getSalesOrders({id:requestedOrder});
+    if(selected&&(selected.status==="PENDING"||selected.status==="PARTIAL"))orders.unshift(selected);
+  }
 
   return <>
     <PageIntro
@@ -21,7 +32,8 @@ export default async function LotDispatchPage() {
       Uma produção finalizada e localizada entra no stock de produto acabado. Ao registar uma saída, indique as posições físicas de onde o produto foi retirado; a aplicação abate automaticamente essas estibas/paletes.
     </div>
 
-    <LotDispatchForm lots={lots} employeeName={user.name}/>
+    <div className="button-row"><Link className="btn secondary" href="/orders">Consultar encomendas</Link>{["ADMIN","PRODUCTION_MANAGER"].includes(user.role)&&<Link className="btn primary" href="/orders/new">Adicionar Encomenda</Link>}</div>
+    <LotDispatchForm lots={lots} employeeName={user.name} orders={orders} requestId={randomUUID()} initialOrderId={selection.order} initialItemId={selection.item}/>
 
     <section className="panel lot-dispatch-history">
       <div className="section-heading">
@@ -36,7 +48,7 @@ export default async function LotDispatchPage() {
             <td><strong>#{row.id}</strong></td>
             <td>{new Date(`${row.dispatchDate}T12:00:00`).toLocaleDateString("pt-PT")}</td>
             <td><strong>{row.customerName}</strong></td>
-            <td>{row.orderReference}</td>
+            <td>{row.salesOrderId?<Link href={`/orders/${row.salesOrderId}`}>{row.orderReference}</Link>:row.orderReference}</td>
             <td>{row.invoiceNumber}</td>
             <td>{row.productCode} — {row.productName}</td>
             <td>{row.orderedQuantityUnits.toLocaleString("pt-PT")} artigos</td>

@@ -1,4 +1,5 @@
 "use client";
+import { useFeedbackState } from "@/components/FeedbackProvider";
 import { useState } from "react";
 import { useRouter } from "next/navigation";
 import { saveOperationSettings } from "@/app/actions/operation-settings";
@@ -6,8 +7,8 @@ import { saveOperationSettings } from "@/app/actions/operation-settings";
 export function OperationSettingsForm({ enabled }: { enabled: boolean }) {
   const [checked, setChecked] = useState(enabled);
   const [busy, setBusy] = useState(false);
-  const [message, setMessage] = useState("");
-  const [error, setError] = useState("");
+  const [message, setMessage] = useFeedbackState("success");
+  const [error, setError] = useFeedbackState("error");
   const router = useRouter();
   return <form className="panel form-stack" onSubmit={async event => {
     event.preventDefault();

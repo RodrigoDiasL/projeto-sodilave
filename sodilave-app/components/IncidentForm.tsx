@@ -1,4 +1,5 @@
 "use client";
+import { FeedbackForm } from "@/components/FeedbackForm";
 
 import { useState } from "react";
 import { registerIncident } from "@/app/actions/incidents";
@@ -13,7 +14,7 @@ function localDateTimeValue(date = new Date()) {
 export function IncidentForm({ machines }: { machines: Machine[] }) {
   const [occurredAt, setOccurredAt] = useState("");
 
-  return <form action={registerIncident} className="form-stack">
+  return <FeedbackForm action={registerIncident} className="form-stack">
     <div className="two-col">
       <label>Máquina<select name="machineId" required><option value="">Selecione</option>{machines.map(m=><option key={m.id} value={m.id}>Máquina {m.code} — {m.name} ({m.status==="RUNNING"?"em funcionamento":"parada"})</option>)}</select></label>
       <label>Tipo<select name="type" defaultValue="BREAKDOWN"><option value="BREAKDOWN">Avaria</option><option value="STOPPAGE">Paragem</option><option value="OTHER">Outra ocorrência</option></select></label>
@@ -22,5 +23,5 @@ export function IncidentForm({ machines }: { machines: Machine[] }) {
     </div>
     <label>Descrição da ocorrência<textarea name="description" required placeholder="Descreva o problema, o momento em que ocorreu e as pessoas envolvidas."/></label>
     <button className="btn primary">Registar ocorrência</button>
-  </form>;
+  </FeedbackForm>;
 }

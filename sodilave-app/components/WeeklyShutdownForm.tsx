@@ -1,4 +1,5 @@
 "use client";
+import { useFeedbackState } from "@/components/FeedbackProvider";
 import { useState } from "react";
 import { useRouter } from "next/navigation";
 import { saveWeeklyShutdown } from "@/app/actions/shutdown";
@@ -10,11 +11,11 @@ export function WeeklyShutdownForm({startup,initial}:{startup:any;initial?:any})
  const [recordId,setRecordId]=useState(initial?.id??"");
  const [busy,setBusy]=useState(false);
  const [finished,setFinished]=useState(false);
- const [msg,setMsg]=useState("");const [error,setError]=useState("");
+ const [msg,setMsg]=useFeedbackState("success");const [error,setError]=useFeedbackState("error");
  const [machineChecks,setMachineChecks]=useState<Record<string,boolean>>(()=>{const state:Record<string,boolean>={};for(const item of startup.machines){const old=initial?.machines?.find((x:any)=>x.machineId===item.machineId);for(const [k] of checks)state[`m${item.machineId}_${k}`]=Boolean(old?.[k]);}return state;});
  const setTotalCleaning=(machineId:number)=>setMachineChecks(v=>({...v,...Object.fromEntries(checks.map(([k])=>[`m${machineId}_${k}`,true]))}));
  const action=async(fd:FormData)=>{setMsg("");setError("");if(fd.get("intent")==="finalize"&&!confirm("Finalizar a paragem semanal? Só será possível iniciar uma nova semana depois desta paragem."))return;setBusy(true);try{const r=await saveWeeklyShutdown(fd);setRecordId(r.id);setFinished(r.finalized);router.refresh();setMsg(r.finalized?"Paragem semanal finalizada.":"Rascunho da paragem guardado.");}catch(e){setError(e instanceof Error?e.message:"Não foi possível guardar.")}finally{setBusy(false)}};
- return <form action={action} className="panel form-stack"><input type="hidden" name="shutdownId" value={recordId}/>
+ return <form onSubmit={event=>{event.preventDefault();if(busy)return;void action(new FormData(event.currentTarget,(event.nativeEvent as SubmitEvent).submitter));}} className="panel form-stack"><input type="hidden" name="shutdownId" value={recordId}/>
  <section className="subpanel"><h2>Limpeza geral das instalações</h2><label className="check"><input type="checkbox" name="cleanDispatch" defaultChecked={initial?.cleanDispatch}/>Limpeza do chão da zona de expedição</label><label className="check"><input type="checkbox" name="cleanStorage" defaultChecked={initial?.cleanStorage}/>Limpeza do chão da zona de armazenamento</label><label className="check"><input type="checkbox" name="cleanProduction" defaultChecked={initial?.cleanProduction}/>Limpeza do chão da zona de produção</label></section>
  {startup.machines.map((item:any)=>{const old=initial?.machines?.find((x:any)=>x.machineId===item.machineId);return <section className="subpanel" key={item.machineId}><div className="section-heading"><h2>Máquina {item.machine.code}</h2><button type="button" className="btn secondary" onClick={()=>setTotalCleaning(item.machineId)}>Limpeza total da máquina</button></div><div className="two-col">{checks.map(([k,l])=><label className="check" key={k}><input type="checkbox" name={`m${item.machineId}_${k}`} checked={Boolean(machineChecks[`m${item.machineId}_${k}`])} onChange={e=>setMachineChecks(v=>({...v,[`m${item.machineId}_${k}`]:e.target.checked}))}/>{l}</label>)}</div><label>Observações da máquina<textarea name={`m${item.machineId}_notes`} defaultValue={old?.notes??""}/></label></section>})}
  <label>Observações gerais<textarea name="observations" defaultValue={initial?.observations??""} placeholder="Obrigatório ao finalizar se alguma limpeza não estiver assinalada."/></label>{error&&<div className="alert error">{error}</div>}{msg&&<div className="alert success">{msg}</div>}<div className="button-row"><button disabled={busy||finished} className="btn secondary" name="intent" value="draft" formNoValidate>Gravar rascunho</button><button disabled={busy||finished} className="btn primary" name="intent" value="finalize">Finalizar paragem</button></div></form>;

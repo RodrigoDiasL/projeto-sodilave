@@ -4,11 +4,10 @@ Este guia corresponde à arquitetura sem ORM. A aplicação comunica diretamente
 
 ## 0. Versão candidata e preparação do alojamento
 
-A versão funcional `d98069d` de `refactor/remove-prisma` passou os testes SQL,
-HTTP, TypeScript, build e auditoria de dependências no CI. Este guia inclui ainda
-a correção de fuso horário para instalar a aplicação no cPanel. Instalar a revisão
-mais recente deste ramo após o respetivo CI estar verde e registar o SHA instalado.
-A promoção para `production` deve levar exatamente a revisão validada no alojamento.
+A versão candidata está no ramo `refactor/remove-prisma`, incluindo encomendas,
+entregas parciais e feedback dos registos. Instalar a revisão mais recente deste
+ramo após o respetivo CI estar verde e registar o SHA instalado. A promoção para
+`production` deve levar exatamente a revisão validada no alojamento.
 
 Antes de executar comandos, confirmar no cPanel:
 
@@ -203,6 +202,10 @@ Este comando não depende de ferramentas externas de ORM. O script:
 5. guarda o checksum de cada migração;
 6. cria o administrador inicial apenas quando não existem utilizadores.
 
+Esta versão inclui `2026-09-26-sales-orders.sql`, que cria `SalesOrder`,
+`SalesOrderItem` e a ligação às saídas. As saídas anteriores mantêm-se no histórico;
+as novas exigem selecionar uma encomenda previamente registada.
+
 Se a base contiver tabelas mas não tiver a tabela `User`, o processo é interrompido por segurança.
 
 Nunca alterar uma migração que já tenha sido aplicada em produção. Qualquer mudança estrutural futura deve ser um novo ficheiro numerado.
@@ -253,6 +256,9 @@ Confirmar:
 - produção em rascunho e finalização;
 - consumo e reposição de stock;
 - lote comercial;
+- encomenda com vários artigos e preços;
+- saída ligada à encomenda, entrega parcial e consulta do histórico;
+- mensagens verdes de sucesso e vermelhas de erro;
 - verificações de turno;
 - registo de incidente;
 - manutenção;

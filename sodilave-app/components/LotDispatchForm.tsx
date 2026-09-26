@@ -1,6 +1,9 @@
 "use client";
+import { useFeedbackState } from "@/components/FeedbackProvider";
 
 import { useMemo, useRef, useState } from "react";
+import Link from "next/link";
+import type { SalesOrder } from "@/lib/sales-orders";
 import { useRouter } from "next/navigation";
 import { createLotDispatch } from "@/app/actions/lot-dispatch";
 import type { AvailableFinishedLot } from "@/lib/lot-dispatch";
@@ -16,30 +19,25 @@ function todayInput() {
 const packageLabel = (unit: string, quantity: number) =>
   unit === "PALLET" ? (quantity === 1 ? "palete" : "paletes") : (quantity === 1 ? "saco" : "sacos");
 
-export function LotDispatchForm({ lots, employeeName }: { lots: AvailableFinishedLot[]; employeeName: string }) {
+export function LotDispatchForm({ lots, employeeName, orders, requestId: initialRequestId, initialOrderId="", initialItemId="" }: {
+  lots: AvailableFinishedLot[]; employeeName: string; orders:SalesOrder[]; requestId:string; initialOrderId?:string; initialItemId?:string;
+}) {
   const router = useRouter();
   const formRef = useRef<HTMLFormElement>(null);
-  const [productId, setProductId] = useState("");
-  const [orderQuantity, setOrderQuantity] = useState("");
+  const initialOrder=orders.find(o=>String(o.id)===initialOrderId);
+  const initialItem=initialOrder?.items.find(i=>String(i.id)===initialItemId&&i.remainingUnits>0);
+  const [selectedOrderId,setSelectedOrderId]=useState(initialOrder?initialOrderId:"");
+  const [selectedItemId,setSelectedItemId]=useState(initialItem?initialItemId:"");
+  const [requestId,setRequestId]=useState(initialRequestId);
+  const inFlight=useRef(false);
+  const selectedOrder=orders.find(o=>String(o.id)===selectedOrderId);
+  const selectedItem=selectedOrder?.items.find(i=>String(i.id)===selectedItemId);
+  const productId=selectedItem?String(selectedItem.productId):"";
+  const [orderQuantity, setOrderQuantity] = useState(initialItem?String(initialItem.remainingUnits):"");
   const [allocations, setAllocations] = useState<Record<string, number>>({});
-  const [message, setMessage] = useState("");
-  const [error, setError] = useState("");
+  const [message, setMessage] = useFeedbackState("success");
+  const [error, setError] = useFeedbackState("error");
   const [saving, setSaving] = useState(false);
-
-  const products = useMemo(() => {
-    const map = new Map<number, { id: number; code: string; name: string; availableUnits: number }>();
-    for (const lot of lots) {
-      const existing = map.get(lot.productId);
-      if (existing) existing.availableUnits += lot.availableUnits;
-      else map.set(lot.productId, {
-        id: lot.productId,
-        code: lot.productCode,
-        name: lot.productName,
-        availableUnits: lot.availableUnits,
-      });
-    }
-    return [...map.values()].sort((a, b) => a.name.localeCompare(b.name, "pt"));
-  }, [lots]);
 
   const filteredLots = useMemo(
     () => lots.filter((lot) => String(lot.productId) === productId),
@@ -62,7 +60,7 @@ export function LotDispatchForm({ lots, employeeName }: { lots: AvailableFinishe
 
   const fillFifo = () => {
     if (!Number.isInteger(target) || target <= 0) {
-      setError("Introduza primeiro a quantidade da encomenda.");
+      setError("Introduza primeiro a quantidade a expedir.");
       return;
     }
 
@@ -85,25 +83,28 @@ export function LotDispatchForm({ lots, employeeName }: { lots: AvailableFinishe
 
     setAllocations(next);
     setError(remaining > 0
-      ? `Não é possível completar exatamente a encomenda com embalagens completas. Faltam ${remaining} artigo(s).`
+      ? `Não é possível completar exatamente esta saída com embalagens completas. Faltam ${remaining} artigo(s).`
       : "");
   };
 
   const submit = async (fd: FormData) => {
+    if(inFlight.current)return;
     setMessage("");
     setError("");
     if (!productId) { setError("Selecione o artigo da encomenda."); return; }
     if (!Number.isInteger(target) || target <= 0) { setError("Introduza uma quantidade válida."); return; }
     if (selectedUnits !== target) {
-      setError(`As localizações selecionadas totalizam ${selectedUnits} artigo(s), mas a encomenda tem ${target}.`);
+      setError(`As localizações selecionadas totalizam ${selectedUnits} artigo(s), mas esta saída indica ${target}.`);
       return;
     }
 
+    if(!selectedItem || target>selectedItem.remainingUnits){setError("A quantidade excede o que falta entregar nesta encomenda.");return;}
+    inFlight.current=true;
     setSaving(true);
     try {
       const result = await createLotDispatch(fd);
       formRef.current?.reset();
-      setProductId("");
+      setSelectedOrderId("");setSelectedItemId("");setRequestId(crypto.randomUUID());
       setOrderQuantity("");
       setAllocations({});
       setMessage(`Saída de lotes #${result.id} registada com sucesso.`);
@@ -111,18 +112,21 @@ export function LotDispatchForm({ lots, employeeName }: { lots: AvailableFinishe
     } catch (e) {
       setError(e instanceof Error ? e.message : "Não foi possível registar a saída dos lotes.");
     } finally {
+      inFlight.current=false;
       setSaving(false);
     }
   };
 
-  return <form ref={formRef} action={submit} className="panel form-stack lot-dispatch-form">
+  return <form ref={formRef} onSubmit={event=>{event.preventDefault();if(saving)return;void submit(new FormData(event.currentTarget,(event.nativeEvent as SubmitEvent).submitter));}} className="panel form-stack lot-dispatch-form">
+    <input type="hidden" name="salesOrderItemId" value={selectedItemId}/>
+    <input type="hidden" name="requestId" value={requestId}/>
     <div className="two-col">
-      <label>Cliente *
-        <input name="customerName" maxLength={191} required placeholder="Nome do cliente"/>
+      <label>Encomenda registada *
+        <select value={selectedOrderId} required disabled={saving} onChange={e=>{setSelectedOrderId(e.target.value);setSelectedItemId("");setOrderQuantity("");setAllocations({});}}>
+          <option value="">Selecione a encomenda</option>{orders.map(order=><option key={order.id} value={order.id}>{order.reference} · {order.customerName}{order.customerReference?` · ${order.customerReference}`:""}</option>)}
+        </select>
       </label>
-      <label>Encomenda *
-        <input name="orderReference" maxLength={191} required placeholder="N.º / referência da encomenda"/>
-      </label>
+      <label>Cliente<input value={selectedOrder?.customerName??""} readOnly placeholder="Preenchido pela encomenda"/></label>
       <label>Fatura *
         <input name="invoiceNumber" maxLength={191} required placeholder="N.º da fatura"/>
       </label>
@@ -134,24 +138,16 @@ export function LotDispatchForm({ lots, employeeName }: { lots: AvailableFinishe
     <section className="subpanel form-stack">
       <div className="two-col">
         <label>Artigo da encomenda *
-          <select
-            name="productId"
-            value={productId}
-            required
-            onChange={(e) => {
-              setProductId(e.target.value);
-              setAllocations({});
-            }}
-          >
-            <option value="">Selecione o artigo</option>
-            {products.map((product) => <option key={product.id} value={product.id}>
-              {product.code} — {product.name} · {product.availableUnits.toLocaleString("pt-PT")} artigos disponíveis
-            </option>)}
-          </select>
+          <select value={selectedItemId} required disabled={!selectedOrder||saving} onChange={e=>{
+            const item=selectedOrder?.items.find(i=>String(i.id)===e.target.value);setSelectedItemId(e.target.value);
+            setOrderQuantity(item?String(item.remainingUnits):"");setAllocations({});
+          }}><option value="">Selecione o artigo</option>{selectedOrder?.items.filter(item=>item.remainingUnits>0).map(item=><option key={item.id} value={item.id}>{item.productCode} — {item.productName} · faltam {item.remainingUnits.toLocaleString("pt-PT")} un.</option>)}</select>
         </label>
-        <label>Quantidade da encomenda (artigos) *
+        <label>Quantidade a expedir nesta saída (artigos) *
           <input
             name="orderedQuantityUnits"
+            max={selectedItem?.remainingUnits}
+            disabled={saving}
             type="number"
             min="1"
             step="1"
@@ -163,6 +159,7 @@ export function LotDispatchForm({ lots, employeeName }: { lots: AvailableFinishe
         </label>
       </div>
 
+      {selectedItem&&<p className="muted">Encomendado: {selectedItem.quantityUnits} · Já entregue: {selectedItem.deliveredUnits} · Em falta: {selectedItem.remainingUnits}. Pode registar uma entrega parcial.</p>}
       {productId && <div className="lot-dispatch-balance">
         <div><span>Stock localizado</span><strong>{totalAvailable.toLocaleString("pt-PT")} artigos</strong></div>
         <div><span>Selecionado</span><strong>{selectedUnits.toLocaleString("pt-PT")} artigos</strong></div>
@@ -222,6 +219,7 @@ export function LotDispatchForm({ lots, employeeName }: { lots: AvailableFinishe
         })}</div>}
     </section>}
 
+    {!orders.length&&<p className="notice">Não existem encomendas por entregar. Peça ao administrador ou responsável de produção para registar a encomenda em <Link href="/orders">Encomendas</Link>.</p>}
     <div className="notice muted"><strong>Funcionário responsável pelo registo:</strong> {employeeName}</div>
     {error && <div className="alert error">{error}</div>}
     {message && <div className="alert success">{message}</div>}

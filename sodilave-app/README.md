@@ -290,3 +290,41 @@ regista cada movimento e o utilizador na auditoria. Não junta duas estibas ocup
 Para mover apenas parte de um lote, continuam disponíveis os controlos individuais
 **Corrigir / mover**. Se o stock tiver mudado entretanto (por exemplo, por expedição),
 a alteração é rejeitada e é necessário atualizar o mapa antes de confirmar.
+
+## Encomendas e feedback dos registos
+
+Depois de obter esta versão, executar `npm run db:upgrade` e `npm run db:check`.
+A migração `2026-09-26-sales-orders.sql` cria as encomendas e liga as novas saídas
+às respetivas linhas. As saídas antigas mantêm o histórico original.
+
+- **Adicionar encomenda** (`/orders/new`): disponível para administradores e
+  responsáveis de produção. Inclui cliente, data, referência opcional do cliente,
+  vários artigos, quantidades, preços e instruções de entrega.
+- As quantidades são artigos individuais; os preços são por artigo, em euros,
+  sem IVA, com até quatro casas decimais. O total arredonda cada linha a cêntimos.
+  O registo da encomenda não emite uma fatura fiscal.
+- **Encomendas** (`/orders`): consulta dos estados pendente, parcialmente entregue,
+  entregue e anulada. Cada detalhe liga artigos, saídas, lotes, faturas e operadores.
+- **Saída de lotes**: o operador escolhe uma encomenda e um dos seus artigos,
+  indica a quantidade desta entrega e seleciona as posições de stock. Aceita
+  entregas parciais; impede expedir mais do que falta entregar. Cliente e artigo
+  são obtidos da encomenda no servidor. Uma encomenda com vários artigos pode ter
+  várias saídas, reunidas no mesmo histórico.
+- Anular uma saída, com permissão de administrador, repõe o stock e a quantidade
+  por entregar. Uma encomenda só pode ser anulada quando não tem saídas ativas;
+  o motivo fica registado. Para corrigir uma encomenda ainda não expedida,
+  anular e criar a versão corrigida, preservando o histórico.
+- Novos pedidos de encomendas e saídas usam identificadores únicos para impedir
+  duplicações quando o mesmo pedido é repetido. Os saldos são verificados numa
+  transação, incluindo saídas simultâneas.
+
+Os formulários operacionais e administrativos mostram uma confirmação verde após
+sucesso e um aviso vermelho quando o envio falha ou há campos obrigatórios por
+preencher. O aviso mantém-se nas navegações internas até ser fechado ou substituído.
+Os formulários de produção, arranque, paragem, encomendas e saídas preservam os dados
+quando ocorre uma falha, para permitir corrigir e repetir o envio.
+
+A integração WhatsApp ainda não está ligada. O passo seguinte é configurar o
+WhatsApp Business Platform/Cloud API e receber mensagens através de um webhook
+HTTPS autenticado. Recomenda-se transformar a mensagem num rascunho e pedir
+confirmação antes de registar artigos, quantidades e preços ambíguos.

@@ -52,12 +52,21 @@ const {db}=load('lib/db');
 const {saveWeeklyStartup}=load('app/actions/startup');
 const {saveWeeklyShutdown}=load('app/actions/shutdown');
 const {getActiveWeeklyStartup}=load('lib/active-machines');
-const {createLotDispatch,cancelLotDispatch}=load('app/actions/lot-dispatch');
+const {createLotDispatch:dispatchFromOrder,cancelLotDispatch}=load('app/actions/lot-dispatch');
 const {getAvailableFinishedLots,getRecentLotDispatches}=load('lib/lot-dispatch');
 const {getProductionFormData}=load('lib/production-form-data');
 const {productionToInitial}=load('lib/production-initial');
 const {saveProduction}=load('app/actions/production');
 const fd=(obj)=>{const form=new FormData();for(const [key,value]of Object.entries(obj))form.set(key,String(value));return form;};
+// Existing stock regression scenarios now create a registered customer order.
+async function createLotDispatch(form) {
+  if(!form.has('salesOrderItemId')) {
+    const order=await load('app/actions/sales-orders').createSalesOrder(fd({customerName:form.get('customerName'),customerReference:form.get('orderReference'),orderDate:form.get('dispatchDate'),requestId:require('node:crypto').randomUUID(),items:JSON.stringify([{productId:Number(form.get('productId')),quantityUnits:Number(form.get('orderedQuantityUnits')),unitPrice:'1.00'}])}));
+    const [item]=await db.query('SELECT id FROM SalesOrderItem WHERE salesOrderId=?',[order.id]);
+    form.set('salesOrderItemId',String(item.id));form.set('requestId',require('node:crypto').randomUUID());
+  }
+  return dispatchFromOrder(form);
+}
 let machine,product,material,lot,location,production;
 before(async()=>{
   const [server]=await db.query('SELECT @@lower_case_table_names AS mode');
@@ -355,7 +364,7 @@ test('an authorized operator can finalize a past production and book stock in it
 
 test('every operational mutation rejects anonymous users and auditors; admin mutations reject operators',async()=>{
   const account=user;
-  const operational=['startup','shutdown','checkups','production','lot-dispatch','incidents','intermediate-startup','maintenance','stock-map','production-display','operation-settings','production-admin','admin'];
+  const operational=['startup','shutdown','checkups','production','lot-dispatch','incidents','intermediate-startup','maintenance','sales-orders','stock-map','production-display','operation-settings','production-admin','admin'];
   try {
     for(const role of [null,'AUDITOR']) {
       user=role?{...account,role}:null;
@@ -364,7 +373,7 @@ test('every operational mutation rejects anonymous users and auditors; admin mut
       }
     }
     user={...account,role:'OPERATOR'};
-    for(const file of ['stock-map','production-display','operation-settings','production-admin','admin','maintenance'])for(const action of Object.values(load(`app/actions/${file}`))) {
+    for(const file of ['sales-orders','stock-map','production-display','operation-settings','production-admin','admin','maintenance'])for(const action of Object.values(load(`app/actions/${file}`))) {
       if(typeof action==='function')await assert.rejects(action(new FormData()),/access-denied/,`${file}: operator`);
     }
     for(const role of ['OPERATOR','AUDITOR']) {
@@ -615,4 +624,58 @@ test('application and migration connections use UTC regardless of the hosting de
   for(const [row] of samples){assert.equal(row.zone,'+00:00');assert.ok(Math.abs(row.clock.getTime()-Date.now())<5000);}
   const script="import('./scripts/mysql-client.mjs').then(async ({query,closeDb})=>{try{const [r]=await query('SELECT @@session.time_zone AS zone');if(r.zone!=='+00:00')throw new Error('SQL timezone mismatch');}finally{await closeDb();}})";
   await execFileAsync(process.execPath,['--input-type=module','-e',script],{cwd:root,env:{...process.env,DATABASE_URL:url,TZ:'Europe/Lisbon'}});
+});
+
+test('orders preserve multi-item prices, reject invalid input and deduplicate concurrent submission',async()=>{
+  const {createSalesOrder}=load('app/actions/sales-orders');const {getSalesOrders}=load('lib/sales-orders');
+  const {lineTotalCents}=load('lib/order-values');
+  assert.equal(lineTotalCents(3,'0.3350'),101);assert.equal(lineTotalCents(100,'0.0149'),149);
+  const other=await db.product.create({data:{code:'ORDER-SECOND',name:'Second ordered product',unitsPerPackage:10}});
+  const form=fd({customerName:'Order customer',customerReference:'Customer PO',orderDate:'2026-09-26',requestId:require('node:crypto').randomUUID(),items:JSON.stringify([{productId:product.id,quantityUnits:60,unitPrice:'0,4250'},{productId:other.id,quantityUnits:30,unitPrice:'1.50'}])});
+  const results=await Promise.all([createSalesOrder(form),createSalesOrder(form)]);assert.equal(results[0].id,results[1].id);
+  const [order]=await getSalesOrders({id:results[0].id});assert.equal(order.items.length,2);assert.equal(order.totalCents,7050);assert.equal(order.status,'PENDING');assert.equal(order.customerReference,'Customer PO');
+  form.set('customerName','Changed payload');await assert.rejects(createSalesOrder(form),/outros dados/);
+  form.set('requestId',require('node:crypto').randomUUID());form.set('orderDate','2026-02-30');await assert.rejects(createSalesOrder(form),/Verifique/);
+  form.set('orderDate','2026-09-26');form.set('items',JSON.stringify([{productId:product.id,quantityUnits:1,unitPrice:'1'},{productId:product.id,quantityUnits:2,unitPrice:'1'}]));await assert.rejects(createSalesOrder(form),/uma vez/);
+  form.set('items',JSON.stringify([{productId:product.id,quantityUnits:0,unitPrice:'1'}]));await assert.rejects(createSalesOrder(form),/quantidade/);
+  form.set('items',JSON.stringify([{productId:product.id,quantityUnits:10,unitPrice:'1.23456'}]));await assert.rejects(createSalesOrder(form),/Preço inválido/);
+  assert.equal((await db.query('SELECT COUNT(*) AS n FROM AuditLog WHERE entity=? AND entityId=?',['SalesOrder',String(order.id)]))[0].n,1);
+});
+
+test('registered orders constrain dispatches, partial deliveries, replay, cancellation and concurrent overdelivery',async()=>{
+  const {getSalesOrders,getOrderDispatches}=load('lib/sales-orders');const {cancelSalesOrder}=load('app/actions/sales-orders');
+  const [order]=(await getSalesOrders()).filter(o=>o.customerName==='Order customer');assert.ok(order);
+  const position=await db.storageLocation.create({data:{warehouseCode:'ORDER',warehouseName:'Order warehouse',zoneType:'STACK',code:'O1',rowNumber:1,columnNumber:1}});
+  const produced=[];
+  for(const item of order.items){const row=await db.production.create({data:{machineId:machine.id,productId:item.productId,operatorId:user.id,shiftCode:'A',productionLot:'ORDER-LOT-'+item.id,status:'FINALIZED',quantityProduced:20,unitsPerPackageSnapshot:10,productionUnitSnapshot:'BAG'}});produced.push(row);await db.productionStorageBalance.create({data:{productionId:row.id,locationId:position.id,quantityPackages:20}});}
+  const build=(index,quantity)=>fd({salesOrderItemId:order.items[index].id,requestId:require('node:crypto').randomUUID(),invoiceNumber:'FT-ORDER',dispatchDate:'2026-09-26',orderedQuantityUnits:quantity,[`stock_${produced[index].id}_${position.id}`]:quantity/10,customerName:'Forged customer',orderReference:'Forged reference',productId:999999});
+  const first=build(0,20);const delivered=await dispatchFromOrder(first);
+  const replay=await dispatchFromOrder(first);assert.equal(delivered.id,replay.id);
+  const saved=await db.lotDispatch.findUnique({where:{id:delivered.id}});assert.equal(saved.customerName,order.customerName);assert.equal(saved.orderReference,order.reference);assert.equal(saved.productId,order.items[0].productId);
+  let [current]=await getSalesOrders({id:order.id});assert.equal(current.status,'PARTIAL');assert.equal(current.items[0].remainingUnits,40);
+  const race=await Promise.allSettled([dispatchFromOrder(build(0,40)),dispatchFromOrder(build(0,40))]);assert.equal(race.filter(r=>r.status==='fulfilled').length,1);assert.match(race.find(r=>r.status==='rejected').reason.message,/por entregar/);
+  const remaining=await dispatchFromOrder(build(1,30));[current]=await getSalesOrders({id:order.id});assert.equal(current.status,'COMPLETED');assert.ok(!(await getSalesOrders({pendingOnly:true})).some(o=>o.id===order.id));
+  await assert.rejects(cancelSalesOrder(fd({id:order.id,reason:'Cannot cancel deliveries'})),/saídas registadas/);
+  const second=race.find(r=>r.status==='fulfilled').value;
+  await cancelLotDispatch(fd({dispatchId:second.id,reason:'Return shipment'}));[current]=await getSalesOrders({id:order.id});assert.equal(current.status,'PARTIAL');assert.equal(current.items[0].remainingUnits,40);
+  await cancelLotDispatch(fd({dispatchId:delivered.id,reason:'Correction'}));await cancelLotDispatch(fd({dispatchId:remaining.id,reason:'Correction'}));
+  [current]=await getSalesOrders({id:order.id});assert.equal(current.status,'PENDING');assert.ok(current.items.every(i=>i.deliveredUnits===0));
+  const history=await getOrderDispatches(order.id);assert.equal(history.length,3);assert.ok(history.every(d=>d.cancelledAt));assert.ok(history.every(d=>d.lots.includes('ORDER-LOT-')));
+  await assert.rejects(dispatchFromOrder(first),/anulada/);
+  await cancelSalesOrder(fd({id:order.id,reason:'Wrong customer request'}));[current]=await getSalesOrders({id:order.id});assert.equal(current.status,'CANCELLED');
+  await assert.rejects(dispatchFromOrder(build(0,10)),/encomenda foi anulada/);
+  const balances=await db.query('SELECT quantityPackages FROM ProductionStorageBalance WHERE locationId=?',[position.id]);assert.ok(balances.every(b=>b.quantityPackages===20));
+});
+
+test('dispatch requires a registered order and rejects wrong-product stock without changing balances',async()=>{
+  const {createSalesOrder}=load('app/actions/sales-orders');const {getSalesOrders}=load('lib/sales-orders');
+  await assert.rejects(dispatchFromOrder(fd({customerName:'Manual',orderReference:'Manual',invoiceNumber:'FT',dispatchDate:'2026-09-26',productId:product.id,orderedQuantityUnits:1})),/encomenda registada/);
+  const [other]=await db.query("SELECT id FROM Product WHERE code='ORDER-SECOND'");
+  const created=await createSalesOrder(fd({customerName:'Wrong-stock check',orderDate:'2026-09-26',requestId:require('node:crypto').randomUUID(),items:JSON.stringify([{productId:product.id,quantityUnits:10,unitPrice:'1'}])}));
+  const [order]=await getSalesOrders({id:created.id});const [wrong]=await db.query("SELECT p.id,b.locationId FROM Production p INNER JOIN ProductionStorageBalance b ON b.productionId=p.id WHERE p.productId=? AND p.productionLot LIKE 'ORDER-LOT-%' LIMIT 1",[other.id]);
+  const count=await db.lotDispatch.count();
+  const data=fd({salesOrderItemId:order.items[0].id,requestId:require('node:crypto').randomUUID(),invoiceNumber:'FT',dispatchDate:'2026-09-26',orderedQuantityUnits:10,[`stock_${wrong.id}_${wrong.locationId}`]:1});
+  await assert.rejects(dispatchFromOrder(data),/pertencer ao artigo/);assert.equal(await db.lotDispatch.count(),count);
+  data.set('dispatchDate','2026-02-30');await assert.rejects(dispatchFromOrder(data),/data de saída/);
+  const [current]=await getSalesOrders({id:created.id});assert.equal(current.items[0].remainingUnits,10);
 });

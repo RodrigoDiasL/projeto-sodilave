@@ -57,13 +57,14 @@ test('real pairing issues a secure read-only cookie and revocation blocks the ne
   const database=process.env.TEST_DATABASE_URL||process.env.DATABASE_URL;
   assert.ok(database&&['sodilave_test','typecheck'].includes(new URL(database).pathname.slice(1)),'Only a disposable integration database is allowed');
   const connection=await require('mysql2/promise').createConnection(database);
+  await connection.query("SET SESSION time_zone = '+00:00'");
   const {randomUUID,createHash}=require('node:crypto');const id=randomUUID(),code='90807060';
   try {
     const [[admin]]=await connection.execute("SELECT id FROM User WHERE role='ADMIN' AND active=1 LIMIT 1");
     await connection.execute("DELETE FROM AuthRateLimit WHERE bucket='display:pair'");
     await connection.execute('INSERT INTO ProductionDisplayDevice (id,name,pairingHash,pairingExpiresAt,createdById) VALUES (?,?,?,DATE_ADD(NOW(3),INTERVAL 10 MINUTE),?)',[id,'HTTP TV',createHash('sha256').update(code).digest('hex'),admin.id]);
     const response=await fetch(base+'/api/production-display/pair',{method:'POST',headers:{origin:process.env.APP_URL,'content-type':'application/json'},body:JSON.stringify({code})});
-    assert.equal(response.status,200);const cookie=response.headers.get('set-cookie');
+    assert.equal(response.status,200,await response.text());const cookie=response.headers.get('set-cookie');
     assert.match(cookie,/__Host-sodilave_display=/);assert.match(cookie,/HttpOnly/i);assert.match(cookie,/Secure/i);assert.match(cookie,/SameSite=strict/i);
     const headers={cookie:cookie.split(';')[0]};
     const data=await fetch(base+'/api/production-display',{headers});assert.equal(data.status,200);

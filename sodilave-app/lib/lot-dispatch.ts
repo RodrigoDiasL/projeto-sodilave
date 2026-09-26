@@ -29,6 +29,7 @@ export type AvailableFinishedLot = {
 
 export type RecentLotDispatch = {
   id: number;
+  salesOrderId: number | null;
   customerName: string;
   orderReference: string;
   invoiceNumber: string;
@@ -127,6 +128,7 @@ export async function getRecentLotDispatches(limit = 30): Promise<RecentLotDispa
   const rows = await db.query<any[]>(`
     SELECT
       d.id,
+      oi.salesOrderId,
       DATE_FORMAT(d.cancelledAt, '%Y-%m-%d %H:%i:%s') AS cancelledAt,
       d.cancelReason,
       d.customerName,
@@ -139,6 +141,7 @@ export async function getRecentLotDispatches(limit = 30): Promise<RecentLotDispa
       u.name AS createdByName,
       COALESCE(dispatch_lots.lots, '') AS lots
     FROM LotDispatch d
+    LEFT JOIN SalesOrderItem oi ON oi.id=d.salesOrderItemId
     INNER JOIN Product pr ON pr.id = d.productId
     INNER JOIN User u ON u.id = d.createdById
     LEFT JOIN (
@@ -160,6 +163,7 @@ export async function getRecentLotDispatches(limit = 30): Promise<RecentLotDispa
 
   return rows.map((row) => ({
     id: Number(row.id),
+    salesOrderId: row.salesOrderId ? Number(row.salesOrderId) : null,
     cancelledAt: row.cancelledAt ? String(row.cancelledAt) : null,
     cancelReason: row.cancelReason ? String(row.cancelReason) : null,
     customerName: String(row.customerName),

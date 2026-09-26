@@ -1,4 +1,5 @@
 "use client";
+import { useFeedbackState } from "@/components/FeedbackProvider";
 import { MachineIcon } from "@/components/MachineIcon";
 import { SecondWorkerConfirmation } from "@/components/SecondWorkerConfirmation";
 import { useState } from "react";
@@ -10,8 +11,8 @@ export function CheckupForms({ machines, machineRecords, generalRecord, workers,
   machines: Machine[]; machineRecords: any[]; generalRecord?: any;
   workers: { id: number; name: string }[]; needsConfirmation: boolean; shiftStart: string;
 }) {
-  const [msg, setMsg] = useState("");
-  const [error, setError] = useState("");
+  const [msg, setMsg] = useFeedbackState("success");
+  const [error, setError] = useFeedbackState("error");
   const [allFinalized, setAllFinalized] = useState(generalRecord?.status === "FINALIZED" && machines.every(m => machineRecords.some(r => r.machineId === m.id && r.status === "FINALIZED")));
   const [busy, setBusy] = useState(false);
   const [generalId, setGeneralId] = useState(generalRecord?.id ?? "");

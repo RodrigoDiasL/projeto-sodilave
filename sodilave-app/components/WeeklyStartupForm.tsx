@@ -1,4 +1,5 @@
 "use client";
+import { useFeedbackState } from "@/components/FeedbackProvider";
 import { MachineIcon } from "@/components/MachineIcon";
 import { useState } from "react";
 import { useRouter } from "next/navigation";
@@ -20,12 +21,12 @@ export function WeeklyStartupForm({machines,initial}:{machines:Machine[];initial
  const [recordId,setRecordId]=useState(initial?.id??"");
  const [busy,setBusy]=useState(false);
  const [finished,setFinished]=useState(false);
- const [msg,setMsg]=useState("");const [error,setError]=useState("");
+ const [msg,setMsg]=useFeedbackState("success");const [error,setError]=useFeedbackState("error");
  const setAll=(id:number)=>setValues(v=>({...v,...Object.fromEntries(keys.map(k=>[`m${id}_${k}`,"CONFORMING"]))}));
  const setAllGeneral=()=>setGeneralValues(Object.fromEntries(generalKeys.map(k=>[k,"CONFORMING"])));
  const toggleMachine=(id:number)=>setSelected(current=>current.includes(id)?current.filter(machineId=>machineId!==id):[...current,id]);
  const action=async(fd:FormData)=>{setMsg("");setError("");if(fd.get("intent")==="finalize"&&!confirm("Finalizar o arranque semanal?"))return;setBusy(true);try{const r=await saveWeeklyStartup(fd);setRecordId(r.id);setFinished(r.finalized);router.refresh();setMsg(r.finalized?"Arranque semanal finalizado.":"Rascunho do arranque gravado.");}catch(e){setError(e instanceof Error?e.message:"Não foi possível guardar.")}finally{setBusy(false)}};
- return <form action={action} className="panel form-stack">
+ return <form onSubmit={event=>{event.preventDefault();if(busy)return;void action(new FormData(event.currentTarget,(event.nativeEvent as SubmitEvent).submitter));}} className="panel form-stack">
  <input type="hidden" name="startupId" value={recordId}/>
  {selected.map(id=><input key={id} type="hidden" name="machineIds" value={id}/>) }
  <section className="subpanel"><h2>Máquinas a arrancar</h2><div className="machine-grid">{machines.map(m=>{const active=selected.includes(m.id);return <button type="button" className={`machine-option machine-select-button${active?" selected":""}`} style={active?{background:"#f0fff5",border:"2px solid #22a447",color:"#15803d",boxShadow:"0 0 0 3px rgba(34,164,71,.18)"}:undefined} key={m.id} aria-pressed={active} onClick={()=>toggleMachine(m.id)}><MachineIcon code={m.code}/><strong>{m.code}</strong></button>})}</div></section>
