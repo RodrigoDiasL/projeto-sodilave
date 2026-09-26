@@ -73,3 +73,19 @@ jobs:
         run: npm run build
       - name: Production HTTP security checks
         run: npm run test:http
+      - name: Package verified build for cPanel
+        if: matrix.lower_case_table_names == 0
+        run: |
+          node -e 'const fs = require("node:fs"); fs.writeFileSync("CPANEL_BUILD.json", JSON.stringify({commit: process.env.GITHUB_SHA, node: process.version, platform: process.platform, arch: process.arch, buildId: fs.readFileSync(".next/BUILD_ID", "utf8").trim()}, null, 2) + "\n")'
+          tar --exclude='.next/cache' --exclude='.next/trace' -czf "$RUNNER_TEMP/sodilave-cpanel-build.tar.gz" .next CPANEL_BUILD.json
+          sha256sum "$RUNNER_TEMP/sodilave-cpanel-build.tar.gz" > "$RUNNER_TEMP/sodilave-cpanel-build.sha256"
+      - name: Upload verified cPanel build
+        if: matrix.lower_case_table_names == 0
+        uses: actions/upload-artifact@v4
+        with:
+          name: sodilave-cpanel-build-${{ github.sha }}
+          path: |
+            ${{ runner.temp }}/sodilave-cpanel-build.tar.gz
+            ${{ runner.temp }}/sodilave-cpanel-build.sha256
+          retention-days: 14
+          if-no-files-found: error

@@ -227,6 +227,42 @@ npm run build:production
 
 O build já não executa ferramentas de base de dados; apenas TypeScript/Next.js.
 
+### Alternativa: build verificado no GitHub (alojamento com pouca memória)
+
+Se `next build` falhar com `WebAssembly.instantiate(): Out of memory` ou atingir
+os limites LVE, usar o build Linux gerado pelo workflow **Validate application**.
+O artefacto só é criado depois do build e dos testes HTTP passarem no job MySQL
+com nomes de tabelas sensíveis a maiúsculas. Aguardar também o sucesso do outro job.
+
+1. Abrir GitHub → Actions → **Validate application**, na revisão a instalar.
+2. Descarregar o artefacto `sodilave-cpanel-build-<SHA>`. Extrair o ZIP no computador:
+   contém `sodilave-cpanel-build.tar.gz` e o respetivo SHA-256.
+3. No cPanel, manter a app parada e atualizar o Git para **o mesmo SHA**. Instalar
+   as dependências no alojamento se o lockfile mudou; não copiar `node_modules`.
+4. No Gestor de Ficheiros, ativar **Show Hidden Files**, abrir a raiz da aplicação
+   (`/home/sodilave/repos/projeto-sodilave/sodilave-app`) e renomear a pasta `.next`
+   anterior, se existir, para uma cópia de segurança com data. Não sobrepor builds.
+5. Carregar `sodilave-cpanel-build.tar.gz` nessa pasta e usar **Extract**. O resultado
+   deve ser `.next/BUILD_ID` e `CPANEL_BUILD.json` diretamente na raiz da aplicação,
+   sem uma pasta extra. Confirmar o SHA em `CPANEL_BUILD.json` e no Git do cPanel.
+6. Confirmar Node.js 22, modo Production, `app.js`, `TZ=Europe/Lisbon` e as variáveis
+   reais do alojamento. Manter `NODE_OPTIONS=--disable-wasm-trap-handler` para o
+   Passenger em ambientes com limite de espaço virtual.
+7. Executar `verify:production` e `db:check`. Se esta revisão ainda tiver migrações
+   pendentes, fazer backup e executar `db:production` antes da verificação.
+8. **Não executar build novamente no cPanel.** Selecionar **Start App** e verificar
+   `/api/health`, login e hora/turno. Só remover a cópia antiga após a validação.
+
+O arquivo contém apenas `.next` (sem cache/trace) e a identificação do build.
+Não inclui `.env`, credenciais reais, backups, base de dados ou `node_modules`.
+O código e `public` vêm do Git; a configuração e as dependências ficam no cPanel.
+Variáveis `NEXT_PUBLIC_*`, caso venham a ser usadas, são fixadas no build e exigem
+configuração adequada no CI. As credenciais de teste do CI não substituem as do
+alojamento: manter os valores reais apenas no ambiente do servidor.
+
+O build externo resolve a fase de compilação; se o Passenger ainda exceder os
+limites ao executar a app, consultar o log e rever os recursos com o fornecedor.
+
 ## 10. Arrancar
 
 No Setup Node.js App selecionar **Restart Application**.
