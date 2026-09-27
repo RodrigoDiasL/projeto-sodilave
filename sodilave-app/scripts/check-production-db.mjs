@@ -23,6 +23,7 @@ try {
     SalesOrderItem:["id","salesOrderId","productId","quantityUnits","unitPrice"],
     StorageLocation:["id","warehouseCode","warehouseName","zoneType","rowNumber","columnNumber","code","active"],
     Product:["productionUnit"],
+    RawMaterialLot:["manufacturer","supplier"],
     ProductionStorageBalance:["productionId","locationId","quantityPackages"],
     ProductionStorageMovement:["lotDispatchId","movementType","fromLocationId","toLocationId"],
     ShiftPeerConfirmation:["operatorId","shiftStart"],

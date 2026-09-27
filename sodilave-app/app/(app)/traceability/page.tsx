@@ -209,7 +209,7 @@ export default async function Page({searchParams}:{searchParams:Promise<{q?:stri
             </table></div>}
 
         <h3>Matérias-primas</h3>
-        {r.materials.map((m:any) => <p key={m.id}>{m.rawMaterialLot.rawMaterial.name} · lote {m.rawMaterialLot.supplierLot} · {Number(m.quantityKg || 0)} kg</p>)}
+        {r.materials.map((m:any) => <p key={m.id}>{m.rawMaterialLot.rawMaterial.name} · lote {m.rawMaterialLot.supplierLot} · Fabricante: {m.rawMaterialLot.manufacturer || "—"} · Fornecedor: {m.rawMaterialLot.supplier || "—"} · {Number(m.quantityKg || 0)} kg</p>)}
       </section>;
     })}
   </>;

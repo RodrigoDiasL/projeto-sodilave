@@ -141,7 +141,6 @@ export async function createRawMaterial(formData: FormData) {
     name: requireText(text(formData, "name"), "A designação"),
     materialType: text(formData, "materialType", 60) || null,
     color: text(formData, "color", 60) || null,
-    manufacturer: text(formData, "manufacturer", 120) || null,
     internalReference: text(formData, "internalReference", 80) || null,
     notes: text(formData, "notes", 500) || null,
     unit: "kg", active: true
@@ -155,7 +154,6 @@ export async function updateRawMaterial(formData: FormData) {
     name: requireText(text(formData, "name"), "A designação"),
     materialType: text(formData, "materialType", 60) || null,
     color: text(formData, "color", 60) || null,
-    manufacturer: text(formData, "manufacturer", 120) || null,
     internalReference: text(formData, "internalReference", 80) || null,
     notes: text(formData, "notes", 500) || null,
     active: formData.get("active") === "on", unit: "kg"
@@ -169,7 +167,7 @@ export async function createRawMaterialLot(formData: FormData) {
   const material = await db.rawMaterial.findFirst({where:{id:rawMaterialId,active:true}});
   if (!material) throw new Error("A matéria-prima não existe ou está inativa.");
   const quantity = positiveNumber(formData, "quantityInitial", "A quantidade");
-  await db.rawMaterialLot.create({ data: { rawMaterialId, supplierLot: requireText(text(formData, "supplierLot", 80), "O lote do fornecedor"), supplier: text(formData, "supplier") || null, quantityInitial: quantity, quantityAvailable: quantity } });
+  await db.rawMaterialLot.create({ data: { rawMaterialId, supplierLot: requireText(text(formData, "supplierLot", 80), "O lote do fornecedor"), supplier: text(formData, "supplier", 120) || null, manufacturer: text(formData, "manufacturer", 120) || null, quantityInitial: quantity, quantityAvailable: quantity } });
   revalidatePath("/admin/raw-materials", "layout"); revalidatePath("/admin/raw-material-lots"); revalidatePath("/production");
 }
 
@@ -188,8 +186,8 @@ export async function updateRawMaterialLot(formData: FormData) {
     if(!current || Number(current.rawMaterialId)!==rawMaterialId) throw new Error("Este lote não pertence à matéria-prima selecionada.");
     const expected=Number(formData.get("expectedQuantityAvailable"));
     if(!formData.has("expectedQuantityAvailable") || !Number.isFinite(expected) || Math.abs(expected-Number(current.quantityAvailable))>0.00001) throw new Error("A quantidade deste lote mudou entretanto. Atualize a página antes de corrigir o stock.");
-    await tx.rawMaterialLot.update({where:{id},data:{supplierLot:requireText(text(formData,"supplierLot",80),"O lote do fornecedor"),supplier:text(formData,"supplier")||null,quantityInitial,quantityAvailable:quantityAvailableValue,status:status as any}});
-    await tx.auditLog.create({data:{userId:admin.id,action:"EDIT",entity:"RawMaterialLot",entityId:String(id),details:{before:{quantityInitial:Number(current.quantityInitial),quantityAvailable:Number(current.quantityAvailable),status:current.status},after:{quantityInitial,quantityAvailable:quantityAvailableValue,status}}}});
+    await tx.rawMaterialLot.update({where:{id},data:{supplierLot:requireText(text(formData,"supplierLot",80),"O lote do fornecedor"),supplier:text(formData,"supplier",120)||null,manufacturer:text(formData,"manufacturer",120)||null,quantityInitial,quantityAvailable:quantityAvailableValue,status:status as any}});
+    await tx.auditLog.create({data:{userId:admin.id,action:"EDIT",entity:"RawMaterialLot",entityId:String(id),details:{before:{supplier:current.supplier,manufacturer:current.manufacturer,quantityInitial:Number(current.quantityInitial),quantityAvailable:Number(current.quantityAvailable),status:current.status},after:{supplier:text(formData,"supplier",120)||null,manufacturer:text(formData,"manufacturer",120)||null,quantityInitial,quantityAvailable:quantityAvailableValue,status}}}});
   });
   revalidatePath("/admin/raw-materials", "layout"); revalidatePath("/admin/raw-material-lots"); revalidatePath("/production");
 }

@@ -47,6 +47,8 @@ export async function getProductionFormData(options: { allActiveMachines?: boole
     lots: lotRows.map((lot) => ({
       id: lot.id,
       supplierLot: lot.supplierLot,
+      manufacturer: lot.manufacturer,
+      supplier: lot.supplier,
       quantityAvailable: String(lot.quantityAvailable),
       quantityRecorded: String(credit.get(lot.id) ?? 0),
       quantityEditable: String(Math.round(((lot.status === "ACTIVE" ? Number(lot.quantityAvailable) : 0) + (credit.get(lot.id) ?? 0)) * 1000) / 1000),

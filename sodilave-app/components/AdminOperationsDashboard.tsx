@@ -12,7 +12,7 @@ import {
   Settings,
   ShieldCheck,
   Tags,
-  Trophy,
+  Gauge,
   Truck,
   Warehouse,
   Wrench,
@@ -124,7 +124,7 @@ export function AdminOperationsDashboard({
           <ActionLink href="/orders" title="Encomendas e entregas" icon={<Truck />} />
           <ActionLink href="/lot-dispatch" title="Saída de Lotes" icon={<Truck />} />
           <ActionLink href="/stock-map" title="Mapa de Stock" icon={<Warehouse />} />
-          <ActionLink href="/scoreboards" title="Scoreboards" icon={<Trophy />} />
+          <ActionLink href="/scoreboards" title="Contadores de Produção" icon={<Gauge />} />
           <ActionLink href="/admin/queries" title="Consultas" icon={<Search />} />
           <ActionLink href="/commercial-lots" title="Lotes e controlo interno" icon={<Tags />} />
           <ActionLink href="/maintenance" title="Manutenções" icon={<Wrench />} />

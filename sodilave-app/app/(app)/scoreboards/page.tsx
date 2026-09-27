@@ -11,7 +11,7 @@ export default async function ScoreboardsPage(){
   const annualTotal=data.shifts.reduce((sum,row)=>sum+row.production.year,0);
 
   return <>
-    <PageIntro title="Scoreboards" subtitle="Produção e indicadores operacionais por funcionário e por turno."/>
+    <PageIntro title="Contadores de Produção" subtitle="Produção e indicadores operacionais por funcionário e por turno."/>
 
     <div className={styles.notice}>
       A produção associada a um funcionário corresponde aos turnos em que participou: operador que abriu o registo e segundo trabalhador que confirmou. Como trabalham duas pessoas por turno, a mesma produção pode aparecer no total individual de ambos. O total da fábrica não duplica essas quantidades. Os indicadores de ocorrências mostram o contexto do turno e não atribuem automaticamente responsabilidade individual.

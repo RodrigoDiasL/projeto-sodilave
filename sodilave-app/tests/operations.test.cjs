@@ -773,3 +773,46 @@ test('checkup submission returns useful validation messages and saves a complete
   const logistic=await db.user.create({data:{name:'Logistics peer',role:'LOGISTICS',pinHash:'test'}});
   assert.ok((await load('lib/second-worker-confirmation').getConfirmationWorkers(user.id)).some(row=>row.id===logistic.id));
 });
+
+
+test('material lots store independent manufacturers and suppliers, including edits',async()=>{
+  const {createRawMaterial,createRawMaterialLot,updateRawMaterialLot,updateRawMaterial}=load('app/actions/admin');
+  await createRawMaterial(fd({code:'PEAD-LOT-MAKERS',name:'Same grade'}));
+  const mp=await db.rawMaterial.findFirst({where:{code:'PEAD-LOT-MAKERS'}});
+  for(const [supplierLot,manufacturer,supplier] of [['MAKER-A','Manufacturer A','Supplier A'],['MAKER-B','Manufacturer B','Supplier B']]) {
+    await createRawMaterialLot(fd({rawMaterialId:mp.id,supplierLot,manufacturer,supplier,quantityInitial:100}));
+  }
+  let [a,b]=await db.rawMaterialLot.findMany({where:{rawMaterialId:mp.id},orderBy:{id:'asc'}});
+  assert.equal(a.manufacturer,'Manufacturer A');assert.equal(a.supplier,'Supplier A');
+  assert.equal(b.manufacturer,'Manufacturer B');assert.equal(b.supplier,'Supplier B');
+  await updateRawMaterialLot(fd({id:a.id,rawMaterialId:mp.id,supplierLot:a.supplierLot,manufacturer:'Manufacturer C',supplier:'Supplier C',quantityInitial:100,quantityAvailable:100,expectedQuantityAvailable:100,status:'ACTIVE'}));
+  await updateRawMaterial(fd({id:mp.id,code:mp.code,name:'Updated grade',active:'on',manufacturer:'Ignored parent input'}));
+  [a,b]=await db.rawMaterialLot.findMany({where:{rawMaterialId:mp.id},orderBy:{id:'asc'}});
+  assert.equal(a.manufacturer,'Manufacturer C');assert.equal(a.supplier,'Supplier C');
+  assert.equal(b.manufacturer,'Manufacturer B');assert.equal(b.supplier,'Supplier B');
+  assert.equal((await db.rawMaterial.findUnique({where:{id:mp.id}})).manufacturer,null);
+  const form=await getProductionFormData({allActiveMachines:true});
+  assert.equal(form.lots.find(l=>l.id===a.id).manufacturer,'Manufacturer C');
+  assert.equal(form.lots.find(l=>l.id===b.id).supplier,'Supplier B');
+});
+
+test('manufacturer migration preserves existing lot quantities and suppliers while copying parent manufacturer',async()=>{
+  const migration=fs.readFileSync(path.join(root,'database/migrations/2026-09-27-raw-material-lot-manufacturer.sql'),'utf8')
+    .replaceAll('`RawMaterialLot`','`TestLotManufacturerMigration`').replaceAll('`RawMaterial`','`TestMaterialManufacturerMigration`');
+  await db.$transaction(async tx=>{
+    try {
+      await tx.execute('CREATE TEMPORARY TABLE TestMaterialManufacturerMigration (id INT PRIMARY KEY, manufacturer VARCHAR(191) NULL)');
+      await tx.execute('CREATE TEMPORARY TABLE TestLotManufacturerMigration (id INT PRIMARY KEY, rawMaterialId INT, supplier VARCHAR(191), quantityAvailable DECIMAL(12,3))');
+      await tx.execute("INSERT INTO TestMaterialManufacturerMigration VALUES (1,'Legacy maker'),(2,NULL)");
+      await tx.execute("INSERT INTO TestLotManufacturerMigration VALUES (1,1,'Supplier A',12.5),(2,1,'Supplier B',0),(3,2,'Supplier C',100)");
+      for(const statement of migration.split(';').map(s=>s.trim()).filter(Boolean))await tx.execute(statement);
+      const rows=await tx.query('SELECT * FROM TestLotManufacturerMigration ORDER BY id');
+      assert.deepEqual(rows.map(r=>r.manufacturer),['Legacy maker','Legacy maker',null]);
+      assert.deepEqual(rows.map(r=>r.supplier),['Supplier A','Supplier B','Supplier C']);
+      assert.deepEqual(rows.map(r=>Number(r.quantityAvailable)),[12.5,0,100]);
+    } finally {
+      await tx.execute('DROP TEMPORARY TABLE IF EXISTS TestLotManufacturerMigration');
+      await tx.execute('DROP TEMPORARY TABLE IF EXISTS TestMaterialManufacturerMigration');
+    }
+  });
+});
