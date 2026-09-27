@@ -1,9 +1,10 @@
+import { UserInputError } from "@/lib/action-error";
 import { createHash } from "node:crypto";
 import { isIP } from "node:net";
 import { headers } from "next/headers";
 import { db } from "@/lib/db";
 
-export class AuthRateLimitError extends Error {
+export class AuthRateLimitError extends UserInputError {
   constructor() { super("Demasiadas tentativas. Aguarde um minuto antes de tentar novamente."); }
 }
 

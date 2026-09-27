@@ -1,7 +1,7 @@
 import Link from "next/link";
 import { randomUUID } from "node:crypto";
 import { getSalesOrders } from "@/lib/sales-orders";
-import { requireOperationalUser } from "@/lib/auth";
+import { requireCommerceReadAccess } from "@/lib/auth";
 import { PageIntro } from "@/components/PageIntro";
 import { CancelLotDispatchForm } from "@/components/CancelLotDispatchForm";
 import { LotDispatchForm } from "@/components/LotDispatchForm";
@@ -9,7 +9,7 @@ import { getAvailableFinishedLots, getRecentLotDispatches } from "@/lib/lot-disp
 
 export default async function LotDispatchPage({searchParams}:{searchParams:Promise<{order?:string;item?:string}>}) {
   const selection=await searchParams;
-  const user = await requireOperationalUser();
+  const user = await requireCommerceReadAccess();
   const [lots, recent, orders] = await Promise.all([
     getAvailableFinishedLots(),
     getRecentLotDispatches(30),
@@ -32,8 +32,8 @@ export default async function LotDispatchPage({searchParams}:{searchParams:Promi
       Uma produção finalizada e localizada entra no stock de produto acabado. Ao registar uma saída, indique as posições físicas de onde o produto foi retirado; a aplicação abate automaticamente essas estibas/paletes.
     </div>
 
-    <div className="button-row"><Link className="btn secondary" href="/orders">Consultar encomendas</Link>{["ADMIN","PRODUCTION_MANAGER"].includes(user.role)&&<Link className="btn primary" href="/orders/new">Adicionar Encomenda</Link>}</div>
-    <LotDispatchForm lots={lots} employeeName={user.name} orders={orders} requestId={randomUUID()} initialOrderId={selection.order} initialItemId={selection.item}/>
+    <div className="button-row"><Link className="btn secondary" href="/orders">Consultar encomendas</Link>{["ADMIN","PRODUCTION_MANAGER","LOGISTICS"].includes(user.role)&&<Link className="btn primary" href="/orders/new">Adicionar Encomenda</Link>}</div>
+    {user.role!=="AUDITOR" && <LotDispatchForm lots={lots} employeeName={user.name} orders={orders} requestId={randomUUID()} initialOrderId={selection.order} initialItemId={selection.item}/> }
 
     <section className="panel lot-dispatch-history">
       <div className="section-heading">

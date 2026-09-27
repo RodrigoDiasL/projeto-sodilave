@@ -2,9 +2,9 @@
 import { useFeedbackState } from "@/components/FeedbackProvider";
 import { MachineIcon } from "@/components/MachineIcon";
 import { SecondWorkerConfirmation } from "@/components/SecondWorkerConfirmation";
-import { useState } from "react";
+import { useRef, useState } from "react";
 import { useRouter } from "next/navigation";
-import { saveShiftCheckups } from "@/app/actions/checkups";
+import { submitShiftCheckups } from "@/app/actions/checkups";
 
 type Machine = { id: number; code: string; name: string };
 export function CheckupForms({ machines, machineRecords, generalRecord, workers, needsConfirmation, shiftStart }: {
@@ -19,15 +19,20 @@ export function CheckupForms({ machines, machineRecords, generalRecord, workers,
   const [recordIds, setRecordIds] = useState<Record<number, number>>(() => Object.fromEntries(machines.map(m => [m.id, machineRecords.find(r => r.machineId === m.id)?.id])));
   const [openMachines, setOpenMachines] = useState<number[]>(() => machines.filter(m => !machineRecords.some(r => r.machineId === m.id)).map(m => m.id));
   const router = useRouter();
+  const inFlight = useRef(false);
   if (!machines.length) return <div className="notice">Não existem máquinas em funcionamento para verificar.</div>;
   return <form className="machine-forms-stack" onSubmit={async event => {
     event.preventDefault();
+    if(inFlight.current) return;
+    inFlight.current=true;
     const form = event.currentTarget;
     const submitter = (event.nativeEvent as SubmitEvent).submitter;
     const data = new FormData(form, submitter);
     setMsg(""); setError(""); setBusy(true);
     try {
-      const result = await saveShiftCheckups(data);
+      const response = await submitShiftCheckups(data);
+      if(!response.ok){setError(response.message);return;}
+      const result=response.data;
       setGeneralId(result.general.id);
       setAllFinalized(result.finalized);
       setRecordIds(Object.fromEntries(result.machines.map(m => [m.machineId, m.id])));
@@ -36,7 +41,7 @@ export function CheckupForms({ machines, machineRecords, generalRecord, workers,
       if (pin) pin.value = "";
       router.refresh();
     } catch (e) { setError(e instanceof Error ? e.message : "Erro ao guardar as verificações."); }
-    finally { setBusy(false); }
+    finally { inFlight.current=false; setBusy(false); }
   }}>
     <input type="hidden" name="shiftStart" value={shiftStart}/>
     <input type="hidden" name="generalId" value={generalId}/>

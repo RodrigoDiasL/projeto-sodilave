@@ -32,14 +32,14 @@ export default async function ProductionPage() {
     <PageIntro title="Produções" subtitle="Inicie uma nova produção ou continue um registo já guardado." />
     <ProductionPeriodSelector enabled={pastProductionEnabled}/>
     <section className="production-choice-grid">
-      <Link className="admin-card production-choice" href="/production/new"><ClipboardPlus/><h2>Nova produção</h2><p>Criar um novo registo de produção.</p><span>→</span></Link>
+      {user.role!=="AUDITOR"&&<Link className="admin-card production-choice" href="/production/new"><ClipboardPlus/><h2>Nova produção</h2><p>Criar um novo registo de produção.</p><span>→</span></Link>}
       <a className="admin-card production-choice" href="#abertas"><FolderOpen/><h2>Produções em aberto</h2><p>{drafts.length} registo(s) por concluir.</p><span>↓</span></a>
       <a className="admin-card production-choice" href="#finalizadas"><CheckCircle2/><h2>Produções finalizadas</h2><p>Consultar os registos mais recentes.</p><span>↓</span></a>
     </section>
 
     <section className="panel" id="abertas">
       <h2>Produções em aberto</h2>
-      {drafts.length === 0 ? <p className="empty-state">Não existem produções em aberto.</p> : <div className="responsive-table"><table><thead><tr><th>Última gravação</th><th>Lote</th><th>Máquina</th><th>Produto</th><th>Operador</th><th>Ação</th></tr></thead><tbody>{drafts.map((row) => <tr key={row.id}><td>{row.updatedAt.toLocaleString("pt-PT")}</td><td>{row.productionLot}</td><td>{row.machine.code}</td><td>{row.product.name}</td><td>{row.operator.name}</td><td><Link className="btn primary" href={`/production/${row.id}`}>Continuar produção</Link></td></tr>)}</tbody></table></div>}
+      {drafts.length === 0 ? <p className="empty-state">Não existem produções em aberto.</p> : <div className="responsive-table"><table><thead><tr><th>Última gravação</th><th>Lote</th><th>Máquina</th><th>Produto</th><th>Operador</th><th>Ação</th></tr></thead><tbody>{drafts.map((row) => <tr key={row.id}><td>{row.updatedAt.toLocaleString("pt-PT")}</td><td>{row.productionLot}</td><td>{row.machine.code}</td><td>{row.product.name}</td><td>{row.operator.name}</td><td><Link className="btn primary" href={user.role==="AUDITOR"?`/admin/productions/${row.id}`:`/production/${row.id}`}>{user.role==="AUDITOR"?"Consultar produção":"Continuar produção"}</Link></td></tr>)}</tbody></table></div>}
     </section>
 
     <section className="panel" id="finalizadas">

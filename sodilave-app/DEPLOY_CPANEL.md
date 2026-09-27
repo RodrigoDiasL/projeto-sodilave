@@ -384,3 +384,28 @@ Restart Application
 Referências da configuração do alojamento:
 - https://docs.cloudlinux.com/cloudlinuxos/lve_manager/
 - https://docs.cpanel.net/knowledge-base/web-services/how-to-install-a-node.js-application/
+
+## Atualização de 27/09/2026: unidades, perfis e matérias-primas
+
+Esta atualização mantém os dados existentes. Antes de trocar o build, parar a
+aplicação, executar `backup:db`, atualizar o ramo e executar `db:upgrade` seguido
+por `db:check`. A migração `2026-09-27-raw-material-family-codes.sql` remove apenas a
+unicidade do código da matéria-prima; as relações continuam a usar os IDs existentes.
+Não recriar a base e não repetir o seed. Extrair o pacote compilado da mesma revisão
+como descrito acima e reiniciar a app. Não compilar novamente no cPanel.
+
+- Unidade de produção `UNIT`: cada quantidade corresponde a um artigo; o fator é
+  sempre 1. Saco e Palete mantêm os fatores configurados. Os registos já finalizados
+  mantêm os valores guardados na altura da produção.
+- `LOGISTICS` (Logística e Expedição): operações de produção, encomendas e saídas.
+  Operadores deixam de ter acesso às páginas e ações das encomendas e expedição.
+- `AUDITOR`: consultas, catálogos, lotes, rastreabilidade, atividade, ordens do ecrã e
+  manutenções. Sem criação/edição, PINs, emparelhamento de TVs ou administração.
+- Utilizadores sem histórico podem ser eliminados; contas com histórico ficam
+  inativas e sem sessões válidas. O botão Mostrar inativos permite consultá-las.
+- Matérias-primas podem repetir códigos de família. Identificar cada gama pela
+  designação e abrir Lotes no respetivo cartão. As correções de quantidade rejeitam
+  formulários desatualizados e não permitem transferir um lote para outra gama.
+- As verificações devolvem mensagens de validação legíveis em produção. Uma falha
+  inesperada mostra uma referência que permite localizar a causa no log do servidor,
+  sem expor dados SQL no navegador.

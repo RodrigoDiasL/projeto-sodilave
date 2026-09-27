@@ -1,6 +1,6 @@
 import Link from "next/link";
 import { notFound } from "next/navigation";
-import { requireUser } from "@/lib/auth";
+import { requireCommerceReadAccess } from "@/lib/auth";
 import { getSalesOrders, getOrderDispatches } from "@/lib/sales-orders";
 import { formatEuro } from "@/lib/order-values";
 import { PageIntro } from "@/components/PageIntro";
@@ -8,10 +8,10 @@ import { FeedbackForm } from "@/components/FeedbackForm";
 import { cancelSalesOrder } from "@/app/actions/sales-orders";
 const labels={PENDING:"Por entregar",PARTIAL:"Entrega parcial",COMPLETED:"Entregue",CANCELLED:"Anulada"};
 export default async function OrderPage({params}:{params:Promise<{id:string}>}) {
-  const user=await requireUser();const id=Number((await params).id);
+  const user=await requireCommerceReadAccess();const id=Number((await params).id);
   if(!Number.isSafeInteger(id)||id<=0)notFound();
   const [order]=(await getSalesOrders({id}));if(!order)notFound();
-  const dispatches=await getOrderDispatches(id);const canCancel=["ADMIN","PRODUCTION_MANAGER"].includes(user.role)&&order.status==="PENDING";
+  const dispatches=await getOrderDispatches(id);const canCancel=["ADMIN","PRODUCTION_MANAGER","LOGISTICS"].includes(user.role)&&order.status==="PENDING";
   return <><PageIntro title={order.reference} subtitle={`${order.customerName} · ${labels[order.status]}`} back="/orders"/>
     <section className="panel form-stack"><div className="detail-grid"><p><strong>Cliente:</strong> {order.customerName}</p><p><strong>Data:</strong> {order.orderDate.split("-").reverse().join("/")}</p><p><strong>Referência do cliente:</strong> {order.customerReference||"—"}</p><p><strong>Registada por:</strong> {order.createdByName}</p></div>
       {order.notes&&<p className="order-notes">{order.notes}</p>}{order.cancelReason&&<p className="alert error">Encomenda anulada: {order.cancelReason}</p>}

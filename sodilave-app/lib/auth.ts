@@ -14,7 +14,7 @@ const development = globalThis as typeof globalThis & { sodilaveDevSecret?: stri
 const secret = new TextEncoder().encode(configuredSecret || (development.sodilaveDevSecret ??= randomBytes(32).toString("hex")));
 const issuer = "sodilave";
 const audience = "sodilave-session";
-type SessionUser = { id: number; name: string; role: "ADMIN" | "PRODUCTION_MANAGER" | "AUDITOR" | "OPERATOR"; active: number | boolean; sessionVersion: number };
+type SessionUser = { id: number; name: string; role: "ADMIN" | "PRODUCTION_MANAGER" | "AUDITOR" | "OPERATOR" | "LOGISTICS"; active: number | boolean; sessionVersion: number };
 type LoginUser = { userId: number; role: string; name: string };
 
 export async function createSession(payload: LoginUser, expectedPinHash: string) {
@@ -68,7 +68,7 @@ export async function requireUser() {
 }
 export async function requireOperationalUser() {
   const user = await requireUser();
-  if (!["ADMIN", "PRODUCTION_MANAGER", "OPERATOR"].includes(user.role)) redirect("/access-denied");
+  if (!["ADMIN", "PRODUCTION_MANAGER", "OPERATOR", "LOGISTICS"].includes(user.role)) redirect("/access-denied");
   return user;
 }
 export async function requireAuditAccess() {
@@ -89,5 +89,16 @@ export async function requireProductionManager() {
 export async function requireAdmin() {
   const user = await requireUser();
   if (user.role !== "ADMIN") redirect("/access-denied");
+  return user;
+}
+
+export async function requireCommerceUser() {
+  const user = await requireUser();
+  if (!["ADMIN", "PRODUCTION_MANAGER", "LOGISTICS"].includes(user.role)) redirect("/access-denied");
+  return user;
+}
+export async function requireCommerceReadAccess() {
+  const user = await requireUser();
+  if (!["ADMIN", "PRODUCTION_MANAGER", "LOGISTICS", "AUDITOR"].includes(user.role)) redirect("/access-denied");
   return user;
 }

@@ -1,9 +1,10 @@
 "use client";
+import { productionUnitLabel as unitLabel } from "@/lib/production-unit";
 
 import { useMemo, useState } from "react";
 import type { StorageLocationInfo, StorageZoneType } from "@/lib/stock-map";
 
-const unitLabel = (unit: string, quantity = 2) => unit === "PALLET" ? (quantity === 1 ? "palete" : "paletes") : (quantity === 1 ? "saco" : "sacos");
+
 
 export function ProductionStorageSelector({
   locations,

@@ -1,7 +1,7 @@
 import { db } from "@/lib/db";
 
 export type StorageZoneType = "STACK" | "PALLET";
-export type ProductionUnit = "BAG" | "PALLET";
+export type ProductionUnit = "BAG" | "PALLET" | "UNIT";
 
 export type StorageLocationInfo = {
   id: number;

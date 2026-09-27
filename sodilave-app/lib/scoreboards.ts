@@ -80,7 +80,7 @@ export async function getScoreboardData(now = new Date()): Promise<ScoreboardDat
   const starts = getReportingPeriods(now);
   const [users, productions, machineChecks, generalChecks, incidents, confirmations] = await Promise.all([
     db.user.findMany({
-      where: { role: { in: ["OPERATOR", "PRODUCTION_MANAGER"] } },
+      where: { role: { in: ["OPERATOR", "PRODUCTION_MANAGER", "LOGISTICS"] } },
       select: { id: true, name: true, active: true },
       orderBy: { name: "asc" },
     }),

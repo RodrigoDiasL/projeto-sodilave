@@ -34,7 +34,9 @@ function load(file) {
     if(name==='next/navigation')return {redirect:location=>{throw new Error('redirect:'+location);}};
     if(name==='@/lib/auth')return {
       requireUser:async()=>{if(!user)throw new Error('access-denied');return user;},
-      requireOperationalUser:async()=>{if(!user||!['ADMIN','OPERATOR','PRODUCTION_MANAGER'].includes(user.role))throw new Error('access-denied');return user;},
+      requireOperationalUser:async()=>{if(!user||!['ADMIN','OPERATOR','PRODUCTION_MANAGER','LOGISTICS'].includes(user.role))throw new Error('access-denied');return user;},
+      requireCommerceUser:async()=>{if(!user||!['ADMIN','PRODUCTION_MANAGER','LOGISTICS'].includes(user.role))throw new Error('access-denied');return user;},
+      requireCommerceReadAccess:async()=>{if(!user||!['ADMIN','PRODUCTION_MANAGER','LOGISTICS','AUDITOR'].includes(user.role))throw new Error('access-denied');return user;},
       requireAdmin:async()=>{if(!user||user.role!=='ADMIN')throw new Error('access-denied');return user;},
       requireProductionManager:async()=>{if(!user||!['ADMIN','PRODUCTION_MANAGER'].includes(user.role))throw new Error('access-denied');return user;},
       createSession:(...args)=>load('lib/auth').createSession(...args),
@@ -373,7 +375,7 @@ test('every operational mutation rejects anonymous users and auditors; admin mut
       }
     }
     user={...account,role:'OPERATOR'};
-    for(const file of ['sales-orders','stock-map','production-display','operation-settings','production-admin','admin','maintenance'])for(const action of Object.values(load(`app/actions/${file}`))) {
+    for(const file of ['sales-orders','lot-dispatch','stock-map','production-display','operation-settings','production-admin','admin','maintenance'])for(const action of Object.values(load(`app/actions/${file}`))) {
       if(typeof action==='function')await assert.rejects(action(new FormData()),/access-denied/,`${file}: operator`);
     }
     for(const role of ['OPERATOR','AUDITOR']) {
@@ -678,4 +680,96 @@ test('dispatch requires a registered order and rejects wrong-product stock witho
   await assert.rejects(dispatchFromOrder(data),/pertencer ao artigo/);assert.equal(await db.lotDispatch.count(),count);
   data.set('dispatchDate','2026-02-30');await assert.rejects(dispatchFromOrder(data),/data de saída/);
   const [current]=await getSalesOrders({id:created.id});assert.equal(current.items[0].remainingUnits,10);
+});
+
+test('commerce permissions use real sessions: operators cannot read orders, logistics can operate, auditors only read',async()=>{
+  const auth=load('lib/auth');
+  const pinHash=await require('bcryptjs').hash('89898989',4);
+  try {
+    for(const role of ['OPERATOR','LOGISTICS','AUDITOR','ADMIN','PRODUCTION_MANAGER']) {
+      const person=await db.user.create({data:{name:'Role '+role,role,pinHash}});
+      await auth.createSession({userId:person.id,name:person.name,role},pinHash);
+      if(role==='OPERATOR') await assert.rejects(auth.requireCommerceReadAccess(),/access-denied/);
+      else assert.equal((await auth.requireCommerceReadAccess()).id,person.id);
+      if(['OPERATOR','AUDITOR'].includes(role)) await assert.rejects(auth.requireCommerceUser(),/access-denied/);
+      else assert.equal((await auth.requireCommerceUser()).id,person.id);
+      if(role==='AUDITOR') await assert.rejects(auth.requireOperationalUser(),/access-denied/);
+      else assert.equal((await auth.requireOperationalUser()).id,person.id);
+      if(role!=='ADMIN') await assert.rejects(auth.requireAdmin(),/access-denied/);
+      await auth.destroySession();
+    }
+  } finally {testCookies.clear();}
+});
+
+test('unit products force a 1:1 ratio and dispatch individual articles without package multiplication',async()=>{
+  const {createProduct,updateProduct}=load('app/actions/admin');
+  await createProduct(fd({code:'UNIT-CAP',name:'Cap counted individually',productionUnit:'UNIT',unitsPerPackage:100,machineIds:machine.id}));
+  const cap=await db.product.findFirst({where:{code:'UNIT-CAP'}});
+  assert.equal(cap.unitsPerPackage,1);assert.equal(cap.productionUnit,'UNIT');
+  await updateProduct(fd({id:cap.id,code:cap.code,name:cap.name,productionUnit:'UNIT',unitsPerPackage:999,machineIds:machine.id,active:'on'}));
+  assert.equal((await db.product.findUnique({where:{id:cap.id}})).unitsPerPackage,1);
+  const produced=await db.production.create({data:{machineId:machine.id,productId:cap.id,operatorId:user.id,shiftCode:'A',productionLot:'UNIT-LOT',status:'FINALIZED',quantityProduced:12,unitsPerPackageSnapshot:1,productionUnitSnapshot:'UNIT'}});
+  await db.productionStorageBalance.create({data:{productionId:produced.id,locationId:location.id,quantityPackages:12}});
+  const order=await load('app/actions/sales-orders').createSalesOrder(fd({customerName:'Unit customer',orderDate:'2026-09-27',requestId:require('node:crypto').randomUUID(),items:JSON.stringify([{productId:cap.id,quantityUnits:3,unitPrice:'0.25'}])}));
+  const [line]=await db.query('SELECT id FROM SalesOrderItem WHERE salesOrderId=?',[order.id]);
+  const account=user;user={...user,role:'LOGISTICS'};
+  try {
+    await dispatchFromOrder(fd({salesOrderItemId:line.id,requestId:require('node:crypto').randomUUID(),invoiceNumber:'UNIT-FT',dispatchDate:'2026-09-27',orderedQuantityUnits:3,[`stock_${produced.id}_${location.id}`]:3}));
+    const [balance]=await db.query('SELECT quantityPackages FROM ProductionStorageBalance WHERE productionId=?',[produced.id]);assert.equal(Number(balance.quantityPackages),9);
+  } finally {user=account;}
+  const {productionUnitLabel}=load('lib/production-unit');assert.equal(productionUnitLabel('UNIT',1),'unidade');assert.equal(productionUnitLabel('UNIT',9),'unidades');
+});
+
+test('duplicate material family codes retain independent lots and reject reparenting or stale stock edits',async()=>{
+  const {createRawMaterial,createRawMaterialLot,updateRawMaterialLot}=load('app/actions/admin');
+  await createRawMaterial(fd({code:'PEAD',name:'Grade A'}));await createRawMaterial(fd({code:'PEAD',name:'Grade B'}));
+  const grades=await db.rawMaterial.findMany({where:{code:'PEAD'},orderBy:{id:'asc'}});assert.equal(grades.length,2);
+  for(const grade of grades)await createRawMaterialLot(fd({rawMaterialId:grade.id,supplierLot:'SAME-SUPPLIER-LOT',quantityInitial:100}));
+  const a=await db.rawMaterialLot.findFirst({where:{rawMaterialId:grades[0].id}});
+  const b=await db.rawMaterialLot.findFirst({where:{rawMaterialId:grades[1].id}});assert.notEqual(a.id,b.id);
+  const form=fd({id:a.id,rawMaterialId:grades[0].id,supplierLot:a.supplierLot,quantityInitial:100,quantityAvailable:90,expectedQuantityAvailable:100,status:'ACTIVE'});
+  await updateRawMaterialLot(form);
+  assert.equal(Number((await db.rawMaterialLot.findUnique({where:{id:a.id}})).quantityAvailable),90);
+  assert.equal(Number((await db.rawMaterialLot.findUnique({where:{id:b.id}})).quantityAvailable),100);
+  await assert.rejects(updateRawMaterialLot(form),/mudou entretanto/);
+  form.set('rawMaterialId',String(grades[1].id));form.set('expectedQuantityAvailable','90');await assert.rejects(updateRawMaterialLot(form),/não pertence/);
+});
+
+test('deleting unused users removes them while historical users are visibly deactivated and sessions revoked',async()=>{
+  const {deleteUser}=load('app/actions/admin');const auth=load('lib/auth');
+  const unused=await db.user.create({data:{name:'Unused',pinHash:'unused',role:'OPERATOR'}});
+  const removed=await deleteUser(fd({id:unused.id}));assert.match(removed.message,/eliminado/);assert.equal(await db.user.findUnique({where:{id:unused.id}}),null);
+  const used=await db.user.create({data:{name:'Historical',pinHash:'history',role:'LOGISTICS'}});
+  await db.auditLog.create({data:{userId:used.id,action:'CREATE',entity:'TestHistory'}});
+  await auth.createSession({userId:used.id,name:used.name,role:used.role},used.pinHash);
+  const disabled=await deleteUser(fd({id:used.id}));assert.match(disabled.message,/desativado/);
+  assert.equal(Boolean((await db.user.findUnique({where:{id:used.id}})).active),false);assert.equal(await auth.getSession(),null);
+  const [audit]=await db.query('SELECT userId FROM AuditLog WHERE entity=?',['TestHistory']);assert.equal(audit.userId,used.id);
+  await assert.rejects(deleteUser(fd({id:user.id})),/sessão iniciada/);
+  // A foreign-key history reference also protects users even if they have no audit entry.
+  const withProduction=await db.user.create({data:{name:'Production owner',pinHash:'owner',role:'OPERATOR'}});
+  await db.production.create({data:{machineId:machine.id,productId:product.id,operatorId:withProduction.id,shiftCode:'A',productionLot:'DELETION-HISTORY'}});
+  assert.match((await deleteUser(fd({id:withProduction.id}))).message,/desativado/);
+});
+
+test('cap icons follow machine business codes after recreation, regardless of database ids',()=>{
+  const {isCapMachine}=load('lib/machine-icon');
+  for(const code of ['5','6','M5','M06','Máquina 5','Maq. 6','005'])assert.equal(isCapMachine(code),true,code);
+  for(const code of ['1','7','15','56','M7'])assert.equal(isCapMachine(code),false,code);
+});
+
+test('checkup submission returns useful validation messages and saves a complete shift after initial setup',async()=>{
+  const {submitShiftCheckups}=load('app/actions/checkups');const {getShiftWindow}=load('lib/shift');
+  const stale=await submitShiftCheckups(fd({intent:'draft',shiftStart:'2000-01-01T00:00:00.000Z'}));assert.equal(stale.ok,false);assert.match(stale.message,/turno mudou/);
+  await db.machine.updateMany({data:{status:'STOPPED'}});
+  const running=await db.machine.create({data:{code:'CHECK-NEW',name:'Newly configured machine',status:'RUNNING'}});
+  await db.weeklyStartup.create({data:{operatorId:user.id,status:'FINALIZED',shiftCode:getShiftWindow().code,startupDate:new Date(),coolingPump1:true,coolingPump2:false}});
+  const form=fd({intent:'finalize',shiftStart:getShiftWindow().start.toISOString(),machineIds:running.id,chillerLargeC:5,chillerSmallC:5,ambientTempC:22,[`m${running.id}_oilLevel`]:'NORMAL',[`m${running.id}_oilTempC`]:40,[`m${running.id}_waterPressure`]:3});
+  const before=await db.machineCheckup.count();
+  const missing=await submitShiftCheckups(form);assert.equal(missing.ok,false);assert.match(missing.message,/CHECK-NEW.*pressões/);assert.equal(await db.machineCheckup.count(),before);
+  form.set(`m${running.id}_airPressure`,'6');
+  const saved=await submitShiftCheckups(form);assert.equal(saved.ok,true,saved.message);assert.equal(saved.data.finalized,true);
+  const repeated=await submitShiftCheckups(form);assert.equal(repeated.ok,true);assert.equal(repeated.data.general.id,saved.data.general.id);assert.equal(await db.machineCheckup.count(),before+1);
+  const logistic=await db.user.create({data:{name:'Logistics peer',role:'LOGISTICS',pinHash:'test'}});
+  assert.ok((await load('lib/second-worker-confirmation').getConfirmationWorkers(user.id)).some(row=>row.id===logistic.id));
 });

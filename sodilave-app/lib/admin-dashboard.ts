@@ -146,7 +146,7 @@ export async function getAdminDashboardData(now = new Date()): Promise<AdminDash
       take: 12,
     }),
     db.machine.findMany({
-      where: { code: { in: priorityCodes } },
+      where: { active: true },
       orderBy: { code: "asc" },
     }),
     db.weeklyStartup.findMany({
@@ -244,7 +244,7 @@ export async function getAdminDashboardData(now = new Date()): Promise<AdminDash
     })),
   ].sort((a, b) => b.occurredAt.getTime() - a.occurredAt.getTime()).slice(0, 40);
 
-  const orderedMachines = [...machines].sort((a, b) => priorityCodes.indexOf(a.code) - priorityCodes.indexOf(b.code));
+  const orderedMachines = [...machines].sort((a, b) => a.code.localeCompare(b.code, "pt", { numeric: true }));
   const earliestCycle = cycles[0]?.startupDate;
   const events = earliestCycle && orderedMachines.length
     ? await db.machineEvent.findMany({

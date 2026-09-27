@@ -1,15 +1,3 @@
-import { FeedbackForm } from "@/components/FeedbackForm";
-import { db } from "@/lib/db";
-import { requireAdmin } from "@/lib/auth";
-import { createRawMaterialLot, deleteRawMaterialLot, updateRawMaterialLot } from "@/app/actions/admin";
-import { AdminPage } from "@/components/AdminPage";
-import { ConfirmDeleteButton } from "@/components/ConfirmDeleteButton";
-const statusLabel=(s:string)=>({ACTIVE:'Ativo',DEPLETED:'Esgotado',CLOSED:'Fechado',CANCELLED:'Cancelado'}[s]||s);
-export default async function Page(){
-  await requireAdmin();
-  const [materials,rows]=await Promise.all([db.rawMaterial.findMany({where:{active:true},orderBy:{name:'asc'}}),db.rawMaterialLot.findMany({include:{rawMaterial:true},orderBy:{receivedAt:'desc'}})]);
-  return <AdminPage title="Lotes de matérias-primas" subtitle="Dar entrada, alterar e consultar lotes recebidos.">
-    <FeedbackForm action={createRawMaterialLot} className="inline-form"><select name="rawMaterialId" required><option value="">Selecione a matéria-prima</option>{materials.map(m=><option key={m.id} value={m.id}>{m.name}</option>)}</select><input name="supplierLot" placeholder="Lote do fornecedor" maxLength={80} required/><input name="supplier" placeholder="Fornecedor" maxLength={120}/><input className="no-spinner" name="quantityInitial" type="number" min="0.001" max="999999999" step="0.001" inputMode="decimal" placeholder="Quantidade (kg)" required/><button className="btn primary">Dar entrada</button></FeedbackForm>
-    <div className="raw-lot-editors">{rows.map(r=><section className="panel raw-lot-card" key={r.id}><FeedbackForm action={updateRawMaterialLot} className="form-stack"><input type="hidden" name="id" value={r.id}/><div className="two-col"><label>Matéria-prima<select name="rawMaterialId" defaultValue={r.rawMaterialId}>{materials.map(m=><option key={m.id} value={m.id}>{m.name}</option>)}</select></label><label>Lote do fornecedor<input name="supplierLot" defaultValue={r.supplierLot}/></label><label>Fornecedor<input name="supplier" defaultValue={r.supplier??''}/></label><label>Quantidade inicial (kg)<input className="no-spinner" name="quantityInitial" type="number" min="0.001" step="0.001" defaultValue={String(Number(r.quantityInitial))}/></label><label>Quantidade disponível (kg)<input className="no-spinner" name="quantityAvailable" type="number" min="0" step="0.001" defaultValue={String(Number(r.quantityAvailable))}/></label><label>Estado<select name="status" defaultValue={r.status}><option value="ACTIVE">Ativo</option><option value="DEPLETED">Esgotado</option><option value="CLOSED">Fechado</option><option value="CANCELLED">Cancelado</option></select></label></div><div className="button-row"><button className="btn secondary">Guardar alterações</button></div></FeedbackForm><FeedbackForm action={deleteRawMaterialLot}><input type="hidden" name="id" value={r.id}/><ConfirmDeleteButton label="Eliminar / cancelar" message="Eliminar este lote? Se já tiver sido usado, será marcado como cancelado."/></FeedbackForm><small>{statusLabel(r.status)} · recebido em {r.receivedAt.toLocaleDateString('pt-PT')}</small></section>)}</div>
-  </AdminPage>;
-}
+import { requireAuditAccess } from "@/lib/auth";
+import { redirect } from "next/navigation";
+export default async function Page(){await requireAuditAccess();redirect("/admin/raw-materials");}

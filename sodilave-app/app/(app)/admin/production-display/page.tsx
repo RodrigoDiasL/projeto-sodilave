@@ -1,10 +1,18 @@
-import { requireAdmin } from "@/lib/auth";
+import { getProductionDisplayData } from "@/lib/production-display";
+import { requireAuditAccess } from "@/lib/auth";
 import { db } from "@/lib/db";
 import { getActiveWeeklyStartup } from "@/lib/active-machines";
 import { AdminPage } from "@/components/AdminPage";
 import { DisplayAdmin } from "@/components/DisplayAdmin";
 export default async function DisplaySettingsPage() {
-  await requireAdmin();
+  const user=await requireAuditAccess();
+  if(user.role==="AUDITOR") {
+    const data=await getProductionDisplayData();
+    return <AdminPage title="Ecrã de produção — consulta" subtitle="Lotes e instruções atuais, sem permissões para alterar ordens ou emparelhar dispositivos.">
+      <p>{data.cycleActive?"Ciclo semanal ativo":"Sem ciclo ativo"} · {data.shift}</p>
+      {data.machines.map(m=><section className="panel" key={m.id}><h2>Máquina {m.code}</h2><p>{m.product||"Produto por confirmar"} · {m.lot||"Lote por confirmar"}</p><p>{m.destination==="PALLET"?"Paletes":m.destination==="STACK"?"Estiba / monte":"Destino por confirmar"}</p><p>{m.notes}</p><p>{m.warning}</p></section>)}
+    </AdminPage>;
+  }
   const startup=await getActiveWeeklyStartup();
   const [machines,lots,rows]=await Promise.all([
     db.query<any[]>(`SELECT m.id,m.code,o.commercialLotId,o.destination,o.notes,COALESCE(o.weeklyStartupId=?,0) AS currentOrder

@@ -92,10 +92,10 @@ export async function createMachine(formData: FormData) {
 export async function createProduct(formData: FormData) {
   const admin=await requireAdmin();
   const ids=machineIds(formData);
-  const unitsPerPackage = positiveNumber(formData, "unitsPerPackage", "As unidades por embalagem", 100000);
+  const unitsPerPackage = formData.get("productionUnit") === "UNIT" ? 1 : positiveNumber(formData, "unitsPerPackage", "As unidades por embalagem", 100000);
   if (!Number.isInteger(unitsPerPackage)) throw new Error("As unidades por embalagem devem ser um número inteiro.");
   const productionUnit = text(formData, "productionUnit", 16) || "BAG";
-  if (!["BAG","PALLET"].includes(productionUnit)) throw new Error("A unidade de produção é inválida.");
+  if (!["BAG","PALLET","UNIT"].includes(productionUnit)) throw new Error("A unidade de produção é inválida.");
   await db.$transaction(async tx => {
   const row=await tx.product.create({ data: { code: requireText(text(formData, "code", 40), "O código"), name: requireText(text(formData, "name"), "A designação"), unitsPerPackage, productionUnit, active: true } });
   await replaceProductMachines(tx,row.id,ids);
@@ -108,10 +108,10 @@ export async function updateProduct(formData: FormData) {
   const admin=await requireAdmin();
   const id = positiveId(formData);
   const ids=machineIds(formData);
-  const unitsPerPackage = positiveNumber(formData, "unitsPerPackage", "As unidades por embalagem", 100000);
+  const unitsPerPackage = formData.get("productionUnit") === "UNIT" ? 1 : positiveNumber(formData, "unitsPerPackage", "As unidades por embalagem", 100000);
   if (!Number.isInteger(unitsPerPackage)) throw new Error("As unidades por embalagem devem ser um número inteiro.");
   const productionUnit = text(formData, "productionUnit", 16) || "BAG";
-  if (!["BAG","PALLET"].includes(productionUnit)) throw new Error("A unidade de produção é inválida.");
+  if (!["BAG","PALLET","UNIT"].includes(productionUnit)) throw new Error("A unidade de produção é inválida.");
   await db.$transaction(async tx => {
   await tx.product.update({ where: { id }, data: {
     code: requireText(text(formData, "code", 40), "O código"),
@@ -166,9 +166,11 @@ export async function createRawMaterialLot(formData: FormData) {
   await requireAdmin();
   const rawMaterialId = Number(formData.get("rawMaterialId"));
   if (!Number.isInteger(rawMaterialId) || rawMaterialId <= 0) throw new Error("Selecione uma matéria-prima.");
+  const material = await db.rawMaterial.findFirst({where:{id:rawMaterialId,active:true}});
+  if (!material) throw new Error("A matéria-prima não existe ou está inativa.");
   const quantity = positiveNumber(formData, "quantityInitial", "A quantidade");
   await db.rawMaterialLot.create({ data: { rawMaterialId, supplierLot: requireText(text(formData, "supplierLot", 80), "O lote do fornecedor"), supplier: text(formData, "supplier") || null, quantityInitial: quantity, quantityAvailable: quantity } });
-  revalidatePath("/admin/raw-material-lots"); revalidatePath("/production");
+  revalidatePath("/admin/raw-materials", "layout"); revalidatePath("/admin/raw-material-lots"); revalidatePath("/production");
 }
 
 export async function updateRawMaterialLot(formData: FormData) {
@@ -181,16 +183,15 @@ export async function updateRawMaterialLot(formData: FormData) {
   if (!Number.isFinite(quantityAvailableValue) || quantityAvailableValue < 0 || quantityAvailableValue > quantityInitial) throw new Error("A quantidade disponível deve estar entre 0 e a quantidade inicial.");
   const status = text(formData, "status", 20);
   if (!["ACTIVE", "DEPLETED", "CLOSED", "CANCELLED"].includes(status)) throw new Error("Estado do lote inválido.");
-  await db.rawMaterialLot.update({ where: { id }, data: {
-    rawMaterialId,
-    supplierLot: requireText(text(formData, "supplierLot", 80), "O lote do fornecedor"),
-    supplier: text(formData, "supplier") || null,
-    quantityInitial,
-    quantityAvailable: quantityAvailableValue,
-    status: status as any,
-  } });
-  await db.auditLog.create({ data: { userId: admin.id, action: "EDIT", entity: "RawMaterialLot", entityId: String(id) } });
-  revalidatePath("/admin/raw-material-lots"); revalidatePath("/production");
+  await db.$transaction(async tx => {
+    const [current]=await tx.query<any[]>("SELECT * FROM RawMaterialLot WHERE id=? FOR UPDATE",[id]);
+    if(!current || Number(current.rawMaterialId)!==rawMaterialId) throw new Error("Este lote não pertence à matéria-prima selecionada.");
+    const expected=Number(formData.get("expectedQuantityAvailable"));
+    if(!formData.has("expectedQuantityAvailable") || !Number.isFinite(expected) || Math.abs(expected-Number(current.quantityAvailable))>0.00001) throw new Error("A quantidade deste lote mudou entretanto. Atualize a página antes de corrigir o stock.");
+    await tx.rawMaterialLot.update({where:{id},data:{supplierLot:requireText(text(formData,"supplierLot",80),"O lote do fornecedor"),supplier:text(formData,"supplier")||null,quantityInitial,quantityAvailable:quantityAvailableValue,status:status as any}});
+    await tx.auditLog.create({data:{userId:admin.id,action:"EDIT",entity:"RawMaterialLot",entityId:String(id),details:{before:{quantityInitial:Number(current.quantityInitial),quantityAvailable:Number(current.quantityAvailable),status:current.status},after:{quantityInitial,quantityAvailable:quantityAvailableValue,status}}}});
+  });
+  revalidatePath("/admin/raw-materials", "layout"); revalidatePath("/admin/raw-material-lots"); revalidatePath("/production");
 }
 
 export async function createLotRule(formData: FormData) {
@@ -223,19 +224,29 @@ export async function deleteRawMaterial(formData: FormData) {
 export async function deleteRawMaterialLot(formData: FormData) {
   await requireAdmin(); const id = positiveId(formData);
   if (await db.productionMaterial.count({ where: { rawMaterialLotId: id } })) await db.rawMaterialLot.update({ where: { id }, data: { status: "CANCELLED" } }); else await db.rawMaterialLot.delete({ where: { id } });
-  revalidatePath("/admin/raw-material-lots"); revalidatePath("/production");
+  revalidatePath("/admin/raw-materials", "layout"); revalidatePath("/admin/raw-material-lots"); revalidatePath("/production");
 }
 export async function deleteUser(formData: FormData) {
   const admin = await requireAdmin(); const id = positiveId(formData);
   if (id === admin.id) throw new Error("Não pode eliminar o utilizador com sessão iniciada.");
-  await db.$transaction(async tx => {
+  const deleted = await db.$transaction(async tx => {
     await lockCredentials(tx, admin.id);
-    await tx.execute("UPDATE User SET active=0, sessionVersion=sessionVersion+1, updatedAt=NOW(3) WHERE id=?", [id]);
+    const [current] = await tx.query<any[]>("SELECT id FROM User WHERE id=? FOR UPDATE", [id]);
+    if (!current) throw new Error("O utilizador já não existe.");
     await tx.execute("DELETE FROM AuthSession WHERE userId=?", [id]);
-    await tx.execute("DELETE FROM ShiftPeerConfirmation WHERE operatorId=? OR confirmedById=?", [id, id]);
-    await tx.auditLog.create({ data: { userId: admin.id, action: "DEACTIVATE", entity: "User", entityId: String(id) } });
+    await tx.execute("DELETE FROM ShiftPeerConfirmation WHERE operatorId=? OR confirmedById=?", [id,id]);
+    const history = await tx.auditLog.count({where:{userId:id}});
+    let removed = false;
+    if (!history) {
+      try { await tx.user.delete({where:{id}}); removed = true; }
+      catch (error) { if ((error as {code?:string}).code !== "ER_ROW_IS_REFERENCED_2") throw error; }
+    }
+    if (!removed) await tx.execute("UPDATE User SET active=0, sessionVersion=sessionVersion+1, updatedAt=NOW(3) WHERE id=?", [id]);
+    await tx.auditLog.create({data:{userId:admin.id,action:removed?"DELETE":"DEACTIVATE",entity:"User",entityId:String(id)}});
+    return removed;
   });
   revalidatePath("/admin/users");
+  return {message:deleted?"Utilizador eliminado.":"Utilizador desativado e acesso revogado. O histórico foi preservado; pode consultá-lo em Mostrar inativos."};
 }
 export async function deleteLotRule(formData: FormData) {
   await requireAdmin(); const id = positiveId(formData);

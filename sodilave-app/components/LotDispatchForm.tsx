@@ -1,4 +1,5 @@
 "use client";
+import { productionUnitLabel as packageLabel } from "@/lib/production-unit";
 import { useFeedbackState } from "@/components/FeedbackProvider";
 
 import { useMemo, useRef, useState } from "react";
@@ -16,8 +17,7 @@ function todayInput() {
   return `${y}-${m}-${d}`;
 }
 
-const packageLabel = (unit: string, quantity: number) =>
-  unit === "PALLET" ? (quantity === 1 ? "palete" : "paletes") : (quantity === 1 ? "saco" : "sacos");
+
 
 export function LotDispatchForm({ lots, employeeName, orders, requestId: initialRequestId, initialOrderId="", initialItemId="" }: {
   lots: AvailableFinishedLot[]; employeeName: string; orders:SalesOrder[]; requestId:string; initialOrderId?:string; initialItemId?:string;

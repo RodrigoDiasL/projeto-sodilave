@@ -3,7 +3,7 @@
 import { createHash } from "node:crypto";
 import { validOrderDate, orderReference as referenceForOrder } from "@/lib/order-values";
 import { revalidatePath } from "next/cache";
-import { requireOperationalUser, requireAdmin } from "@/lib/auth";
+import { requireCommerceUser, requireAdmin } from "@/lib/auth";
 import { db } from "@/lib/db";
 
 type LockedProduction = {
@@ -31,7 +31,7 @@ const requiredText = (fd: FormData, key: string, label: string, max = 191) => {
 };
 
 export async function createLotDispatch(formData: FormData) {
-  const user = await requireOperationalUser();
+  const user = await requireCommerceUser();
 
   const salesOrderItemId = Number(formData.get("salesOrderItemId"));
   const requestId = String(formData.get("requestId") ?? "");

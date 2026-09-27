@@ -1,3 +1,4 @@
+import { UserInputError } from "@/lib/action-error";
 import { reserveAuthAttempt } from "@/lib/auth-rate-limit";
 import bcrypt from "bcryptjs";
 import type { DbTransaction } from "@/lib/db";
@@ -10,7 +11,7 @@ export async function getConfirmationWorkers(currentUserId?: number): Promise<Co
   const users = await db.user.findMany({
     where: {
       active: true,
-      role: { in: ["OPERATOR", "PRODUCTION_MANAGER"] },
+      role: { in: ["OPERATOR", "PRODUCTION_MANAGER", "LOGISTICS"] },
       ...(currentUserId ? { id: { not: currentUserId } } : {}),
     },
     select: { id: true, name: true },
@@ -29,7 +30,7 @@ export async function getShiftPeerConfirmation(currentUserId: number, at = new D
        AND c.shiftStart = ?
        AND c.shiftCode = ?
        AND u.active = 1
-       AND u.role IN ('OPERATOR','PRODUCTION_MANAGER')
+       AND u.role IN ('OPERATOR','PRODUCTION_MANAGER','LOGISTICS')
      LIMIT 1`,
     [currentUserId, window.start, window.code],
   );
@@ -41,7 +42,7 @@ export async function verifySecondWorker(formData: FormData, currentUserId: numb
     where: { id: currentUserId },
     select: { role: true, active: true },
   });
-  if (!currentUser?.active) throw new Error("O utilizador atual já não está ativo.");
+  if (!currentUser?.active) throw new UserInputError("O utilizador atual já não está ativo.");
   if (currentUser.role === "ADMIN") return null;
 
   const existingConfirmation = await getShiftPeerConfirmation(currentUserId, new Date(), client);
@@ -49,18 +50,18 @@ export async function verifySecondWorker(formData: FormData, currentUserId: numb
 
   const secondWorkerId = Number(formData.get("secondWorkerId") || 0);
   const secondWorkerPin = String(formData.get("secondWorkerPin") || "").trim();
-  if (!Number.isSafeInteger(secondWorkerId) || secondWorkerId <= 0) throw new Error("Selecione o colega que está a trabalhar no turno.");
-  if (secondWorkerId === currentUserId) throw new Error("A confirmação tem de ser feita por um segundo trabalhador.");
-  if (!/^\d{8}$/.test(secondWorkerPin)) throw new Error("O segundo trabalhador deve introduzir um PIN válido de 8 algarismos.");
+  if (!Number.isSafeInteger(secondWorkerId) || secondWorkerId <= 0) throw new UserInputError("Selecione o colega que está a trabalhar no turno.");
+  if (secondWorkerId === currentUserId) throw new UserInputError("A confirmação tem de ser feita por um segundo trabalhador.");
+  if (!/^\d{8}$/.test(secondWorkerPin)) throw new UserInputError("O segundo trabalhador deve introduzir um PIN válido de 8 algarismos.");
 
   await reserveAuthAttempt(`peer:operator:${currentUserId}`, 5);
   await reserveAuthAttempt(`peer:target:${secondWorkerId}`, 5);
   const worker = await client.user.findFirst({
-    where: { id: secondWorkerId, active: true, role: { in: ["OPERATOR", "PRODUCTION_MANAGER"] } },
+    where: { id: secondWorkerId, active: true, role: { in: ["OPERATOR", "PRODUCTION_MANAGER", "LOGISTICS"] } },
     select: { id: true, name: true, pinHash: true, sessionVersion: true },
   });
   if (!worker || !(await bcrypt.compare(secondWorkerPin, worker.pinHash))) {
-    throw new Error("O PIN do segundo trabalhador está incorreto ou esta conta não pode confirmar como colega de turno.");
+    throw new UserInputError("O PIN do segundo trabalhador está incorreto ou esta conta não pode confirmar como colega de turno.");
   }
 
   return { id: worker.id, name: worker.name, sessionVersion: worker.sessionVersion };
@@ -68,8 +69,8 @@ export async function verifySecondWorker(formData: FormData, currentUserId: numb
 
 export async function saveRecordConfirmation(entity: string, entityId: number, worker: ConfirmationWorker, operatorId: number, client: DbTransaction = db) {
   const users = await client.query<{ sessionVersion: number }[]>(
-    "SELECT sessionVersion FROM User WHERE id=? AND active=1 AND role IN ('OPERATOR','PRODUCTION_MANAGER') LOCK IN SHARE MODE", [worker.id]);
-  if (!users[0] || users[0].sessionVersion !== worker.sessionVersion) throw new Error("As credenciais do segundo trabalhador mudaram. Confirme novamente.");
+    "SELECT sessionVersion FROM User WHERE id=? AND active=1 AND role IN ('OPERATOR','PRODUCTION_MANAGER','LOGISTICS') LOCK IN SHARE MODE", [worker.id]);
+  if (!users[0] || users[0].sessionVersion !== worker.sessionVersion) throw new UserInputError("As credenciais do segundo trabalhador mudaram. Confirme novamente.");
   const window = getShiftWindow();
   await client.$executeRaw`
     INSERT INTO ShiftPeerConfirmation (operatorId, confirmedById, shiftCode, shiftStart, confirmedAt)

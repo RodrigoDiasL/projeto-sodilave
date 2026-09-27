@@ -1,1 +1,1 @@
-import { PageIntro } from "@/components/PageIntro";export function AdminPage({title,subtitle,children}:{title:string;subtitle:string;children:React.ReactNode}){return <><PageIntro title={title} subtitle={subtitle} back="/admin"/><section className="panel">{children}</section></>}
+import { PageIntro } from "@/components/PageIntro";export function AdminPage({title,subtitle,children}:{title:string;subtitle:string;children:React.ReactNode}){return <><PageIntro title={title} subtitle={subtitle} back="/dashboard"/><section className="panel">{children}</section></>}

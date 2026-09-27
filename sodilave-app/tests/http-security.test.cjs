@@ -76,3 +76,39 @@ test('real pairing issues a secure read-only cookie and revocation blocks the ne
     assert.equal((await fetch(base+'/api/production-display',{headers})).status,401);
   } finally {await connection.execute('DELETE FROM ProductionDisplayDevice WHERE id=?',[id]);await connection.end();}
 });
+
+test('production pages enforce commerce roles and provide auditors read-only catalogue and traceability access',async()=>{
+  const database=process.env.TEST_DATABASE_URL||process.env.DATABASE_URL;
+  assert.ok(database&&['sodilave_test','typecheck'].includes(new URL(database).pathname.slice(1)));
+  const connection=await require('mysql2/promise').createConnection(database);
+  const {SignJWT}=await import('jose');const {randomUUID}=require('node:crypto');
+  await connection.query("SET SESSION time_zone='+00:00'");
+  try {
+    for(const role of ['OPERATOR','LOGISTICS','AUDITOR','ADMIN']) {
+      const [insert]=await connection.execute('INSERT INTO User (name,pinHash,role,active) VALUES (?,?,?,1)',['HTTP role '+role,'http-no-real-pin',role]);
+      const id=insert.insertId,session=randomUUID();
+      await connection.execute('INSERT INTO AuthSession (id,userId,sessionVersion,expiresAt) VALUES (?,?,1,DATE_ADD(NOW(3),INTERVAL 1 HOUR))',[session,id]);
+      const token=await new SignJWT({userId:id,sessionVersion:1}).setProtectedHeader({alg:'HS256'}).setJti(session).setIssuer('sodilave').setAudience('sodilave-session').setIssuedAt().setExpirationTime('1h').sign(new TextEncoder().encode(process.env.SESSION_SECRET));
+      const headers={cookie:'__Host-sodilave_session='+token};
+      const get=path=>fetch(base+path,{headers,redirect:'manual'});
+      try {
+        const orders=await get('/orders');
+        if(role==='OPERATOR') {assert.equal(orders.headers.get('location'),'/access-denied');for(const path of ['/orders/new','/lot-dispatch'])assert.equal((await get(path)).headers.get('location'),'/access-denied');}
+        else assert.equal(orders.status,200);
+        if(role==='LOGISTICS') {assert.equal((await get('/orders/new')).status,200);assert.equal((await get('/checkups')).status,200);assert.equal((await get('/admin/users')).headers.get('location'),'/access-denied');}
+        if(role==='AUDITOR') {
+          for(const path of ['/admin/queries','/admin/productions','/admin/checkups','/admin/raw-materials','/admin/products','/admin/users','/admin/lot-rules','/admin/settings','/admin/production-display','/maintenance','/traceability','/lot-dispatch']) {
+            const response=await get(path);assert.equal(response.status,200,path);const html=await response.text();
+            assert.doesNotMatch(html,/<input[^>]+type="password"/,path);
+            assert.doesNotMatch(html,/>Adicionar produto<|>Guardar alterações<|>Criar utilizador<|>Dar entrada de lote<|>Ativar nova regra<|>Criar manutenção</,path);
+          }
+          for(const path of ['/orders/new','/startup','/shutdown','/intermediate-startup'])assert.equal((await get(path)).headers.get('location'),'/access-denied',path);
+        }
+        if(role==='ADMIN') {
+          const html=await (await get('/admin/users')).text();assert.match(html,/Logística e Expedição/);assert.match(html,/Auditor \(só consulta\)/);
+          const products=await (await get('/admin/products')).text();assert.match(products,/value="UNIT"/);
+        }
+      } finally {await connection.execute('DELETE FROM AuthSession WHERE id=?',[session]);await connection.execute('DELETE FROM User WHERE id=?',[id]);}
+    }
+  } finally {await connection.end();}
+});

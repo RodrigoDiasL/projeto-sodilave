@@ -1,4 +1,5 @@
 "use client";
+import { productionUnitLabel as packageLabel } from "@/lib/production-unit";
 import { useFeedback } from "@/components/FeedbackProvider";
 
 import { useMemo, useState, type ReactNode } from "react";
@@ -17,8 +18,7 @@ function StockForm({ action, children }: { action:(fd:FormData)=>Promise<void>; 
   }}><fieldset disabled={busy} className="form-stack stock-form-fields">{children}</fieldset>{message&&<p role="status">{message}</p>}</form>;
 }
 
-const packageLabel = (unit: string, quantity: number) =>
-  unit === "PALLET" ? (quantity === 1 ? "palete" : "paletes") : (quantity === 1 ? "saco" : "sacos");
+
 
 function MapGrid({
   title,

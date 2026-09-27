@@ -1,12 +1,12 @@
 "use server";
 import { createHash } from "node:crypto";
 import { revalidatePath } from "next/cache";
-import { requireProductionManager } from "@/lib/auth";
+import { requireCommerceUser } from "@/lib/auth";
 import { db } from "@/lib/db";
 import { lineTotalCents, parseUnitPrice, validOrderDate, orderReference } from "@/lib/order-values";
 
 export async function createSalesOrder(fd:FormData) {
-  const user=await requireProductionManager();
+  const user=await requireCommerceUser();
   const customerName=String(fd.get("customerName")??"").trim();
   const customerReference=String(fd.get("customerReference")??"").trim();
   const orderDate=String(fd.get("orderDate")??"");
@@ -44,7 +44,7 @@ export async function createSalesOrder(fd:FormData) {
 }
 
 export async function cancelSalesOrder(fd:FormData) {
-  const user=await requireProductionManager();
+  const user=await requireCommerceUser();
   const id=Number(fd.get("id")),reason=String(fd.get("reason")??"").trim();
   if(!Number.isSafeInteger(id)||id<=0||!reason||reason.length>500)throw new Error("Indique a encomenda e o motivo de anulação.");
   await db.$transaction(async tx=>{
