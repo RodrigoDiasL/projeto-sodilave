@@ -25,7 +25,9 @@
     "predev": "npm run db:check",
     "prestart": "node scripts/check-production-db.mjs --production",
     "audit:security": "npm audit --audit-level=moderate",
-    "test:http": "node --test tests/http-security.test.cjs"
+    "test:http": "node --test tests/http-security.test.cjs",
+    "reset:test-data": "node scripts/reset-test-data.mjs",
+    "reset:test-data:execute": "node scripts/reset-test-data.mjs --execute --confirm=APAGAR_TESTES"
   },
   "dependencies": {
     "bcryptjs": "^3.0.2",

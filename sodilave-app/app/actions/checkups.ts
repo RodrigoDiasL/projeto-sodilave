@@ -5,6 +5,7 @@ import { revalidatePath } from "next/cache";
 import { db } from "@/lib/db";
 import { requireOperationalUser } from "@/lib/auth";
 import { getShiftWindow } from "@/lib/shift";
+import { oilTemperatures } from "@/lib/checkup-values";
 import { OilLevel } from "@/lib/db-types";
 import { saveRecordConfirmation, verifySecondWorker } from "@/lib/second-worker-confirmation";
 
@@ -81,16 +82,18 @@ export async function saveShiftCheckups(fd: FormData) {
     const savedMachines = [];
     for (const { machine, row } of records) {
       const prefix = `m${machine.id}_`;
-      const oilTempC = numberField(fd, prefix + "oilTempC", -20, 150, `Máquina ${machine.code}: temperatura do óleo`);
+      const temperature = String(fd.get(prefix + "oilTempStatus") || "");
+      if (temperature && !Object.hasOwn(oilTemperatures, temperature)) throw new UserInputError("Classificação da temperatura do óleo inválida.");
+      const oilTempStatus = temperature || null;
       const waterPressure = numberField(fd, prefix + "waterPressure", 0, 50, `Máquina ${machine.code}: pressão de água`);
       const airPressure = numberField(fd, prefix + "airPressure", 0, 50, `Máquina ${machine.code}: pressão de ar`);
       const value = String(fd.get(prefix + "oilLevel") || "");
       const oilLevel = Object.values(OilLevel).includes(value as OilLevel) ? value : null;
-      if ((intent === "finalize" || row?.status === "FINALIZED") && [oilTempC, waterPressure, airPressure, oilLevel].some(v => v === null)) {
+      if ((intent === "finalize" || row?.status === "FINALIZED") && [oilTempStatus, waterPressure, airPressure, oilLevel].some(v => v === null)) {
         throw new UserInputError(`Máquina ${machine.code}: preencha a temperatura, o nível de óleo e as pressões antes de finalizar.`);
       }
       const saved = await save(tx.machineCheckup, "MachineCheckup", row, {
-        machineId: machine.id, oilTempC, waterPressure, airPressure, oilLevel,
+        machineId: machine.id, oilTempStatus, waterPressure, airPressure, oilLevel,
         cleanMachineArea: fd.get(prefix + "cleanMachineArea") === "on",
         hasBreakdown: false, breakdownStoppedMachine: false, breakdownDescription: null,
         notes: String(fd.get(prefix + "notes") || "").trim().slice(0, 500) || null,

@@ -84,7 +84,7 @@ test('production pages enforce commerce roles and provide auditors read-only cat
   const {SignJWT}=await import('jose');const {randomUUID}=require('node:crypto');
   await connection.query("SET SESSION time_zone='+00:00'");
   try {
-    for(const role of ['OPERATOR','LOGISTICS','AUDITOR','ADMIN']) {
+    for(const role of ['OPERATOR','LOGISTICS','AUDITOR','PRODUCTION_MANAGER','ADMIN']) {
       const [insert]=await connection.execute('INSERT INTO User (name,pinHash,role,active) VALUES (?,?,?,1)',['HTTP role '+role,'http-no-real-pin',role]);
       const id=insert.insertId,session=randomUUID();
       await connection.execute('INSERT INTO AuthSession (id,userId,sessionVersion,expiresAt) VALUES (?,?,1,DATE_ADD(NOW(3),INTERVAL 1 HOUR))',[session,id]);
@@ -104,7 +104,15 @@ test('production pages enforce commerce roles and provide auditors read-only cat
           }
           for(const path of ['/orders/new','/startup','/shutdown','/intermediate-startup'])assert.equal((await get(path)).headers.get('location'),'/access-denied',path);
         }
+        if(role!=='ADMIN')assert.equal((await get('/admin/storage')).headers.get('location'),'/access-denied');
+        if(['ADMIN','PRODUCTION_MANAGER','AUDITOR'].includes(role)){
+          const response=await get('/commercial-lots');assert.equal(response.status,200);const html=await response.text();
+          if(role==='AUDITOR')assert.doesNotMatch(html,/>Criar lote comercial<|>Registar e atualizar letras</);
+          else assert.match(html,/>Criar lote comercial</);
+        }
         if(role==='ADMIN') {
+          const storage=await get('/admin/storage');assert.equal(storage.status,200);assert.match(await storage.text(),/Dar entrada de stock inicial/);
+          const dashboard=await (await get('/dashboard')).text();assert.doesNotMatch(dashboard,/>Estado das máquinas</);assert.match(dashboard,/Contadores de Produção/);
           const html=await (await get('/admin/users')).text();assert.match(html,/Logística e Expedição/);assert.match(html,/Auditor \(só consulta\)/);
           const products=await (await get('/admin/products')).text();assert.match(products,/value="UNIT"/);
         }

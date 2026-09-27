@@ -2,17 +2,18 @@
 import { productionUnitLabel as packageLabel } from "@/lib/production-unit";
 import { useFeedback } from "@/components/FeedbackProvider";
 
-import { useMemo, useState, type ReactNode } from "react";
-import { addUnlocatedStock, adjustStockMap, transferStockMap, relocateStoragePosition } from "@/app/actions/stock-map";
+import { useEffect, useMemo, useState, type ReactNode } from "react";
+import { submitAddUnlocatedStock as addUnlocatedStock, submitAdjustStockMap as adjustStockMap, submitTransferStockMap as transferStockMap, submitRelocateStoragePosition as relocateStoragePosition } from "@/app/actions/stock-map";
 import { useRouter } from "next/navigation";
 import type { StorageMapLocation, StorageLocationInfo, UnlocatedFinishedLot } from "@/lib/stock-map";
 
 // Keep expected validation errors on the form instead of the global error screen.
-function StockForm({ action, children }: { action:(fd:FormData)=>Promise<void>; children:ReactNode }) {
+function StockForm({ action, children }: { action:(fd:FormData)=>Promise<{ok:true}|{ok:false;message:string}>; children:ReactNode }) {
   const router=useRouter();const [busy,setBusy]=useState(false);const [message,setMessage]=useState("");const notify=useFeedback();
+  useEffect(()=>{if(!message)return;const timer=setTimeout(()=>setMessage(""),3000);return()=>clearTimeout(timer);},[message]);
   return <form className="form-stack compact-admin-form" onSubmit={async event=>{
     event.preventDefault();const fd=new FormData(event.currentTarget);setBusy(true);setMessage("");
-    try {await action(fd);setMessage("Alteração guardada.");notify("success","Alteração guardada.");router.refresh();}
+    try {const result=await action(fd);if(!result.ok)throw new Error(result.message);setMessage("Alteração guardada.");notify("success","Alteração guardada.");router.refresh();}
     catch(e){const message=e instanceof Error?e.message:"Não foi possível guardar. Tente novamente.";setMessage(message);notify("error",message);}
     finally{setBusy(false);}
   }}><fieldset disabled={busy} className="form-stack stock-form-fields">{children}</fieldset>{message&&<p role="status">{message}</p>}</form>;
@@ -37,10 +38,11 @@ function MapGrid({
     <div className="section-heading">
       <div><h2>{title}</h2><p className="muted small">{subtitle}</p></div>
     </div>
-    <div className="stock-map-grid">
+    <div className="stock-map-grid" style={{gridTemplateColumns:`repeat(${Math.max(1,...locations.map(l=>l.columnNumber))},minmax(95px,1fr))`,overflowX:"auto"}}>
       {locations.map((location) => <button
         type="button"
         key={location.id}
+        style={{gridColumn:location.columnNumber,gridRow:location.rowNumber}}
         onClick={() => onSelect(location.id)}
         className={`stock-map-cell ${location.lotCount ? "occupied" : "empty"} ${selectedId === location.id ? "selected" : ""}`}
       >
@@ -73,19 +75,16 @@ export function StockMap({
   const [selectedId, setSelectedId] = useState<number | null>(null);
   const selected = locations.find((location) => location.id === selectedId) ?? null;
 
-  const groups = useMemo(() => ({
-    w1Stack: locations.filter((l) => l.warehouseCode === "W1" && l.zoneType === "STACK"),
-    w1Pallet: locations.filter((l) => l.warehouseCode === "W1" && l.zoneType === "PALLET"),
-    w2Stack: locations.filter((l) => l.warehouseCode === "W2" && l.zoneType === "STACK"),
-    w2Pallet: locations.filter((l) => l.warehouseCode === "W2" && l.zoneType === "PALLET"),
-  }), [locations]);
+  const groups = useMemo(() => {
+    const result=new Map<string,{title:string;zoneType:string;locations:StorageMapLocation[]}>();
+    for(const l of locations){const key=`${l.warehouseCode}:${l.zoneType}`;if(!result.has(key))result.set(key,{title:l.warehouseName,zoneType:l.zoneType,locations:[]});result.get(key)!.locations.push(l);}
+    return [...result.values()];
+  }, [locations]);
 
   return <div className="stock-map-layout">
     <div className="stock-map-main">
-      <MapGrid title="Armazém 1" subtitle="Estibas / montes · 7 colunas × 10 linhas" locations={groups.w1Stack} selectedId={selectedId} onSelect={setSelectedId}/>
-      <MapGrid title="Armazém 1 · Paletes" subtitle="Zona adicional de paletes · 7 colunas × 5 linhas" locations={groups.w1Pallet} selectedId={selectedId} onSelect={setSelectedId}/>
-      <MapGrid title="Armazém 2" subtitle="Estibas / montes · 7 colunas × 15 linhas" locations={groups.w2Stack} selectedId={selectedId} onSelect={setSelectedId}/>
-      <MapGrid title="Armazém 2 · Paletes" subtitle="Zona adicional de paletes · 7 colunas × 5 linhas" locations={groups.w2Pallet} selectedId={selectedId} onSelect={setSelectedId}/>
+      {groups.map(group=><MapGrid key={`${group.locations[0].warehouseCode}:${group.zoneType}`} title={group.title+(group.zoneType==="PALLET"?" · Paletes":"")} subtitle={`${group.zoneType==="PALLET"?"Paletes":"Estibas / montes"} · ${group.locations.length} posições`} locations={group.locations} selectedId={selectedId} onSelect={setSelectedId}/>)}
+      {!groups.length&&<p>Não existem posições ativas. O administrador pode adicioná-las em Gerir armazém e stock inicial.</p>}
     </div>
 
     <aside className="panel stock-map-details">

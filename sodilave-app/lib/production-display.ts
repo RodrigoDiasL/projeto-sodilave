@@ -48,7 +48,7 @@ export async function getProductionDisplayData(now = new Date()): Promise<Displa
     LEFT JOIN CommercialLot cl ON cl.id=o.commercialLotId
     LEFT JOIN Product pr ON pr.id=cl.productId
     LEFT JOIN MachineLotConfig cfg ON cfg.machineId=m.id
-    LEFT JOIN Production p ON p.id=(SELECT p2.id FROM Production p2 WHERE p2.machineId=m.id
+    LEFT JOIN Production p ON p.id=(SELECT p2.id FROM Production p2 WHERE p2.recordOrigin='PRODUCTION' AND p2.machineId=m.id
       AND p2.status<>'CANCELLED' AND p2.startedAt>=? AND p2.startedAt<?
       AND p2.startedAt>=COALESCE(s.finalizedAt,s.startupDate)
       ORDER BY p2.startedAt DESC,p2.id DESC LIMIT 1)

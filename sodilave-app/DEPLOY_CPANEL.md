@@ -409,3 +409,40 @@ como descrito acima e reiniciar a app. Não compilar novamente no cPanel.
 - As verificações devolvem mensagens de validação legíveis em produção. Uma falha
   inesperada mostra uma referência que permite localizar a causa no log do servidor,
   sem expor dados SQL no navegador.
+
+
+## Atualização de 28/09/2026: verificações, armazém e início de utilização
+
+Parar a app, executar `backup:db`, atualizar o Git, executar `db:upgrade` e
+`db:check`, substituir `.next` pelo pacote compilado da mesma revisão e iniciar.
+A migração adiciona a classificação do óleo e a identificação do stock inicial;
+as temperaturas antigas em graus continuam disponíveis no histórico.
+
+No Mapa de Stock, **Gerir armazém e stock inicial** permite ao administrador criar,
+editar ou remover posições de estibas/paletes. Posições com stock ou com saídas
+que ainda podem ser anuladas não podem ser removidas. O stock inicial exige
+produto, máquina de origem, código de lote, quantidade e posição; não exige
+arranque nem consome MP, não conta como produção e pode ser expedido normalmente.
+As quantidades do stock inicial podem ser corrigidas no Mapa de Stock com motivo.
+
+### Limpar apenas os testes antes da entrada em funcionamento
+
+O reset não é executado pela atualização. Executar **antes de inserir stock inicial**
+e antes de iniciar a produção real:
+
+1. Parar a app e executar `backup:db` (ou exportar a base no phpMyAdmin).
+2. Executar `reset:test-data`: apenas apresenta a base e as contagens; não apaga.
+3. Confirmado que são os dados de teste, executar `reset:test-data:execute`.
+4. Executar `db:check`, iniciar a app, fazer login, inserir o stock inicial e registar
+   um novo arranque semanal.
+
+Apaga produções, incluindo entradas de stock inicial, stock acabado associado,
+saídas de lotes, verificações, arranques/paragens, ocorrências, eventos e confirmações.
+Repõe nas MPs o consumo efetivamente registado pelas produções apagadas e coloca
+as máquinas paradas. Os contadores/horas reiniciam porque os registos-base desaparecem.
+Preserva produtos, utilizadores, MPs e lotes de MP, máquinas, posições físicas,
+encomendas, lotes comerciais e misturas, letras de controlo, manutenções e auditoria.
+As encomendas deixam de ter as entregas apagadas. Manutenções abertas continuam
+abertas e devem ser revistas antes de arrancar. Revoga sessões para evitar formulários
+antigos. Não reinicia IDs e regista a operação na auditoria. A limpeza é transacional;
+se a reposição das MPs não for consistente, não altera dados.

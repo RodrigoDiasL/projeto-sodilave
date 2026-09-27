@@ -14,7 +14,7 @@ export function FeedbackForm({ action, successMessage = "Registo guardado com su
     event.preventDefault(); if (inFlight.current) return;
     const data = new FormData(event.currentTarget, (event.nativeEvent as SubmitEvent).submitter);
     inFlight.current = true; setBusy(true);
-    try { const result = await action(data); const message = result && typeof result === "object" && "message" in result && typeof result.message === "string" ? result.message : successMessage; notify("success", message); router.refresh(); }
+    try { const result = await action(data); if (result && typeof result === "object" && "ok" in result && result.ok === false) { notify("error", "message" in result ? String(result.message) : "Não foi possível guardar."); return; } const message = result && typeof result === "object" && "message" in result && typeof result.message === "string" ? result.message : successMessage; notify("success", message); router.refresh(); }
     catch { notify("error", "Não foi possível concluir o registo. Verifique os dados e a ligação; atualize a página para confirmar o estado antes de repetir."); }
     finally { inFlight.current = false; setBusy(false); }
   }}><fieldset className="feedback-form-fields" disabled={busy}>{children}</fieldset></form>;

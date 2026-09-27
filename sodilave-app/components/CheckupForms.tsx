@@ -4,6 +4,8 @@ import { MachineIcon } from "@/components/MachineIcon";
 import { SecondWorkerConfirmation } from "@/components/SecondWorkerConfirmation";
 import { useRef, useState } from "react";
 import { useRouter } from "next/navigation";
+import { ConditionSelect, PressureField } from "@/components/CheckupFields";
+import { oilTemperatures, oilLevels } from "@/lib/checkup-values";
 import { submitShiftCheckups } from "@/app/actions/checkups";
 
 type Machine = { id: number; code: string; name: string };
@@ -73,10 +75,10 @@ export function CheckupForms({ machines, machineRecords, generalRecord, workers,
         </div>
         <div id={`checkup-${machine.id}`} hidden={!open} className="form-stack checkup-machine-form">
           <section className="subpanel"><div className="two-col">
-            <label>Temperatura do óleo hidráulico (°C)<input name={prefix + "oilTempC"} type="number" step="0.1" defaultValue={record?.oilTempC ?? ""}/></label>
-            <label>Nível do óleo hidráulico<select name={prefix + "oilLevel"} defaultValue={record?.oilLevel ?? ""}><option value="">Selecione</option><option value="LOW">Baixo</option><option value="NORMAL">Normal</option><option value="HIGH">Alto</option></select></label>
-            <label>Pressão de água no sistema (bar)<input name={prefix + "waterPressure"} type="number" step="0.1" min="0" defaultValue={record?.waterPressure ?? ""}/></label>
-            <label>Pressão de ar (bar)<input name={prefix + "airPressure"} type="number" step="0.1" min="0" defaultValue={record?.airPressure ?? ""}/></label>
+            <ConditionSelect name={prefix+"oilTempStatus"} label="Temperatura do óleo hidráulico" initial={record?.oilTempStatus} kind="temperature" options={oilTemperatures}/>
+            <ConditionSelect name={prefix+"oilLevel"} label="Nível do óleo hidráulico" initial={record?.oilLevel} kind="level" options={oilLevels}/>
+            <PressureField name={prefix+"waterPressure"} label="Pressão de água (bar)" initial={record?.waterPressure} min={4} max={8}/>
+            <PressureField name={prefix+"airPressure"} label="Pressão de ar (bar)" initial={record?.airPressure} min={6} max={10}/>
           </div><label className="check"><input type="checkbox" name={prefix + "cleanMachineArea"} defaultChecked={Boolean(record?.cleanMachineArea)}/>Limpeza de aparadeiras, tapetes e mesa de embalamento</label></section>
           <label>Observações<textarea name={prefix + "notes"} defaultValue={record?.notes ?? ""}/></label>
         </div>

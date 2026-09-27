@@ -14,12 +14,12 @@ export default async function ProductionPage() {
   const user = await requireUser();
   const [drafts, finalized] = await Promise.all([
     db.production.findMany({
-      where: { status: "DRAFT" },
+      where: { recordOrigin:"PRODUCTION", status: "DRAFT" },
       include: { machine: true, product: true, operator: true },
       orderBy: { updatedAt: "desc" },
     }),
     db.production.findMany({
-      where: { status: "FINALIZED" },
+      where: { recordOrigin:"PRODUCTION", status: "FINALIZED" },
       include: { machine: true, product: true, operator: true },
       orderBy: { finalizedAt: "desc" },
       take: 20,

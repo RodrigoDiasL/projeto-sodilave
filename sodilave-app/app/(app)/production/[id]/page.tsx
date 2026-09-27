@@ -20,7 +20,7 @@ export default async function EditProductionPage({ params }: { params: Promise<{
     where: { id: Number(id) },
     include: { machine: true, materials: { include: { rawMaterialLot: true } }, tests: true },
   });
-  if (!production || production.status === "CANCELLED") notFound();
+  if (!production || production.recordOrigin === "INITIAL_STOCK" || production.status === "CANCELLED") notFound();
   if (production.status === "FINALIZED" && user.role !== "ADMIN") {
     if (new Date() >= getShiftWindow(production.startedAt).end) notFound();
   }

@@ -22,6 +22,7 @@ const finiteInRange = (value: number | null, min: number, max: number, label: st
 };
 
 type ExistingProduction = {
+  recordOrigin?: string;
   id: number;
   status: RecordStatus;
   operatorId: number;
@@ -95,8 +96,9 @@ export async function saveProduction(formData: FormData) {
   if (productionId) {
     existing = await db.production.findUnique({
       where: { id: productionId },
-      select: { id: true, status: true, operatorId: true, productionLot: true, startedAt: true, shiftCode: true, productId: true, machineId: true, quantityProduced: true, unitsPerPackageSnapshot: true, productionUnitSnapshot: true },
+      select: { id: true, recordOrigin: true, status: true, operatorId: true, productionLot: true, startedAt: true, shiftCode: true, productId: true, machineId: true, quantityProduced: true, unitsPerPackageSnapshot: true, productionUnitSnapshot: true },
     });
+    if (existing?.recordOrigin === "INITIAL_STOCK") throw new Error("Edite o stock inicial no Mapa de Stock.");
     if (!existing) throw new Error("A produção em aberto já não existe.");
     if (existing.status === RecordStatus.CANCELLED) throw new Error("Esta produção foi cancelada.");
     if (existing.status === RecordStatus.FINALIZED && !finalize) {
@@ -294,8 +296,12 @@ export async function saveProduction(formData: FormData) {
       const currentMachine = await tx.machine.findFirst({ where: { id: machineId, active: true, status: "RUNNING" } });
       if (!activeStartup || !currentMachine) throw new Error("A máquina ou o ciclo semanal já não estão em funcionamento. Atualize a página.");
     }
+    if(uniqueStorageLocationIds.length){
+      const positions=await tx.query<any[]>(`SELECT id FROM StorageLocation WHERE id IN (${uniqueStorageLocationIds.map(()=>"?").join(",")}) AND active=1 ORDER BY id FOR UPDATE`,uniqueStorageLocationIds);
+      if(positions.length!==uniqueStorageLocationIds.length)throw new Error("Uma posição de stock foi removida. Atualize o formulário.");
+    }
     const simultaneous = await tx.production.count({ where: {
-      machineId, startedAt: { gte: recordWindow.start, lt: recordWindow.end }, status: { not: RecordStatus.CANCELLED },
+      recordOrigin:"PRODUCTION", machineId, startedAt: { gte: recordWindow.start, lt: recordWindow.end }, status: { not: RecordStatus.CANCELLED },
       ...(productionId ? { id: { not: productionId } } : {}),
     } });
     if (simultaneous > 0 && !exceptionReason) throw new Error("Já existe uma produção desta máquina neste turno. Atualize a página ou indique o motivo de uma produção adicional.");
@@ -303,7 +309,7 @@ export async function saveProduction(formData: FormData) {
       // Serialize past-shift inserts and the administrator's permission toggle.
       await assertPastProductionEnabled(tx, true);
       const duplicate = await tx.production.count({ where: {
-        machineId, startedAt: { gte: recordWindow.start, lt: recordWindow.end },
+        recordOrigin:"PRODUCTION", machineId, startedAt: { gte: recordWindow.start, lt: recordWindow.end },
         status: { not: RecordStatus.CANCELLED }, ...(productionId ? { id: { not: productionId } } : {}),
       } });
       if (duplicate) throw new Error("Já existe uma produção para esta máquina, dia e turno.");

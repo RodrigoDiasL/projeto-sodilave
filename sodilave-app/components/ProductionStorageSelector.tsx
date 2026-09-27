@@ -18,7 +18,7 @@ export function ProductionStorageSelector({
   allowUnlocated?: boolean;
 }) {
   const [zoneType, setZoneType] = useState<StorageZoneType>("STACK");
-  const [warehouseCode, setWarehouseCode] = useState<"W1" | "W2">("W1");
+  const [warehouseCode, setWarehouseCode] = useState<string>(locations[0]?.warehouseCode??"W1");
   const [allocations, setAllocations] = useState<Record<number, number>>({});
   const [unlocated, setUnlocated] = useState(false);
 
@@ -85,9 +85,8 @@ export function ProductionStorageSelector({
           </select>
         </label>
         <label>Armazém a visualizar
-          <select value={warehouseCode} onChange={(e) => setWarehouseCode(e.target.value as "W1" | "W2")}>
-            <option value="W1">Armazém 1</option>
-            <option value="W2">Armazém 2</option>
+          <select value={warehouseCode} onChange={(e) => setWarehouseCode(e.target.value)}>
+            {[...new Map(locations.map(l=>[l.warehouseCode,l.warehouseName])).entries()].map(([code,name])=><option value={code} key={code}>{name}</option>)}
           </select>
         </label>
       </div>

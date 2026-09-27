@@ -48,12 +48,12 @@ export default async function NewProductionPage({ searchParams }: { searchParams
 
   const [records, previousRecords] = await Promise.all([
     db.production.findMany({
-      where: { startedAt: { gte: window.start, lt: window.end }, status: { not: "CANCELLED" } },
+      where: { recordOrigin:"PRODUCTION", startedAt: { gte: window.start, lt: window.end }, status: { not: "CANCELLED" } },
       include: { materials: { include: { rawMaterialLot: true } }, tests: true },
       orderBy: { createdAt: "asc" },
     }),
     historicalWindow || startup ? db.production.findMany({
-      where: { startedAt: { gte: previousLowerBound, lt: window.start }, status: "FINALIZED" },
+      where: { recordOrigin:"PRODUCTION", startedAt: { gte: previousLowerBound, lt: window.start }, status: "FINALIZED" },
       include: { materials: { include: { rawMaterialLot: true } } },
       orderBy: [{ startedAt: "desc" }, { id: "desc" }],
     }) : Promise.resolve([]),

@@ -85,7 +85,7 @@ export async function getScoreboardData(now = new Date()): Promise<ScoreboardDat
       orderBy: { name: "asc" },
     }),
     db.production.findMany({
-      where: { status: RecordStatus.FINALIZED, startedAt: { gte: starts.year } },
+      where: { recordOrigin:"PRODUCTION", status: RecordStatus.FINALIZED, startedAt: { gte: starts.year } },
       select: {
         id: true,
         operatorId: true,

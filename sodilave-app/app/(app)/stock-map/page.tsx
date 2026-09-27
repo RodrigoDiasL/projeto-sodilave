@@ -1,3 +1,4 @@
+import Link from "next/link";
 import { requireUser } from "@/lib/auth";
 import { PageIntro } from "@/components/PageIntro";
 import { StockMap } from "@/components/StockMap";
@@ -16,8 +17,9 @@ export default async function StockMapPage() {
       title="Mapa de Stock"
       subtitle="Localização física dos lotes de produto acabado nos armazéns, estibas e zonas de paletes."
     />
+    {user.role === "ADMIN" && <Link className="btn primary" href="/admin/storage">Gerir armazém e stock inicial</Link>}
     <div className="notice">
-      Cada célula representa uma posição física. Uma posição pode conter vários lotes. As quantidades são controladas em sacos; nos artigos produzidos diretamente em paletes, a mesma lógica é aplicada em paletes.
+      Cada célula representa uma posição física. Uma posição pode conter vários lotes. As quantidades são controladas em sacos, paletes ou unidades, conforme a configuração do produto.
     </div>
     <StockMap locations={locations} allLocations={allLocations} unlocated={unlocated} isAdmin={user.role === "ADMIN"}/>
   </>;

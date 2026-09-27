@@ -68,7 +68,7 @@ function productionTone(production: any, cavity?: CavitySummary): ActivityTone {
 
 function machineCheckTone(check: any): ActivityTone {
   if (check.status === RecordStatus.DRAFT) return "yellow";
-  const complete = check.oilTempC !== null
+  const complete = (check.oilTempStatus != null || check.oilTempC != null)
     && check.oilLevel !== null
     && check.waterPressure !== null
     && check.airPressure !== null;
@@ -103,7 +103,7 @@ export async function getAdminDashboardData(now = new Date()): Promise<AdminDash
     cycles,
   ] = await Promise.all([
     db.production.findMany({
-      where: { status: { not: RecordStatus.CANCELLED } },
+      where: { recordOrigin:"PRODUCTION", status: { not: RecordStatus.CANCELLED } },
       include: { machine: true, product: true, tests: true, materials: true },
       orderBy: { updatedAt: "desc" },
       take: 18,

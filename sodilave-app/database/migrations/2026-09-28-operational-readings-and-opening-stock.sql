@@ -1,0 +1,3 @@
+ALTER TABLE `MachineCheckup` ADD COLUMN `oilTempStatus` VARCHAR(16) NULL;
+
+ALTER TABLE `Production` ADD COLUMN `recordOrigin` VARCHAR(24) NOT NULL DEFAULT 'PRODUCTION';

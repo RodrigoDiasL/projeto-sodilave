@@ -49,7 +49,7 @@ export async function getAdminProductionStats(now = new Date()): Promise<AdminPr
         SUM(CASE WHEN startedAt >= ? THEN COALESCE(quantityProduced, 0) ELSE 0 END) AS yearCount,
         SUM(COALESCE(quantityProduced, 0)) AS totalCount
       FROM Production
-      WHERE status = 'FINALIZED'
+      WHERE status = 'FINALIZED' AND recordOrigin = 'PRODUCTION'
       GROUP BY machineId
     `, [periods.day, periods.week, periods.month, periods.quarter, periods.semester, periods.year]),
   ]);

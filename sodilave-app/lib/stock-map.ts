@@ -5,7 +5,7 @@ export type ProductionUnit = "BAG" | "PALLET" | "UNIT";
 
 export type StorageLocationInfo = {
   id: number;
-  warehouseCode: "W1" | "W2";
+  warehouseCode: string;
   warehouseName: string;
   zoneType: StorageZoneType;
   rowNumber: number;
@@ -53,7 +53,7 @@ export async function getStorageLocations(): Promise<StorageLocationInfo[]> {
   `);
   return rows.map((row) => ({
     id: Number(row.id),
-    warehouseCode: String(row.warehouseCode) as "W1" | "W2",
+    warehouseCode: String(row.warehouseCode),
     warehouseName: String(row.warehouseName),
     zoneType: String(row.zoneType) as StorageZoneType,
     rowNumber: Number(row.rowNumber),

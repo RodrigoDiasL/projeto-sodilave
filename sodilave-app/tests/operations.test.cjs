@@ -302,7 +302,7 @@ test('shift checkups save atomically with one peer confirmation at the end and a
   const input=fd({intent:'draft',shiftStart:getShiftWindow().start.toISOString(),chillerLargeC:5,chillerSmallC:6,ambientTempC:22,purgePneumaticBarrels:'on',purgeCleanAirBarrels:'on',purgeFilters:'on'});
   for(const m of [machine,secondMachine]) {
     input.append('machineIds',String(m.id));
-    for(const [key,value]of Object.entries({oilTempC:40,oilLevel:'NORMAL',waterPressure:3,airPressure:6}))input.set(`m${m.id}_${key}`,String(value));
+    for(const [key,value]of Object.entries({oilTempStatus:'NORMAL',oilLevel:'NORMAL',waterPressure:3,airPressure:6}))input.set(`m${m.id}_${key}`,String(value));
   }
   try {
     const draft=await saveShiftCheckups(input);
@@ -311,13 +311,13 @@ test('shift checkups save atomically with one peer confirmation at the end and a
     input.set('generalId',String(draft.general.id));
     for(const m of draft.machines)input.set(`m${m.machineId}_checkupId`,String(m.id));
     input.set('intent','finalize');input.set('secondWorkerId',String(peer.id));input.set('secondWorkerPin','12345678');
-    input.delete(`m${secondMachine.id}_oilTempC`);
+    input.delete(`m${secondMachine.id}_oilTempStatus`);
     await assert.rejects(saveShiftCheckups(input),/Máquina 2/);
     assert.equal((await db.shiftGeneralCheck.findUnique({where:{id:draft.general.id}})).status,'DRAFT','general write rolls back');
     assert.equal((await db.machineCheckup.findUnique({where:{id:draft.machines[0].id}})).status,'DRAFT','first machine rolls back');
     assert.equal((await db.query('SELECT * FROM ShiftPeerConfirmation')).length,0,'confirmation rolls back with invalid checks');
     assert.equal((await db.query('SELECT * FROM RecordConfirmation')).length,0);
-    input.set(`m${secondMachine.id}_oilTempC`,'42');
+    input.set(`m${secondMachine.id}_oilTempStatus`,'HOT');
     const final=await saveShiftCheckups(input);
     assert.equal(final.finalized,true);assert.equal(final.general.id,draft.general.id);
     assert.equal((await db.query('SELECT * FROM ShiftPeerConfirmation')).length,1);
@@ -764,7 +764,7 @@ test('checkup submission returns useful validation messages and saves a complete
   await db.machine.updateMany({data:{status:'STOPPED'}});
   const running=await db.machine.create({data:{code:'CHECK-NEW',name:'Newly configured machine',status:'RUNNING'}});
   await db.weeklyStartup.create({data:{operatorId:user.id,status:'FINALIZED',shiftCode:getShiftWindow().code,startupDate:new Date(),coolingPump1:true,coolingPump2:false}});
-  const form=fd({intent:'finalize',shiftStart:getShiftWindow().start.toISOString(),machineIds:running.id,chillerLargeC:5,chillerSmallC:5,ambientTempC:22,[`m${running.id}_oilLevel`]:'NORMAL',[`m${running.id}_oilTempC`]:40,[`m${running.id}_waterPressure`]:3});
+  const form=fd({intent:'finalize',shiftStart:getShiftWindow().start.toISOString(),machineIds:running.id,chillerLargeC:5,chillerSmallC:5,ambientTempC:22,[`m${running.id}_oilLevel`]:'NORMAL',[`m${running.id}_oilTempStatus`]:'NORMAL',[`m${running.id}_waterPressure`]:3});
   const before=await db.machineCheckup.count();
   const missing=await submitShiftCheckups(form);assert.equal(missing.ok,false);assert.match(missing.message,/CHECK-NEW.*pressões/);assert.equal(await db.machineCheckup.count(),before);
   form.set(`m${running.id}_airPressure`,'6');
@@ -815,4 +815,89 @@ test('manufacturer migration preserves existing lot quantities and suppliers whi
       await tx.execute('DROP TEMPORARY TABLE IF EXISTS TestMaterialManufacturerMigration');
     }
   });
+});
+
+test('checkup color boundaries and categorical oil readings retain historical temperatures',()=>{
+  const {conditionTone,pressureTone,oilTemperatureLabel}=load('lib/checkup-values');
+  for(const [v,tone] of [['COLD','blue'],['NORMAL','green'],['HOT','yellow'],['VERY_HOT','orange']])assert.equal(conditionTone('temperature',v),'condition-'+tone);
+  assert.equal(conditionTone('level','LOW'),'condition-red');for(const v of ['NORMAL','HIGH'])assert.equal(conditionTone('level',v),'condition-green');
+  for(const [min,max] of [[6,10],[4,8]]){
+    for(const v of [min,min+1,max])assert.equal(pressureTone(String(v),min,max),'condition-green');
+    for(const v of [min-0.1,max+0.1])assert.equal(pressureTone(String(v),min,max),'condition-red');
+    assert.equal(pressureTone('',min,max),'');
+  }
+  assert.equal(conditionTone('test','CONFORMING'),'condition-green');assert.equal(conditionTone('test','NON_CONFORMING'),'condition-red');assert.equal(conditionTone('test','NOT_PERFORMED'),'condition-orange');
+  assert.equal(oilTemperatureLabel({oilTempStatus:'HOT',oilTempC:50}),'Quente');assert.match(oilTemperatureLabel({oilTempC:50}),/50 °C/);
+});
+
+test('commercial lots explain missing mixtures, permit any production manager and serialize new lot codes',async()=>{
+  const {submitCommercialLot,createCommercialLot,changeMachineLotConfig}=load('app/actions/lots');
+  const {validateCommercialLotMixture,generateProductionLot}=load('lib/lot');
+  const p1=await db.product.create({data:{code:'LOT-CREATE-A',name:'Lot A',unitsPerPackage:1}});
+  const p2=await db.product.create({data:{code:'LOT-CREATE-B',name:'Lot B',unitsPerPackage:1}});
+  const admin=user;user={...user,name:'Other manager',role:'PRODUCTION_MANAGER'};
+  try {
+    const invalid=await submitCommercialLot(fd({productId:p1.id}));assert.equal(invalid.ok,false);assert.match(invalid.message,/100%/);
+    const inputs=[p1,p2].map(p=>fd({productId:p.id,rawMaterialId_0:material.id,percentage_0:100}));
+    await Promise.all(inputs.map(f=>createCommercialLot(f)));
+    const rows=await db.query('SELECT id,code FROM CommercialLot WHERE productId IN (?,?)',[p1.id,p2.id]);assert.equal(rows.length,2);assert.notEqual(rows[0].code,rows[1].code);
+    const duplicate=await submitCommercialLot(inputs[0]);assert.equal(duplicate.ok,false);assert.match(duplicate.message,/ativo/);
+    const [commercial]=await db.query('SELECT id FROM CommercialLot WHERE productId=?',[p1.id]);
+    assert.equal(await validateCommercialLotMixture(commercial.id,[{rawMaterialLotId:lot.id,percentage:100}]),true);
+    assert.equal(await validateCommercialLotMixture(commercial.id,[{rawMaterialLotId:lot.id,percentage:90}]),false);
+    const m=await db.machine.create({data:{code:'CONFIG-NEW',name:'Recreated'}});
+    assert.match(await generateProductionLot(m.code,'A',new Date()),/^AAA/);
+    await changeMachineLotConfig(fd({machineId:m.id,changeType:'MINOR',reason:'Setup'}));
+    const [config]=await db.query('SELECT * FROM MachineLotConfig WHERE machineId=?',[m.id]);assert.equal(config.majorLetter,'A');assert.equal(config.minorLetter,'B');
+  } finally {user=admin;}
+});
+
+test('admin can manage storage and opening stock without affecting production counters or raw materials',async()=>{
+  const {saveStorageLocation,removeStorageLocation,addOpeningStock}=load('app/actions/storage-admin');
+  const {adjustStockMap}=load('app/actions/stock-map');
+  const stock=load('lib/stock-map');const {getAdminProductionStats}=load('lib/admin-production-stats');const {getScoreboardData}=load('lib/scoreboards');
+  const position={warehouseCode:'W3',warehouseName:'New warehouse',zoneType:'PALLET',code:'P-Z1',rowNumber:1,columnNumber:1};
+  assert.equal((await saveStorageLocation(fd(position))).ok,true);
+  const l=await db.storageLocation.findFirst({where:{warehouseCode:'W3'}});
+  assert.equal((await saveStorageLocation(fd({...position,id:l.id,code:'P-A1'}))).ok,true);
+  assert.equal((await db.storageLocation.findUnique({where:{id:l.id}})).code,'P-A1');
+  const before=await getAdminProductionStats();const boardsBefore=await getScoreboardData();const mpBefore=Number((await db.rawMaterialLot.findUnique({where:{id:lot.id}})).quantityAvailable);
+  const entry=fd({productId:product.id,machineId:machine.id,locationId:l.id,quantityPackages:10,lotCode:'INITIAL-TEST'});
+  assert.equal((await addOpeningStock(entry)).ok,true);
+  const p=await db.production.findFirst({where:{productionLot:'INITIAL-TEST'}});assert.equal(p.recordOrigin,'INITIAL_STOCK');
+  assert.equal((await addOpeningStock(entry)).ok,false);
+  const after=await getAdminProductionStats();assert.deepEqual(after.machines,before.machines);assert.equal(after.totalProduced,before.totalProduced);assert.equal(after.todayProduced,before.todayProduced);
+  const boardsAfter=await getScoreboardData();assert.deepEqual(boardsAfter.shifts,boardsBefore.shifts);assert.deepEqual(boardsAfter.employees,boardsBefore.employees);
+  assert.equal(Number((await db.rawMaterialLot.findUnique({where:{id:lot.id}})).quantityAvailable),mpBefore);
+  assert.equal((await stock.getStorageMapData()).find(x=>x.id===l.id).totalPackages,10);
+  assert.equal((await removeStorageLocation(fd({id:l.id}))).ok,false);
+  await adjustStockMap(fd({productionId:p.id,locationId:l.id,expectedQuantity:10,newQuantityPackages:12,reason:'Physical opening count'}));
+  assert.equal((await db.production.findUnique({where:{id:p.id}})).quantityProduced,12);
+  const order=await load('app/actions/sales-orders').createSalesOrder(fd({customerName:'Opening stock customer',orderDate:'2026-09-28',requestId:require('node:crypto').randomUUID(),items:JSON.stringify([{productId:product.id,quantityUnits:2*p.unitsPerPackageSnapshot,unitPrice:'1'}])}));
+  const [item]=await db.query('SELECT id FROM SalesOrderItem WHERE salesOrderId=?',[order.id]);
+  await dispatchFromOrder(fd({salesOrderItemId:item.id,requestId:require('node:crypto').randomUUID(),invoiceNumber:'INITIAL-FT',dispatchDate:'2026-09-28',orderedQuantityUnits:2*p.unitsPerPackageSnapshot,[`stock_${p.id}_${l.id}`]:2}));
+  assert.equal((await stock.getStorageMapData()).find(x=>x.id===l.id).totalPackages,10);
+  assert.equal((await removeStorageLocation(fd({id:l.id}))).ok,false);
+  const admin=user;user={...user,role:'AUDITOR'};
+  try {await assert.rejects(addOpeningStock(entry),/access-denied/);await assert.rejects(saveStorageLocation(fd(position)),/access-denied/);await assert.rejects(removeStorageLocation(fd({id:l.id})),/access-denied/);}finally{user=admin;}
+  const empty={...position,code:'P-B1',columnNumber:2};await saveStorageLocation(fd(empty));const e=await db.storageLocation.findFirst({where:{warehouseCode:'W3',columnNumber:2}});
+  assert.equal((await removeStorageLocation(fd({id:e.id}))).ok,true);assert.equal((await stock.getStorageLocations()).some(x=>x.id===e.id),false);
+});
+
+test('test-data reset previews safely, restores consumed MPs and preserves master data',async()=>{
+  const tables=['User','Product','RawMaterial','RawMaterialLot','Machine','StorageLocation','CommercialLot','SalesOrder','Maintenance'];
+  const counts=async()=>Object.fromEntries(await Promise.all(tables.map(async table=>{const [r]=await db.query(`SELECT COUNT(*) AS total FROM ${table}`);return [table,Number(r.total)];})));
+  const original=await counts();const productionCount=await db.production.count();
+  const args=['scripts/reset-test-data.mjs'];const opts={cwd:root,env:process.env};
+  const preview=await execFileAsync(process.execPath,args,opts);assert.match(preview.stdout,/SIMULAÇÃO/);assert.equal(await db.production.count(),productionCount);
+  await assert.rejects(execFileAsync(process.execPath,[...args,'--execute'],opts));assert.equal(await db.production.count(),productionCount);
+  // Existing fixtures deliberately exercise manual adjustments; reconcile their initial bounds for this reset test.
+  await db.execute('UPDATE RawMaterialLot l JOIN (SELECT rawMaterialLotId,SUM(quantityKg) consumed FROM ProductionStockConsumption GROUP BY rawMaterialLotId) c ON c.rawMaterialLotId=l.id SET l.quantityInitial=GREATEST(l.quantityInitial,l.quantityAvailable+c.consumed)');
+  const restored=await db.query('SELECT l.id,l.quantityAvailable+COALESCE(c.consumed,0) expected FROM RawMaterialLot l LEFT JOIN (SELECT rawMaterialLotId,SUM(quantityKg) consumed FROM ProductionStockConsumption GROUP BY rawMaterialLotId) c ON c.rawMaterialLotId=l.id');
+  await execFileAsync(process.execPath,[...args,'--execute','--confirm=APAGAR_TESTES'],opts);
+  assert.deepEqual(await counts(),original);
+  for(const table of ['Production','MachineCheckup','ShiftGeneralCheck','WeeklyStartup','WeeklyShutdown','MachineEvent','Incident','LotDispatch','ProductionStorageBalance','ProductionStockConsumption']){const [row]=await db.query(`SELECT COUNT(*) AS total FROM ${table}`);assert.equal(Number(row.total),0,table);}
+  assert.equal(await db.machine.count({where:{status:'RUNNING'}}),0);
+  for(const l of restored)assert.equal(Number((await db.rawMaterialLot.findUnique({where:{id:l.id}})).quantityAvailable),Number(l.expected));
+  assert.ok(await db.auditLog.findFirst({where:{action:'RESET_TEST_DATA'}}));
 });

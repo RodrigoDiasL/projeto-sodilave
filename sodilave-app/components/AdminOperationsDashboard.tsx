@@ -142,7 +142,6 @@ export function AdminOperationsDashboard({
         <ActionLink href="/incidents" title="Avaria ou paragem" icon={<AlertTriangle />} disabled={!hasStartup} />
         <ActionLink href="/intermediate-startup" title="Arranque intermédio" icon={<PlayCircle />} disabled={!hasStartup || stoppedCount === 0} />
         <ActionLink href="/shutdown" title="Paragem semanal" icon={<PowerOff />} disabled={!hasStartup || !hasRunning} />
-        <ActionLink href="/machines" title="Estado das máquinas" icon={<Settings />} />
       </div>
     </section>
   </>;
