@@ -59,3 +59,14 @@ html.dark .operation-feedback.success{background:#153e29;color:#e3ffed;border-co
 @media(max-width:700px){.operation-feedback{top:auto;bottom:20px;right:16px}}
 .order-line-editor{display:grid;grid-template-columns:minmax(200px,2fr) 1fr 1fr 1fr auto;gap:14px;align-items:end;padding:18px;border:1px solid #b6c6da;border-radius:10px}.order-line-total{display:block;margin-top:8px}.order-total{font-size:22px}.order-notes{white-space:pre-wrap}.order-dispatch-history{margin-top:16px;padding:14px 18px;border-left:4px solid #3284ce;background:#eef5ff;border-radius:6px}.order-dispatch-history p{margin:8px 0 0;overflow-wrap:anywhere}html.dark .order-dispatch-history{background:#172d43;color:#e5edf7}.order-item-history h2{margin-top:0}
 @media(max-width:1000px){.order-line-editor{grid-template-columns:1fr 1fr}.order-line-editor>label:first-child{grid-column:1/-1}}@media(max-width:560px){.order-line-editor{grid-template-columns:1fr}}
+
+/* Keep warehouse maps inside the central column, with a scroll area that reaches the last cell. */
+.stock-map-layout{width:100%;min-width:0;grid-template-columns:minmax(0,1fr) minmax(280px,340px)}
+.stock-map-main,.stock-map-zone,.stock-map-details{min-width:0;max-width:100%;box-sizing:border-box}
+.stock-map-zone{overflow:visible}.stock-map-scroll{width:100%;max-width:100%;overflow-x:auto;padding:2px 2px 12px;box-sizing:border-box;overscroll-behavior-x:contain}
+.stock-map-grid{min-width:0;width:100%;box-sizing:border-box}.stock-map-cell{min-width:0;overflow-wrap:anywhere}
+.stock-warehouse-tabs{display:flex;flex-wrap:wrap;gap:10px;margin:20px 0}.stock-warehouse-tabs .btn{white-space:normal}
+.stock-counters{margin:20px 0;min-width:0}.stock-counter-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(min(100%,210px),1fr));gap:12px}
+.stock-counter{padding:16px;border:1px solid #d9e2ef;border-radius:10px;min-width:0}.stock-counter h3{margin:0 0 8px;overflow-wrap:anywhere}.stock-counter strong{font-size:25px}.stock-counter p{margin:6px 0}.stock-family-total{background:#eef5ff}
+html.dark .stock-family-total{background:#132a44}html.dark .stock-counter{border-color:#314052}
+@media(max-width:1200px){.stock-map-layout{grid-template-columns:minmax(0,1fr)}.stock-map-details{position:static;max-height:none}}

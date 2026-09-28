@@ -4,7 +4,8 @@ import { UserInputError } from "@/lib/action-error";
 import { revalidatePath } from "next/cache";
 import { db } from "@/lib/db";
 import { requireOperationalUser } from "@/lib/auth";
-import { getShiftWindow } from "@/lib/shift";
+import { getShiftWindow, productionEditDeadline } from "@/lib/shift";
+import { getCheckupMachines } from "@/lib/checkup-machines";
 import { oilTemperatures } from "@/lib/checkup-values";
 import { OilLevel } from "@/lib/db-types";
 import { saveRecordConfirmation, verifySecondWorker } from "@/lib/second-worker-confirmation";
@@ -28,19 +29,24 @@ export async function saveShiftCheckups(fd: FormData) {
   const user = await requireOperationalUser();
   const intent = String(fd.get("intent") || "draft");
   if (!["draft", "finalize"].includes(intent)) throw new UserInputError("Ação inválida.");
-  const window = getShiftWindow();
-  if (fd.get("shiftStart") !== window.start.toISOString()) throw new UserInputError("O turno mudou. Atualize a página antes de guardar as verificações.");
+  const now=new Date();
+  const requested=new Date(String(fd.get("shiftStart")??""));
+  if(!Number.isFinite(requested.getTime()))throw new UserInputError("O turno mudou. Atualize a página antes de guardar as verificações.");
+  const window=getShiftWindow(requested);
+  const deadline=productionEditDeadline(requested);
+  if(requested.getTime()!==window.start.getTime()||now<window.start||now>deadline)throw new UserInputError("O turno mudou e terminou a tolerância de 30 minutos. Atualize a página.");
+  const lateClosure=now>=window.end;
   const machineIds = fd.getAll("machineIds").map(Number);
   if (!machineIds.length || machineIds.some(id => !Number.isInteger(id) || id <= 0) || new Set(machineIds).size !== machineIds.length) {
     throw new UserInputError("Selecione todas as máquinas em funcionamento.");
   }
-  const secondWorker = intent === "finalize" ? await verifySecondWorker(fd, user.id) : null;
+  const secondWorker = intent === "finalize" ? await verifySecondWorker(fd, user.id, db, window.start) : null;
   const result = await db.$transaction(async tx => {
     // Same lock order as weekly startup/shutdown; also serializes duplicate submissions.
     await tx.query("SELECT id FROM Machine ORDER BY id FOR UPDATE");
     const startup = await tx.weeklyStartup.findFirst({ where: { status: "FINALIZED", shutdown: null } });
-    const machines = await tx.machine.findMany({ where: { active: true, status: "RUNNING" }, orderBy: { id: "asc" } });
-    if (!startup) throw new UserInputError("Não existe um arranque semanal ativo.");
+    const machines=await getCheckupMachines(window,now,tx);
+    if (!startup && !lateClosure) throw new UserInputError("Não existe um arranque semanal ativo.");
     if (machines.length !== machineIds.length || machines.some(m => !machineIds.includes(m.id))) {
       throw new UserInputError("As máquinas em funcionamento mudaram. Atualize a página antes de guardar.");
     }
@@ -63,8 +69,8 @@ export async function saveShiftCheckups(fd: FormData) {
       const finalized = intent === "finalize" || row?.status === "FINALIZED";
       const values = { ...data, status: finalized ? "FINALIZED" : "DRAFT", finalizedAt: finalized ? row?.finalizedAt ?? new Date() : null };
       const saved = row ? await repo.update({ where: { id: row.id }, data: values })
-        : await repo.create({ data: { ...values, operatorId: user.id, shiftCode: window.code, observedAt: new Date() } });
-      if (finalized && secondWorker) await saveRecordConfirmation(entity, saved.id, secondWorker, user.id, tx);
+        : await repo.create({ data: { ...values, operatorId: user.id, shiftCode: window.code, observedAt: lateClosure ? window.start : now } });
+      if (finalized && secondWorker) await saveRecordConfirmation(entity, saved.id, secondWorker, user.id, tx, window.start);
       await tx.auditLog.create({ data: { userId: user.id, action: row ? "EDIT" : finalized ? "FINALIZE" : "CREATE", entity, entityId: String(saved.id), details: { status: values.status, secondWorkerId: secondWorker?.id ?? null } } });
       return { id: saved.id, finalized };
     };
@@ -100,8 +106,8 @@ export async function saveShiftCheckups(fd: FormData) {
       });
       savedMachines.push({ machineId: machine.id, ...saved });
     }
-    // Do not save a submission that crossed the shift boundary while waiting for locks.
-    if (new Date() >= window.end) throw new UserInputError("O turno mudou. Atualize a página antes de guardar.");
+    // The closing grace must still hold after waiting for locks.
+    if (new Date() > deadline) throw new UserInputError("O turno mudou e terminou a tolerância de 30 minutos. Atualize a página.");
     return { general: savedGeneral, machines: savedMachines, finalized: savedGeneral.finalized && savedMachines.every(m => m.finalized) };
   });
   for (const path of ["/checkups", "/admin/checkups", "/dashboard"]) revalidatePath(path);

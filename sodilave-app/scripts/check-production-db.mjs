@@ -22,7 +22,7 @@ try {
     SalesOrder:["id","customerName","orderDate","requestId","requestHash","status"],
     SalesOrderItem:["id","salesOrderId","productId","quantityUnits","unitPrice"],
     StorageLocation:["id","warehouseCode","warehouseName","zoneType","rowNumber","columnNumber","code","active"],
-    Product:["productionUnit"],
+    Product:["productionUnit","stockFamily"],
     MachineCheckup:["oilTempStatus"],
     RawMaterialLot:["manufacturer","supplier"],
     ProductionStorageBalance:["productionId","locationId","quantityPackages"],

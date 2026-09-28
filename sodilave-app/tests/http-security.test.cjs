@@ -104,7 +104,7 @@ test('production pages enforce commerce roles and provide auditors read-only cat
           }
           for(const path of ['/orders/new','/startup','/shutdown','/intermediate-startup'])assert.equal((await get(path)).headers.get('location'),'/access-denied',path);
         }
-        if(role!=='ADMIN'){assert.equal((await get('/admin/storage')).headers.get('location'),'/access-denied');assert.equal((await get('/admin/import-history')).headers.get('location'),'/access-denied');}
+        if(role!=='ADMIN'){for(const path of ['/admin/productions/1/edit','/admin/products/1/variant'])assert.equal((await get(path)).headers.get('location'),'/access-denied');assert.equal((await get('/admin/storage')).headers.get('location'),'/access-denied');assert.equal((await get('/admin/import-history')).headers.get('location'),'/access-denied');}
         if(['ADMIN','PRODUCTION_MANAGER','AUDITOR'].includes(role)){
           const response=await get('/commercial-lots');assert.equal(response.status,200);const html=await response.text();
           assert.equal((await get('/admin/lot-rules')).headers.get('location'),'/commercial-lots');
@@ -124,7 +124,8 @@ test('production pages enforce commerce roles and provide auditors read-only cat
           const storage=await get('/admin/storage');assert.equal(storage.status,200);assert.match(await storage.text(),/Dar entrada de stock inicial/);
           const dashboard=await (await get('/dashboard')).text();assert.doesNotMatch(dashboard,/>Estado das máquinas</);assert.match(dashboard,/Contadores de Produção/);
           const html=await (await get('/admin/users')).text();assert.match(html,/Logística e Expedição/);assert.match(html,/Auditor \(só consulta\)/);
-          const products=await (await get('/admin/products')).text();assert.match(products,/value="UNIT"/);
+          const products=await (await get('/admin/products')).text();assert.match(products,/value="UNIT"/);assert.match(products,/Criar variante/);
+          const stockPage=await get('/stock-map');assert.equal(stockPage.status,200);assert.match(await stockPage.text(),/Stock por artigo/);
         }
       } finally {await connection.execute('DELETE FROM AuthSession WHERE id=?',[session]);await connection.execute('DELETE FROM User WHERE id=?',[id]);}
     }

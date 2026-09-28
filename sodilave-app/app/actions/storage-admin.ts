@@ -27,7 +27,7 @@ export async function saveStorageLocation(fd:FormData) {
     const id=fd.get("id")?integer(fd,"id"):null;
     const warehouseCode=text(fd,"warehouseCode",8).toUpperCase(),warehouseName=text(fd,"warehouseName",64),code=text(fd,"code",16),zoneType=text(fd,"zoneType",16);
     if(!/^[A-Z0-9_-]+$/.test(warehouseCode)||!warehouseName||!code||!["STACK","PALLET"].includes(zoneType))throw new UserInputError("Preencha o armazém, a posição e o tipo de espaço.");
-    const data={warehouseCode,warehouseName,code,zoneType,rowNumber:integer(fd,"rowNumber",1,100),columnNumber:integer(fd,"columnNumber",1,30),active:true};
+    const data={warehouseCode,warehouseName:warehouseCode==="W1"?"Armazém Sede":warehouseCode==="W2"?"Armazém Zona Industrial":warehouseName,code,zoneType,rowNumber:integer(fd,"rowNumber",1,100),columnNumber:integer(fd,"columnNumber",1,30),active:true};
     await db.$transaction(async tx=>{
       if(id){
         const [current]=await tx.query<any[]>("SELECT * FROM StorageLocation WHERE id=? FOR UPDATE",[id]);

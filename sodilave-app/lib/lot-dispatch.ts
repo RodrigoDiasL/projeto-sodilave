@@ -76,7 +76,7 @@ export async function getAvailableFinishedLots(): Promise<AvailableFinishedLot[]
       WHERE dispatch.cancelledAt IS NULL
       GROUP BY line.productionId
     ) outbound ON outbound.productionId = p.id
-    WHERE p.status = 'FINALIZED'
+    WHERE p.status = 'FINALIZED' AND p.recordOrigin<>'HISTORICAL_IMPORT'
       AND b.quantityPackages > 0
       AND COALESCE(p.unitsPerPackageSnapshot, pr.unitsPerPackage, 0) > 0
     ORDER BY p.startedAt ASC, p.id ASC, l.warehouseCode, FIELD(l.zoneType,'STACK','PALLET'), l.rowNumber, l.columnNumber

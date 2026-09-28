@@ -525,3 +525,48 @@ Um formulário aberto mantém o seu turno durante até 48h; rascunhos já guarda
 mantêm o turno original ao concluir, mesmo mais tarde ou com a máquina parada.
 As correções por operadores a produções já finalizadas são permitidas até
 30 minutos depois do fim do turno. O administrador mantém a permissão de correção.
+
+## Correções administrativas, variantes e mapa por armazém — 28/09/2026
+
+Aplicar o código e executar `npm run db:upgrade` e `npm run db:check` antes de
+iniciar a nova compilação. A migração acrescenta `Product.stockFamily` e muda os
+nomes das posições W1 para **Armazém Sede** e W2 para **Armazém Zona Industrial**.
+Preserva posições, quantidades e produtos; não cria variantes automaticamente.
+
+Em **Administrador → Produções → Editar / eliminar**, o administrador pode
+corrigir data, turno, artigo/variante, operador, quantidade e observações, mesmo
+para registos antigos. As quantidades de cada posição podem ser corrigidas no
+mesmo formulário. A aplicação conserva o código de lote já usado nos sacos, as
+leituras e o consumo de MPs. Há um acesso ao formulário completo para editar
+pesos, testes e mistura dos registos de produção normais. Cada correção exige
+motivo e conserva os valores anteriores em auditoria. Edições concorrentes são
+recusadas para não substituir alterações mais recentes.
+
+A eliminação retira a produção do stock e dos contadores, devolve o consumo de
+MPs registado e mantém uma marca auditável. As produções eliminadas deixam de
+aparecer na listagem normal; usar **Mostrar também as eliminadas** para consultar.
+Produções com saídas ativas não podem ser eliminadas nem mudar de artigo até
+corrigir essas saídas. Uma correção de quantidade nunca pode reduzir abaixo do
+stock localizado mais as quantidades expedidas. Mudar para outra variante exige
+as mesmas unidades por embalagem e autorização da máquina para o novo artigo.
+
+Nas **Verificações de Turno**, os primeiros 30 minutos após 00h, 08h e 16h permitem
+fechar o turno anterior; o botão **Registar verificações do turno atual** permite
+selecionar explicitamente o novo turno. Formulários já abertos e rascunhos mantêm
+o turno de origem durante essa tolerância, incluindo máquinas entretanto paradas.
+A confirmação do colega também fica associada ao turno correto.
+
+Em **Produtos → Criar variante**, selecionar o Jerrycan 5 L original, confirmar o
+nome **Rosca**, indicar **Encaixe** para a nova variante e atribuir-lhe um código
+próprio. Usar **Jerrycan 5 L** como família comum. A app copia as máquinas
+permitidas, as unidades por embalagem e as letras iniciais, sem copiar stock.
+Os registos existentes continuam no original. Se algum pertencer a Encaixe,
+corrigir o artigo no registo respetivo. Artigos já criados podem ser agrupados
+preenchendo a mesma família no ecrã de edição de cada produto.
+
+O mapa tem uma aba por armazém e deslocação horizontal limitada à grelha quando
+necessária. Os contadores mostram unidades de cada artigo, por armazém e por
+localizar, mais um total das variantes de cada família. Usam as unidades por
+embalagem guardadas em cada produção, para respeitar embalamentos históricos.
+As importações apenas para histórico não aparecem no stock por localizar e não
+podem ser localizadas ou expedidas como stock físico.

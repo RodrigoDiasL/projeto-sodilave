@@ -35,6 +35,7 @@ async function getProductionCapacity(tx: DbTransaction, productionId: number) {
   );
   const production = rows[0];
   if (!production) throw new UserInputError("O lote de produção já não existe.");
+  if (production.recordOrigin === "HISTORICAL_IMPORT") throw new UserInputError("O histórico importado não cria stock físico.");
   if (production.status !== "FINALIZED") throw new UserInputError("Só é possível movimentar stock de produções finalizadas.");
 
   const unitsPerPackage = Number(production.unitsPerPackage);

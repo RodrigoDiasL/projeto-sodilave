@@ -34,6 +34,7 @@ export type StorageMapLocation = StorageLocationInfo & {
 export type UnlocatedFinishedLot = {
   productionId: number;
   lotCode: string;
+  productId: number;
   productCode: string;
   productName: string;
   productionUnit: ProductionUnit;
@@ -80,7 +81,7 @@ export async function getStorageMapData(): Promise<StorageMapLocation[]> {
       INNER JOIN Production p ON p.id = b.productionId
       INNER JOIN Product pr ON pr.id = p.productId
       LEFT JOIN ProductionLotAssociation pla ON pla.productionId = p.id
-      WHERE b.quantityPackages > 0
+      WHERE b.quantityPackages > 0 AND p.status='FINALIZED' AND p.recordOrigin<>'HISTORICAL_IMPORT'
       ORDER BY p.startedAt ASC, p.id ASC
     `),
   ]);
@@ -149,6 +150,7 @@ export async function getUnlocatedFinishedLots(): Promise<UnlocatedFinishedLot[]
   const rows = await db.query<any[]>(`
     SELECT
       p.id AS productionId,
+      p.productId,
       COALESCE(pla.labelCode, p.productionLot) AS lotCode,
       pr.code AS productCode,
       pr.name AS productName,
@@ -172,7 +174,7 @@ export async function getUnlocatedFinishedLots(): Promise<UnlocatedFinishedLot[]
       WHERE d.cancelledAt IS NULL
       GROUP BY line.productionId
     ) outbound ON outbound.productionId = p.id
-    WHERE p.status = 'FINALIZED'
+    WHERE p.status = 'FINALIZED' AND p.recordOrigin<>'HISTORICAL_IMPORT'
       AND COALESCE(p.quantityProduced, 0) > 0
       AND COALESCE(p.unitsPerPackageSnapshot, pr.unitsPerPackage, 0) > 0
     ORDER BY p.startedAt DESC, p.id DESC
@@ -193,6 +195,7 @@ export async function getUnlocatedFinishedLots(): Promise<UnlocatedFinishedLot[]
       productName: String(row.productName),
       productionUnit: String(row.productionUnit || "BAG") as ProductionUnit,
       unitsPerPackage,
+      productId: Number(row.productId),
       producedPackages,
       dispatchedPackages,
       locatedPackages,

@@ -38,7 +38,7 @@ function MapGrid({
     <div className="section-heading">
       <div><h2>{title}</h2><p className="muted small">{subtitle}</p></div>
     </div>
-    <div className="stock-map-grid" style={{gridTemplateColumns:`repeat(${Math.max(1,...locations.map(l=>l.columnNumber))},minmax(95px,1fr))`,overflowX:"auto"}}>
+    <div className="stock-map-scroll" tabIndex={0} aria-label={`Mapa de ${title}`}><div className="stock-map-grid" style={{gridTemplateColumns:`repeat(${Math.max(1,...locations.map(l=>l.columnNumber))},minmax(95px,1fr))`}}>
       {locations.map((location) => <button
         type="button"
         key={location.id}
@@ -57,7 +57,7 @@ function MapGrid({
             </div>
           </>}
       </button>)}
-    </div>
+    </div></div>
   </section>;
 }
 
@@ -73,6 +73,9 @@ export function StockMap({
   isAdmin: boolean;
 }) {
   const [selectedId, setSelectedId] = useState<number | null>(null);
+  const warehouses = useMemo(()=>Array.from(new Map(locations.map(l=>[l.warehouseCode,l.warehouseName])).entries()),[locations]);
+  const [warehouseCode,setWarehouseCode]=useState(locations[0]?.warehouseCode??"W1");
+  const activeWarehouse=warehouses.some(([code])=>code===warehouseCode)?warehouseCode:warehouses[0]?.[0];
   const selected = locations.find((location) => location.id === selectedId) ?? null;
 
   const groups = useMemo(() => {
@@ -81,9 +84,9 @@ export function StockMap({
     return [...result.values()];
   }, [locations]);
 
-  return <div className="stock-map-layout">
+  return <><nav className="stock-warehouse-tabs" aria-label="Selecionar armazém">{warehouses.map(([code,name])=><button type="button" key={code} aria-pressed={activeWarehouse===code} className={`btn ${activeWarehouse===code?"primary":"secondary"}`} onClick={()=>{setWarehouseCode(code);setSelectedId(null);}}>{name}</button>)}</nav><div className="stock-map-layout">
     <div className="stock-map-main">
-      {groups.map(group=><MapGrid key={`${group.locations[0].warehouseCode}:${group.zoneType}`} title={group.title+(group.zoneType==="PALLET"?" · Paletes":"")} subtitle={`${group.zoneType==="PALLET"?"Paletes":"Estibas / montes"} · ${group.locations.length} posições`} locations={group.locations} selectedId={selectedId} onSelect={setSelectedId}/>)}
+      {groups.filter(group=>group.locations[0].warehouseCode===activeWarehouse).map(group=><MapGrid key={`${group.locations[0].warehouseCode}:${group.zoneType}`} title={group.title+(group.zoneType==="PALLET"?" · Paletes":"")} subtitle={`${group.zoneType==="PALLET"?"Paletes":"Estibas / montes"} · ${group.locations.length} posições`} locations={group.locations} selectedId={selectedId} onSelect={setSelectedId}/>)}
       {!groups.length&&<p>Não existem posições ativas. O administrador pode adicioná-las em Gerir armazém e stock inicial.</p>}
     </div>
 
@@ -183,5 +186,5 @@ export function StockMap({
         </article>)}
       </section>}
     </aside>
-  </div>;
+  </div></>;
 }

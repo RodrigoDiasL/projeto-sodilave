@@ -100,7 +100,7 @@ export async function createLotDispatch(formData: FormData) {
        FROM Production p
        INNER JOIN Product pr ON pr.id = p.productId
        LEFT JOIN ProductionLotAssociation pla ON pla.productionId = p.id
-       WHERE p.id IN (${productionPlaceholders})
+       WHERE p.id IN (${productionPlaceholders}) AND p.recordOrigin<>'HISTORICAL_IMPORT'
        ORDER BY p.id
        FOR UPDATE`,
       productionIds,

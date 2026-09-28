@@ -366,7 +366,7 @@ test('an authorized operator can finalize a past production and book stock in it
 
 test('every operational mutation rejects anonymous users and auditors; admin mutations reject operators',async()=>{
   const account=user;
-  const operational=['startup','shutdown','checkups','production','lot-dispatch','incidents','intermediate-startup','maintenance','sales-orders','stock-map','production-display','operation-settings','production-admin','admin','historical-import'];
+  const operational=['startup','shutdown','checkups','production','lot-dispatch','incidents','intermediate-startup','maintenance','sales-orders','stock-map','production-display','operation-settings','production-admin','admin','historical-import','product-variants'];
   try {
     for(const role of [null,'AUDITOR']) {
       user=role?{...account,role}:null;
@@ -375,7 +375,7 @@ test('every operational mutation rejects anonymous users and auditors; admin mut
       }
     }
     user={...account,role:'OPERATOR'};
-    for(const file of ['sales-orders','lot-dispatch','stock-map','production-display','operation-settings','production-admin','admin','maintenance','historical-import'])for(const action of Object.values(load(`app/actions/${file}`))) {
+    for(const file of ['sales-orders','lot-dispatch','stock-map','production-display','operation-settings','production-admin','admin','maintenance','historical-import','product-variants'])for(const action of Object.values(load(`app/actions/${file}`))) {
       if(typeof action==='function')await assert.rejects(action(new FormData()),/access-denied/,`${file}: operator`);
     }
     for(const role of ['OPERATOR','AUDITOR']) {
@@ -994,6 +994,72 @@ test('historical file imports preview, preserve sources and old lots, reject dup
   source.shift.date='2025-09-02';preview=await previewHistoricalImport(input());assert.equal(preview.errors,0);submit=input();submit.set('previewHash',preview.hash);submit.set('confirmed','yes');assert.equal((await commitHistoricalImport(submit)).ok,true);assert.equal(await db.production.count({where:{productionLot:'OLD-ALL'}}),2,'same old lot can span multiple dates');
   source.shift.date='2025-09-03';preview=await previewHistoricalImport(input());source.productions[0].quantityProduced=99;submit=input();submit.set('previewHash',preview.hash);submit.set('confirmed','yes');assert.equal((await commitHistoricalImport(submit)).ok,false,'payload changed after review');
   assert.equal(await db.production.count({where:{productId:p.id}}),2);
+});
+
+
+test('administrator corrects a late production and separates variants without copying stock; counters reflect corrections and deletion',async()=>{
+  const {correctProductionRecord,deleteProductionRecord}=load('app/actions/production-admin');
+  const {createProductVariant}=load('app/actions/product-variants');const {getStockCounters}=load('lib/stock-counters');
+  const base=await db.product.create({data:{code:'JC5-R',name:'Jerrycan 5 L',unitsPerPackage:32,productionUnit:'BAG'}});
+  await db.execute('INSERT INTO ProductMachine(productId,machineId) VALUES (?,?)',[base.id,machine.id]);
+  await db.execute("INSERT INTO ProductLotConfig(productId,majorLetter,minorLetter) VALUES (?,'C','D')",[base.id]);
+  const places=[];for(const [i,name]of ['Armazém Sede','Armazém Zona Industrial'].entries())places.push(await db.storageLocation.create({data:{warehouseCode:'CT'+i,warehouseName:name,zoneType:'STACK',rowNumber:1,columnNumber:1,code:'CT'+i}}));
+  const row=await db.production.create({data:{machineId:machine.id,productId:base.id,operatorId:user.id,productionLot:'WRONG-TURN-PRINTED',recordOrigin:'PRODUCTION',status:'FINALIZED',shiftCode:'C',startedAt:new Date(2025,8,1,16,5),finalizedAt:new Date(2025,8,1,16,5),quantityProduced:10,productionUnitSnapshot:'BAG',unitsPerPackageSnapshot:32}});
+  for(const [i,l]of places.entries())await db.productionStorageBalance.create({data:{productionId:row.id,locationId:l.id,quantityPackages:i?4:6}});
+  const create=fd({id:base.id,expectedName:base.name,originalName:'Jerrycan 5 L — Rosca',name:'Jerrycan 5 L — Encaixe',code:'JC5-E',stockFamily:'Jerrycan 5 L'});
+  assert.equal((await createProductVariant(create)).ok,true);assert.equal((await createProductVariant(create)).ok,false,'retry cannot duplicate variant');
+  const variant=await db.product.findFirst({where:{code:'JC5-E'}});assert.equal(variant.stockFamily,'Jerrycan 5 L');assert.equal(await db.production.count({where:{productId:variant.id}}),0);
+  assert.equal((await db.query('SELECT * FROM ProductMachine WHERE productId=?',[variant.id])).length,1);
+  assert.equal((await db.query('SELECT majorLetter FROM ProductLotConfig WHERE productId=?',[variant.id]))[0].majorLetter,'C');
+  const input=async()=>{
+    const p=await db.production.findUnique({where:{id:row.id}});const bs=await db.query('SELECT locationId,quantityPackages FROM ProductionStorageBalance WHERE productionId=? ORDER BY locationId',[row.id]);
+    return fd({id:row.id,productId:variant.id,operatorId:user.id,date:'2025-09-01',shiftCode:'B',quantityProduced:9,reason:'Closed 5 minutes after shift; correct neck variant',expectedUpdatedAt:p.updatedAt.toISOString(),expectedBalances:JSON.stringify(bs.map(b=>[Number(b.locationId),Number(b.quantityPackages)])),[`balance_${places[0].id}`]:6,[`balance_${places[1].id}`]:3});
+  };
+  const correction=await input();const beforeMP=Number((await db.rawMaterialLot.findUnique({where:{id:lot.id}})).quantityAvailable);
+  const result=await correctProductionRecord(correction);assert.equal(result.ok,true,JSON.stringify(result));
+  const fixed=await db.production.findUnique({where:{id:row.id}});assert.equal(fixed.shiftCode,'B');assert.equal(fixed.startedAt.getHours(),8);assert.equal(fixed.productId,variant.id);assert.equal(fixed.quantityProduced,9);assert.equal(fixed.productionLot,row.productionLot);
+  assert.equal(Number((await db.rawMaterialLot.findUnique({where:{id:lot.id}})).quantityAvailable),beforeMP);
+  assert.equal((await correctProductionRecord(correction)).ok,false,'stale edits rejected');
+  let counters=await getStockCounters();assert.equal(counters.articles.find(a=>a.id===base.id).total,0);assert.equal(counters.articles.find(a=>a.id===variant.id).total,288);assert.equal(counters.families.find(f=>f.name==='Jerrycan 5 L').total,288);
+  assert.deepEqual(counters.articles.find(a=>a.id===variant.id).warehouses.map(w=>w.units).sort((a,b)=>a-b),[96,192]);
+  const invalid=await input();invalid.set('quantityProduced','1');assert.equal((await correctProductionRecord(invalid)).ok,false);assert.equal((await db.production.findUnique({where:{id:row.id}})).quantityProduced,9);
+  const auditor=user;user={...user,role:'AUDITOR'};try{await assert.rejects(correctProductionRecord(invalid),/access-denied/);await assert.rejects(deleteProductionRecord(invalid),/access-denied/);await assert.rejects(createProductVariant(create),/access-denied/);}finally{user=auditor;}
+  assert.equal((await deleteProductionRecord(fd({id:row.id,reason:'Duplicate test record',expectedUpdatedAt:fixed.updatedAt.toISOString()}))).ok,true);
+  assert.equal((await db.production.findUnique({where:{id:row.id}})).status,'CANCELLED');assert.equal(await db.productionStorageBalance.count({where:{productionId:row.id}}),0);
+  counters=await getStockCounters();assert.equal(counters.families.find(f=>f.name==='Jerrycan 5 L').total,0);
+  assert.ok(await db.auditLog.findFirst({where:{entity:'Production',entityId:String(row.id),action:'ADMIN_CORRECTION'}}));
+  const [dispatched]=await db.query("SELECT line.productionId FROM LotDispatchLine line JOIN LotDispatch d ON d.id=line.lotDispatchId WHERE d.cancelledAt IS NULL LIMIT 1");
+  assert.ok(dispatched);const protectedResult=await deleteProductionRecord(fd({id:dispatched.productionId,reason:'Cannot remove shipped records'}));assert.equal(protectedResult.ok,false);assert.match(protectedResult.message,/saídas para clientes/);
+});
+
+test('imported history never appears as current or unlocated stock and cannot be located manually',async()=>{
+  const imported=await db.production.findFirst({where:{recordOrigin:'HISTORICAL_IMPORT',status:'FINALIZED'}});assert.ok(imported);
+  const unlocated=await load('lib/stock-map').getUnlocatedFinishedLots();assert.equal(unlocated.some(r=>r.productionId===imported.id),false);
+  assert.equal((await load('lib/stock-counters').getStockCounters()).articles.find(r=>r.id===imported.productId).total,0);
+  await assert.rejects(load('app/actions/stock-map').addUnlocatedStock(fd({productionId:imported.id,locationId:location.id,quantityPackages:1,reason:'History is not stock'})),/histórico importado/);
+});
+
+test('checkups retain the previous shift during the 30 minute grace, including stopped draft machines and midnight',async t=>{
+  const {saveShiftCheckups}=load('app/actions/checkups');const {getShiftWindow}=load('lib/shift');
+  const previousStates=await db.machine.findMany({where:{status:'RUNNING'}});await db.machine.updateMany({where:{status:'RUNNING'},data:{status:'STOPPED'}});
+  const m=await db.machine.create({data:{code:'CHECKGRACE',name:'Checkup grace machine',status:'RUNNING'}});
+  const fakeNow=new Date(2025,9,1,15,55);t.mock.timers.enable({apis:['Date'],now:fakeNow});
+  const input=fd({shiftStart:getShiftWindow(fakeNow).start.toISOString(),intent:'draft',machineIds:m.id,chillerLargeC:5,chillerSmallC:6,ambientTempC:20,[`m${m.id}_oilTempStatus`]:'NORMAL',[`m${m.id}_oilLevel`]:'NORMAL',[`m${m.id}_airPressure`]:8,[`m${m.id}_waterPressure`]:6});
+  try{
+    // A running cycle is needed while still inside the shift.
+    const cycle=await db.weeklyStartup.create({data:{operatorId:user.id,status:'FINALIZED',shiftCode:'B',startupDate:fakeNow,finalizedAt:fakeNow}});
+    const draft=await saveShiftCheckups(input);input.set('generalId',String(draft.general.id));input.set(`m${m.id}_checkupId`,String(draft.machines[0].id));
+    await db.machine.update({where:{id:m.id},data:{status:'STOPPED'}});
+    t.mock.timers.setTime(new Date(2025,9,1,16,5).getTime());input.set('intent','finalize');assert.equal((await saveShiftCheckups(input)).finalized,true);
+    const saved=await db.machineCheckup.findUnique({where:{id:draft.machines[0].id}});assert.equal(saved.shiftCode,'B');assert.equal(saved.observedAt.getHours(),15);
+    t.mock.timers.setTime(new Date(2025,9,1,16,30).getTime());assert.equal((await saveShiftCheckups(input)).finalized,true);
+    t.mock.timers.setTime(new Date(2025,9,1,16,30,1).getTime());await assert.rejects(saveShiftCheckups(input),/30 minutos/);
+    await load('lib/machine-state').changeMachineStatus({machineId:m.id,toStatus:'RUNNING',type:'INTERMEDIATE_STARTUP',userId:user.id,occurredAt:new Date(2025,9,1,23,55)});
+    await load('lib/machine-state').changeMachineStatus({machineId:m.id,toStatus:'STOPPED',type:'WEEKLY_SHUTDOWN',userId:user.id,occurredAt:new Date(2025,9,2,0,0)});
+    input.delete('generalId');input.delete(`m${m.id}_checkupId`);input.set('shiftStart',getShiftWindow(new Date(2025,9,1,23,55)).start.toISOString());
+    t.mock.timers.setTime(new Date(2025,9,2,0,5).getTime());const midnight=await saveShiftCheckups(input);const general=await db.shiftGeneralCheck.findUnique({where:{id:midnight.general.id}});assert.equal(general.shiftCode,'C');assert.equal(general.observedAt.getDate(),1);assert.equal(general.observedAt.getHours(),16);
+    await db.weeklyStartup.update({where:{id:cycle.id},data:{status:'CANCELLED'}});
+  }finally{t.mock.timers.reset();await db.machine.update({where:{id:m.id},data:{active:false,status:'STOPPED'}});for(const old of previousStates)await db.machine.update({where:{id:old.id},data:{status:'RUNNING'}});}
 });
 
 test('test-data reset previews safely, restores consumed MPs and preserves master data',async()=>{

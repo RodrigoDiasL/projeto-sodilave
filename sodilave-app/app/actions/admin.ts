@@ -97,11 +97,11 @@ export async function createProduct(formData: FormData) {
   const productionUnit = text(formData, "productionUnit", 16) || "BAG";
   if (!["BAG","PALLET","UNIT"].includes(productionUnit)) throw new Error("A unidade de produção é inválida.");
   await db.$transaction(async tx => {
-  const row=await tx.product.create({ data: { code: requireText(text(formData, "code", 40), "O código"), name: requireText(text(formData, "name"), "A designação"), unitsPerPackage, productionUnit, active: true } });
+  const row=await tx.product.create({ data: { code: requireText(text(formData, "code", 40), "O código"), name: requireText(text(formData, "name"), "A designação"), unitsPerPackage, productionUnit, stockFamily:text(formData,"stockFamily",80)||null, active: true } });
   await replaceProductMachines(tx,row.id,ids);
   await tx.auditLog.create({data:{userId:admin.id,action:"CREATE",entity:"Product",entityId:String(row.id),details:{machineIds:ids}}});
   });
-  revalidatePath("/admin/products"); revalidatePath("/production");
+  revalidatePath("/admin/products"); revalidatePath("/production"); revalidatePath("/stock-map");
 }
 
 export async function updateProduct(formData: FormData) {
@@ -117,13 +117,14 @@ export async function updateProduct(formData: FormData) {
     code: requireText(text(formData, "code", 40), "O código"),
     name: requireText(text(formData, "name"), "A designação"),
     unitsPerPackage,
+    stockFamily:text(formData,"stockFamily",80)||null,
     productionUnit,
     active: formData.get("active") === "on",
   }});
   await replaceProductMachines(tx,id,ids);
   await tx.auditLog.create({data:{userId:admin.id,action:"EDIT",entity:"Product",entityId:String(id),details:{machineIds:ids}}});
   });
-  revalidatePath("/admin/products"); revalidatePath(`/admin/products/${id}`); revalidatePath("/production");
+  revalidatePath("/admin/products"); revalidatePath(`/admin/products/${id}`); revalidatePath("/production"); revalidatePath("/stock-map");
 }
 
 export async function setProductActive(formData: FormData) {
@@ -131,7 +132,7 @@ export async function setProductActive(formData: FormData) {
   const id = positiveId(formData);
   const active = String(formData.get("active")) === "true";
   await db.product.update({ where: { id }, data: { active } });
-  revalidatePath("/admin/products"); revalidatePath(`/admin/products/${id}`); revalidatePath("/production");
+  revalidatePath("/admin/products"); revalidatePath(`/admin/products/${id}`); revalidatePath("/production"); revalidatePath("/stock-map");
 }
 
 export async function createRawMaterial(formData: FormData) {
@@ -202,7 +203,7 @@ export async function deleteMachine(formData: FormData) {
 export async function deleteProduct(formData: FormData) {
   await requireAdmin(); const id = positiveId(formData);
   if (await db.production.count({ where: { productId: id } })) await db.product.update({ where: { id }, data: { active: false } }); else await db.product.delete({ where: { id } });
-  revalidatePath("/admin/products"); revalidatePath("/production");
+  revalidatePath("/admin/products"); revalidatePath("/production"); revalidatePath("/stock-map");
 }
 export async function deleteRawMaterial(formData: FormData) {
   await requireAdmin(); const id = positiveId(formData);

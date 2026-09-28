@@ -1,3 +1,5 @@
+import { StockCounters } from "@/components/StockCounters";
+import { getStockCounters } from "@/lib/stock-counters";
 import Link from "next/link";
 import { requireUser } from "@/lib/auth";
 import { PageIntro } from "@/components/PageIntro";
@@ -6,10 +8,11 @@ import { getStorageLocations, getStorageMapData, getUnlocatedFinishedLots } from
 
 export default async function StockMapPage() {
   const user = await requireUser();
-  const [locations, allLocations, unlocated] = await Promise.all([
+  const [locations, allLocations, unlocated, counters] = await Promise.all([
     getStorageMapData(),
     getStorageLocations(),
     user.role === "ADMIN" ? getUnlocatedFinishedLots() : Promise.resolve([]),
+    getStockCounters(),
   ]);
 
   return <>
@@ -21,6 +24,7 @@ export default async function StockMapPage() {
     <div className="notice">
       Cada célula representa uma posição física. Uma posição pode conter vários lotes. As quantidades são controladas em sacos, paletes ou unidades, conforme a configuração do produto.
     </div>
+    <StockCounters data={counters}/>
     <StockMap locations={locations} allLocations={allLocations} unlocated={unlocated} isAdmin={user.role === "ADMIN"}/>
   </>;
 }
