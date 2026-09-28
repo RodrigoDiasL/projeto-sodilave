@@ -1,4 +1,5 @@
 "use server";
+import { createHash } from "node:crypto";
 import { revalidatePath } from "next/cache";
 import { requireAdmin } from "@/lib/auth";
 import { db } from "@/lib/db";
@@ -58,6 +59,9 @@ export async function addOpeningStock(fd:FormData) {
   return perform(async()=>{
     const productId=integer(fd,"productId"),machineId=integer(fd,"machineId"),locationId=integer(fd,"locationId"),quantity=integer(fd,"quantityPackages");
     const lotCode=text(fd,"lotCode",120),notes=text(fd,"notes",500);
+    const requestId=String(fd.get("requestId")??"");
+    if(!/^[a-f0-9-]{36}$/i.test(requestId))throw new UserInputError("Atualize a página antes de registar o stock.");
+    const requestHash=createHash("sha256").update(JSON.stringify({productId,machineId,locationId,quantity,lotCode,notes})).digest("hex");
     if(!lotCode)throw new UserInputError("Indique o código do lote já existente no stock.");
     await db.$transaction(async tx=>{
       const [machine]=await tx.query<any[]>("SELECT id FROM Machine WHERE id=? AND active=1 FOR UPDATE",[machineId]);
@@ -66,9 +70,10 @@ export async function addOpeningStock(fd:FormData) {
       if(!machine||!product||!location)throw new UserInputError("Selecione um produto, máquina de origem e posição ativos.");
       const units=product.productionUnit==="UNIT"?1:Number(product.unitsPerPackage);
       if(!Number.isSafeInteger(units)||units<1)throw new UserInputError("Configure as unidades por saco/palete deste produto antes de dar entrada de stock.");
-      const existing=await tx.production.findUnique({where:{productId,productionLot:lotCode}});
-      if(existing)throw new UserInputError("Este lote já está registado. Use o Mapa de Stock para distribuir ou corrigir as suas posições.");
+      const [request]=await tx.query<any[]>("SELECT requestHash FROM OpeningStockRequest WHERE requestId=? FOR UPDATE",[requestId]);
+      if(request){if(request.requestHash!==requestHash)throw new UserInputError("Esta entrada já foi guardada com outros dados. Atualize a página antes de criar uma nova entrada.");return;}
       const saved=await tx.production.create({data:{machineId,productId,operatorId:admin.id,productionLot:lotCode,shiftCode:"INITIAL",status:"FINALIZED",recordOrigin:"INITIAL_STOCK",quantityProduced:quantity,unitsPerPackageSnapshot:units,productionUnitSnapshot:product.productionUnit,finalizedAt:new Date(),observations:notes||"Entrada de stock anterior à utilização da aplicação."}});
+      await tx.execute("INSERT INTO OpeningStockRequest (requestId,requestHash,productionId) VALUES (?,?,?)",[requestId,requestHash,saved.id]);
       await tx.productionStorageBalance.create({data:{productionId:saved.id,locationId,quantityPackages:quantity}});
       await tx.productionStorageMovement.create({data:{productionId:saved.id,movementType:"INITIAL_STOCK",toLocationId:locationId,quantityPackages:quantity,createdById:admin.id,reason:notes||"Stock inicial"}});
       await tx.auditLog.create({data:{userId:admin.id,action:"CREATE",entity:"OpeningStock",entityId:String(saved.id),details:{lotCode,productId,machineId,locationId,quantity,unitsPerPackage:units}}});

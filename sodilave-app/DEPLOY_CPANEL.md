@@ -479,3 +479,49 @@ Depois de mudar de artigo/molde, atualizar esta seleção. O lote previsto usa a
 letras desse produto e o turno atual; as ordens antigas são convertidas durante
 a migração. Administradores e responsáveis de produção podem editar lotes;
 auditores têm apenas consulta.
+
+
+## Entradas repetidas, histórico e fecho de turno — 28/09/2026
+
+Antes de iniciar este pacote, executar `npm run db:upgrade` e `npm run db:check`.
+A migração cria os registos de importação e a proteção contra repetição acidental
+de entradas de stock. Não apaga dados existentes e não requer reset.
+
+Em **Mapa de Stock → edição administrativa → Dar entrada de stock inicial**,
+o mesmo código de lote pode ser usado em várias entradas, produtos ou posições.
+Cada entrada soma apenas a quantidade indicada e recebe uma identidade própria
+para os movimentos e saídas. Uma repetição do mesmo pedido por falha de rede não
+volta a acrescentar stock. Depois do sucesso, a quantidade fica vazia para a
+entrada seguinte; produto e lote mantêm-se para facilitar a contagem física.
+
+Em **Controlos de Administrador → Importar histórico**, selecionar um JSON ou
+CSV, associar os textos antigos aos produtos, operadores e máquinas e carregar
+**Pré-visualizar importação**. Confirmar as linhas antes de importar. O ecrã
+permite descarregar um modelo CSV. São aceites até 500 produções / 1 MB por lote:
+JSON v1 de uma folha, uma lista de folhas, `{ "sheets": [...] }`,
+`{ "records": [...] }` com linhas simples, ou CSV com cabeçalhos do modelo.
+O manifesto que apenas enumera imagens não contém quantidades de produção;
+PDFs e fotografias precisam de extração/revisão antes deste passo.
+
+Os códigos antigos são conservados e podem repetir-se entre datas e produtos.
+Quando o código está ausente, usa-se uma referência de arquivo `HIST-...`,
+identificada como histórico; não se reconstrói um lote comercial desconhecido.
+Quantidades são em BAG/sacos, PALLET/paletes ou UNIT/unidades. Confirmar as
+unidades por embalagem usadas na época. Testes sem leitura ficam como
+NOT_PERFORMED. Dados originais, leituras de circuito, observações e textos de MP
+ficam consultáveis junto da produção importada. IDs de lotes de MP existentes
+podem ser associados; descrições sem ID são conservadas sem inventar lotes.
+
+Histórico importado soma aos contadores na data original, sem criar stock físico
+ou baixar o stock de MPs atual. Uma nova importação idêntica é ignorada; conflitos
+por data, turno, máquina e produto são apresentados para revisão, sem sobrescrever.
+A gravação é transacional: se houver um erro, nenhuma linha da tentativa é gravada.
+Só o administrador importa. Auditores consultam os registos e a sua origem.
+A correção de produções normais não permite movimentar stock de importações.
+
+Nos primeiros 30 minutos após 00h, 08h e 16h, o ecrã de novas produções assume o
+turno anterior para o fecho, com botão explícito para registar o turno atual.
+Um formulário aberto mantém o seu turno durante até 48h; rascunhos já guardados
+mantêm o turno original ao concluir, mesmo mais tarde ou com a máquina parada.
+As correções por operadores a produções já finalizadas são permitidas até
+30 minutos depois do fim do turno. O administrador mantém a permissão de correção.

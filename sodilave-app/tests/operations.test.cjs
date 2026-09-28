@@ -256,7 +256,7 @@ test('invalid dispatch rolls back and cancelled production cannot regain finishe
   assert.equal((await getAvailableFinishedLots()).length,0);
 });
 
-test('past production is globally gated for admins and operators, including old drafts and direct requests',async()=>{
+test('new past production is globally gated while saved drafts can be completed in their original shift',async()=>{
   const {saveOperationSettings}=load('app/actions/operation-settings');
   const {getPastProductionEnabled}=load('lib/operation-settings');
   const {getShiftWindow,formatLocalDateInput}=load('lib/shift');
@@ -284,10 +284,10 @@ test('past production is globally gated for admins and operators, including old 
   input.set('historicalDate',formatLocalDateInput());input.set('historicalShift',getShiftWindow().code);
   await assert.rejects(saveProduction(input),/já terminado/);
   user.role='ADMIN';await saveOperationSettings(fd({}));
-  // Omitting the hidden date/shift must not bypass the global switch.
+  // A saved draft remains continuable even when creation of past records is disabled.
   input.delete('historicalDate');input.delete('historicalShift');
-  await assert.rejects(saveProduction(input),/desativado/);
-  user.role='OPERATOR';await assert.rejects(saveProduction(input),/desativado/);
+  assert.equal((await saveProduction(input)).id,saved.id);
+  user.role='OPERATOR';assert.equal((await saveProduction(input)).id,saved.id);
   user.role='AUDITOR';await assert.rejects(saveProduction(input),/access-denied/);
   user.role='ADMIN';
   await db.machine.update({where:{id:machine.id},data:{status:'RUNNING'}});
@@ -366,7 +366,7 @@ test('an authorized operator can finalize a past production and book stock in it
 
 test('every operational mutation rejects anonymous users and auditors; admin mutations reject operators',async()=>{
   const account=user;
-  const operational=['startup','shutdown','checkups','production','lot-dispatch','incidents','intermediate-startup','maintenance','sales-orders','stock-map','production-display','operation-settings','production-admin','admin'];
+  const operational=['startup','shutdown','checkups','production','lot-dispatch','incidents','intermediate-startup','maintenance','sales-orders','stock-map','production-display','operation-settings','production-admin','admin','historical-import'];
   try {
     for(const role of [null,'AUDITOR']) {
       user=role?{...account,role}:null;
@@ -375,7 +375,7 @@ test('every operational mutation rejects anonymous users and auditors; admin mut
       }
     }
     user={...account,role:'OPERATOR'};
-    for(const file of ['sales-orders','lot-dispatch','stock-map','production-display','operation-settings','production-admin','admin','maintenance'])for(const action of Object.values(load(`app/actions/${file}`))) {
+    for(const file of ['sales-orders','lot-dispatch','stock-map','production-display','operation-settings','production-admin','admin','maintenance','historical-import'])for(const action of Object.values(load(`app/actions/${file}`))) {
       if(typeof action==='function')await assert.rejects(action(new FormData()),/access-denied/,`${file}: operator`);
     }
     for(const role of ['OPERATOR','AUDITOR']) {
@@ -910,10 +910,11 @@ test('admin can manage storage and opening stock without affecting production co
   assert.equal((await saveStorageLocation(fd({...position,id:l.id,code:'P-A1'}))).ok,true);
   assert.equal((await db.storageLocation.findUnique({where:{id:l.id}})).code,'P-A1');
   const before=await getAdminProductionStats();const boardsBefore=await getScoreboardData();const mpBefore=Number((await db.rawMaterialLot.findUnique({where:{id:lot.id}})).quantityAvailable);
-  const entry=fd({productId:product.id,machineId:machine.id,locationId:l.id,quantityPackages:10,lotCode:'INITIAL-TEST'});
+  const entry=fd({productId:product.id,machineId:machine.id,locationId:l.id,quantityPackages:10,lotCode:'INITIAL-TEST',requestId:require('node:crypto').randomUUID()});
   assert.equal((await addOpeningStock(entry)).ok,true);
   const p=await db.production.findFirst({where:{productionLot:'INITIAL-TEST'}});assert.equal(p.recordOrigin,'INITIAL_STOCK');
-  assert.equal((await addOpeningStock(entry)).ok,false);
+  assert.equal((await addOpeningStock(entry)).ok,true);
+  assert.equal(await db.production.count({where:{productionLot:'INITIAL-TEST'}}),1,'retry must not create stock twice');
   const after=await getAdminProductionStats();assert.deepEqual(after.machines,before.machines);assert.equal(after.totalProduced,before.totalProduced);assert.equal(after.todayProduced,before.todayProduced);
   const boardsAfter=await getScoreboardData();assert.deepEqual(boardsAfter.shifts,boardsBefore.shifts);assert.deepEqual(boardsAfter.employees,boardsBefore.employees);
   assert.equal(Number((await db.rawMaterialLot.findUnique({where:{id:lot.id}})).quantityAvailable),mpBefore);
@@ -930,6 +931,69 @@ test('admin can manage storage and opening stock without affecting production co
   try {await assert.rejects(addOpeningStock(entry),/access-denied/);await assert.rejects(saveStorageLocation(fd(position)),/access-denied/);await assert.rejects(removeStorageLocation(fd({id:l.id})),/access-denied/);}finally{user=admin;}
   const empty={...position,code:'P-B1',columnNumber:2};await saveStorageLocation(fd(empty));const e=await db.storageLocation.findFirst({where:{warehouseCode:'W3',columnNumber:2}});
   assert.equal((await removeStorageLocation(fd({id:e.id}))).ok,true);assert.equal((await stock.getStorageLocations()).some(x=>x.id===e.id),false);
+});
+
+test('opening stock allows repeated legacy lots across positions while retries remain idempotent',async()=>{
+  const {addOpeningStock}=load('app/actions/storage-admin');const uuid=require('node:crypto').randomUUID;
+  const places=[];for(let i=0;i<2;i++)places.push(await db.storageLocation.create({data:{warehouseCode:'REPEAT',warehouseName:'Repeated lot',zoneType:'STACK',code:'R'+i,rowNumber:1,columnNumber:i+1}}));
+  const inputs=places.map((l,i)=>fd({productId:product.id,machineId:machine.id,locationId:l.id,quantityPackages:5+i,lotCode:'OLD-COMMON-LOT',requestId:uuid()}));
+  for(const input of inputs)assert.equal((await addOpeningStock(input)).ok,true);
+  const retry=await Promise.all([addOpeningStock(inputs[0]),addOpeningStock(inputs[0])]);assert.ok(retry.every(r=>r.ok));
+  assert.equal(await db.production.count({where:{productionLot:'OLD-COMMON-LOT'}}),2);
+  const rows=await db.query('SELECT b.quantityPackages,b.locationId FROM ProductionStorageBalance b JOIN Production p ON p.id=b.productionId WHERE p.productionLot=?',['OLD-COMMON-LOT']);assert.deepEqual(rows.map(r=>Number(r.quantityPackages)).sort(),[5,6]);
+  inputs[0].set('quantityPackages','99');assert.equal((await addOpeningStock(inputs[0])).ok,false);
+  inputs[0].set('requestId',uuid());inputs[0].set('quantityPackages','2');assert.equal((await addOpeningStock(inputs[0])).ok,true);
+  const [[sum]]=await Promise.all([db.query('SELECT SUM(b.quantityPackages) AS total FROM ProductionStorageBalance b JOIN Production p ON p.id=b.productionId WHERE p.productionLot=?',['OLD-COMMON-LOT'])]);assert.equal(Number(sum.total),13);
+});
+
+test('production handover assigns the previous shift for 30 minutes and signed forms retain their original shift',async t=>{
+  const shifts=load('lib/shift'),periods=load('lib/production-period');
+  for(const [h,min,code,day] of [[0,5,'C',27],[8,5,'A',28],[16,5,'B',28],[16,30,'B',28],[16,31,'C',28]]){const w=shifts.getProductionEntryWindow(new Date(2026,8,28,h,min));assert.equal(w.code,code);assert.equal(w.start.getDate(),day);}
+  const window=shifts.getShiftWindow(new Date(2026,8,28,15,50)),token=periods.issueProductionPeriod(user.id,window);
+  assert.equal(periods.readProductionPeriod(token,user.id,new Date(2026,8,28,16,35)).code,'B');
+  assert.throws(()=>periods.readProductionPeriod(token,user.id+1,new Date(2026,8,28,16,5)),/turno/);
+  assert.throws(()=>periods.readProductionPeriod(token+'x',user.id,new Date(2026,8,28,16,5)),/turno/);
+  const m=await db.machine.create({data:{code:'GRACE',name:'Handover',status:'RUNNING'}});
+  const p=await db.product.create({data:{code:'GRACE',name:'Handover product',unitsPerPackage:1}});await db.execute('INSERT INTO ProductMachine (productId,machineId) VALUES (?,?)',[p.id,m.id]);
+  const mp=await db.rawMaterialLot.create({data:{rawMaterialId:material.id,supplierLot:'GRACE',quantityInitial:10,quantityAvailable:10}});
+  const pos=await db.storageLocation.create({data:{warehouseCode:'GRACE',warehouseName:'Grace',zoneType:'STACK',code:'G1',rowNumber:1,columnNumber:1}});
+  t.mock.timers.enable({apis:['Date'],now:new Date(2026,8,28,15,50)});
+  try{
+    const draft=await saveProduction(fd({machineId:m.id,productId:p.id,intent:'draft',productionPeriod:token}));
+    t.mock.timers.setTime(new Date(2026,8,28,16,35).getTime());
+    await db.machine.update({where:{id:m.id},data:{status:'STOPPED'}});
+    await db.execute('INSERT INTO OperationSettings (id,pastProductionEnabled) VALUES (1,0) ON DUPLICATE KEY UPDATE pastProductionEnabled=0');
+    await saveProduction(fd({productionId:draft.id,machineId:m.id,productId:p.id,intent:'finalize',quantityProduced:1,initialWeightG:100,midWeightG:100,materialLotId_0:mp.id,percentage_0:100,quantityKg_0:1,leakStart:'CONFORMING',leakMid:'CONFORMING',dropStart:'CONFORMING',dropMid:'CONFORMING',[`storage_location_${pos.id}`]:1}));
+    const record=await db.production.findUnique({where:{id:draft.id}});assert.equal(record.shiftCode,'B');assert.equal(record.startedAt.getHours(),15);assert.match(record.productionLot,/^AAB/);
+    const original=user;user={...user,role:'OPERATOR'};try{await assert.rejects(saveProduction(fd({productionId:draft.id,intent:'finalize'})),/30 minutos/);}finally{user=original;}
+    t.mock.timers.setTime(new Date(2026,8,29,0,5).getTime());
+    const late=await saveProduction(fd({machineId:m.id,productId:p.id,intent:'draft'}));const lateRecord=await db.production.findUnique({where:{id:late.id}});assert.equal(lateRecord.shiftCode,'C');assert.equal(lateRecord.startedAt.getDate(),28);assert.equal(lateRecord.startedAt.getHours(),16);
+  }finally{t.mock.timers.reset();await db.machine.update({where:{id:m.id},data:{active:false}});}
+});
+
+test('historical file imports preview, preserve sources and old lots, reject duplicates and do not move current stock',async()=>{
+  const {previewHistoricalImport,commitHistoricalImport}=load('app/actions/historical-import');
+  const {parseHistoricalImport}=load('lib/historical-import-format');const {getAdminProductionStats}=load('lib/admin-production-stats');
+  const p=await db.product.create({data:{code:'HISTORY',name:'Historical article',unitsPerPackage:32}});
+  const source={schemaVersion:1,source:{type:'PAPER_SHIFT_SHEET',files:['scan-01.jpg'],sheetIndex:1},shift:{date:'2025-09-01',code:'B',workers:[{rawText:'Paper worker',userId:null}]},generalCheck:{commonAirPressure:8,commonWaterPressure:6},productions:[{machineCode:machine.code,product:{rawText:'Paper article',productId:null},productionLot:'OLD-ALL',quantityProduced:50,productionUnit:'BAG',unitsPerPackage:32,initialWeightG:100,midWeightG:102,materials:[{rawText:'Unknown old MP',rawMaterialLotId:null},{rawMaterialLotId:lot.id,percentage:100,quantityKg:5}],tests:{leakStart:'CONFORMING',dropStart:'CONFORMING'}}]};
+  const mapping={products:{'Paper article':p.id},operators:{'Paper worker':user.id},machines:{}};
+  const input=()=>fd({content:JSON.stringify(source),fileName:'history.json',mapping:JSON.stringify(mapping)});
+  assert.equal(parseHistoricalImport('data;turno;maquina;produto;operador;lote;quantidade;unidade\n2025-09-01;B;1;"Product; name";Worker;OLD;5;BAG')[0].productKey,'Product; name');
+  const unresolved=await previewHistoricalImport(fd({content:JSON.stringify(source),mapping:'{}'}));assert.equal(unresolved.ok,true);assert.ok(unresolved.errors>0);
+  const beforeStock=Number((await db.rawMaterialLot.findUnique({where:{id:lot.id}})).quantityAvailable),beforeCount=(await getAdminProductionStats()).totalProduced;
+  let preview=await previewHistoricalImport(input());assert.equal(preview.ok,true);assert.equal(preview.errors,0);assert.equal(preview.newCount,1);
+  let submit=input();submit.set('previewHash',preview.hash);assert.equal((await commitHistoricalImport(submit)).ok,false);submit.set('confirmed','yes');
+  assert.deepEqual(await commitHistoricalImport(submit),{ok:true,created:1,skipped:0});
+  const row=await db.production.findFirst({where:{productId:p.id}});assert.equal(row.recordOrigin,'HISTORICAL_IMPORT');assert.equal(row.productionLot,'OLD-ALL');assert.equal(row.startedAt.getFullYear(),2025);
+  assert.equal(await db.productionStorageBalance.count({where:{productionId:row.id}}),0);assert.equal((await db.query('SELECT * FROM ProductionStockConsumption WHERE productionId=?',[row.id])).length,0);assert.equal(Number((await db.rawMaterialLot.findUnique({where:{id:lot.id}})).quantityAvailable),beforeStock);assert.equal((await getAdminProductionStats()).totalProduced,beforeCount+50);
+  const tests=await db.qualityTest.findMany({where:{productionId:row.id}});assert.equal(tests.filter(t=>t.moment==='MID'&&t.result==='NOT_PERFORMED').length,2);
+  const [stored]=await db.query('SELECT payloadJson FROM HistoricalImportItem WHERE productionId=?',[row.id]);const payload=typeof stored.payloadJson==='string'?JSON.parse(stored.payloadJson):stored.payloadJson;assert.equal(payload.original.generalCheck.commonAirPressure,8);
+  await assert.rejects(saveProduction(fd({productionId:row.id,intent:'finalize'})),/importação histórica/);
+  preview=await previewHistoricalImport(input());assert.equal(preview.duplicateCount,1);submit=input();submit.set('confirmed','yes');submit.set('previewHash',preview.hash);assert.deepEqual(await commitHistoricalImport(submit),{ok:true,created:0,skipped:1});
+  source.productions[0].quantityProduced=51;preview=await previewHistoricalImport(input());assert.ok(preview.errors>0);
+  source.shift.date='2025-09-02';preview=await previewHistoricalImport(input());assert.equal(preview.errors,0);submit=input();submit.set('previewHash',preview.hash);submit.set('confirmed','yes');assert.equal((await commitHistoricalImport(submit)).ok,true);assert.equal(await db.production.count({where:{productionLot:'OLD-ALL'}}),2,'same old lot can span multiple dates');
+  source.shift.date='2025-09-03';preview=await previewHistoricalImport(input());source.productions[0].quantityProduced=99;submit=input();submit.set('previewHash',preview.hash);submit.set('confirmed','yes');assert.equal((await commitHistoricalImport(submit)).ok,false,'payload changed after review');
+  assert.equal(await db.production.count({where:{productId:p.id}}),2);
 });
 
 test('test-data reset previews safely, restores consumed MPs and preserves master data',async()=>{

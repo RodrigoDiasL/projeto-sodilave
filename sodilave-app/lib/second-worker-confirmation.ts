@@ -37,7 +37,7 @@ export async function getShiftPeerConfirmation(currentUserId: number, at = new D
   return rows[0] ?? null;
 }
 
-export async function verifySecondWorker(formData: FormData, currentUserId: number, client: DbTransaction = db) {
+export async function verifySecondWorker(formData: FormData, currentUserId: number, client: DbTransaction = db, at = new Date()) {
   const currentUser = await client.user.findUnique({
     where: { id: currentUserId },
     select: { role: true, active: true },
@@ -45,7 +45,7 @@ export async function verifySecondWorker(formData: FormData, currentUserId: numb
   if (!currentUser?.active) throw new UserInputError("O utilizador atual já não está ativo.");
   if (currentUser.role === "ADMIN") return null;
 
-  const existingConfirmation = await getShiftPeerConfirmation(currentUserId, new Date(), client);
+  const existingConfirmation = await getShiftPeerConfirmation(currentUserId, at, client);
   if (existingConfirmation) return existingConfirmation;
 
   const secondWorkerId = Number(formData.get("secondWorkerId") || 0);
@@ -67,11 +67,11 @@ export async function verifySecondWorker(formData: FormData, currentUserId: numb
   return { id: worker.id, name: worker.name, sessionVersion: worker.sessionVersion };
 }
 
-export async function saveRecordConfirmation(entity: string, entityId: number, worker: ConfirmationWorker, operatorId: number, client: DbTransaction = db) {
+export async function saveRecordConfirmation(entity: string, entityId: number, worker: ConfirmationWorker, operatorId: number, client: DbTransaction = db, at = new Date()) {
   const users = await client.query<{ sessionVersion: number }[]>(
     "SELECT sessionVersion FROM User WHERE id=? AND active=1 AND role IN ('OPERATOR','PRODUCTION_MANAGER','LOGISTICS') LOCK IN SHARE MODE", [worker.id]);
   if (!users[0] || users[0].sessionVersion !== worker.sessionVersion) throw new UserInputError("As credenciais do segundo trabalhador mudaram. Confirme novamente.");
-  const window = getShiftWindow();
+  const window = getShiftWindow(at);
   await client.$executeRaw`
     INSERT INTO ShiftPeerConfirmation (operatorId, confirmedById, shiftCode, shiftStart, confirmedAt)
     VALUES (${operatorId}, ${worker.id}, ${window.code}, ${window.start}, NOW(3))

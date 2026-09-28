@@ -5,7 +5,8 @@ import { RecordStatus, TestMoment, TestResult, TestType } from "@/lib/db-types";
 import { revalidatePath } from "next/cache";
 import { db } from "@/lib/db";
 import { requireOperationalUser } from "@/lib/auth";
-import { formatLocalDateInput, getShift, getShiftWindow, getShiftWindowForDate, type ShiftCode } from "@/lib/shift";
+import { formatLocalDateInput, getProductionEntryWindow, productionEditDeadline, getShiftWindow, getShiftWindowForDate, type ShiftCode } from "@/lib/shift";
+import { readProductionPeriod } from "@/lib/production-period";
 import { generateProductionLot } from "@/lib/lot";
 import { assertMachineRunning } from "@/lib/active-machines";
 import { saveRecordConfirmation, verifySecondWorker } from "@/lib/second-worker-confirmation";
@@ -74,6 +75,7 @@ function parseRightTests(formData: FormData, required: boolean) {
 
 export async function saveProduction(formData: FormData) {
   const user = await requireOperationalUser();
+  const now=new Date();
   const intent = String(formData.get("intent") || "draft");
   const finalize = intent === "finalize";
   if (!["draft", "finalize"].includes(intent)) throw new Error("Ação inválida.");
@@ -98,6 +100,7 @@ export async function saveProduction(formData: FormData) {
       where: { id: productionId },
       select: { id: true, recordOrigin: true, status: true, operatorId: true, productionLot: true, startedAt: true, shiftCode: true, productId: true, machineId: true, quantityProduced: true, unitsPerPackageSnapshot: true, productionUnitSnapshot: true },
     });
+    if (existing?.recordOrigin === "HISTORICAL_IMPORT") throw new Error("Este registo pertence à importação histórica e não pode movimentar stock atual. Consulte-o em Importar histórico.");
     if (existing?.recordOrigin === "INITIAL_STOCK") throw new Error("Edite o stock inicial no Mapa de Stock.");
     if (!existing) throw new Error("A produção em aberto já não existe.");
     if (existing.status === RecordStatus.CANCELLED) throw new Error("Esta produção foi cancelada.");
@@ -106,19 +109,21 @@ export async function saveProduction(formData: FormData) {
     }
     if (existing.status === RecordStatus.FINALIZED && user.role !== "ADMIN") {
       const window = getShiftWindow(existing.startedAt);
-      if (new Date() >= window.end) throw new Error("Esta produção só podia ser alterada até ao fim do turno em que foi registada.");
+      if (now > productionEditDeadline(existing.startedAt)) throw new Error("A tolerância de 30 minutos para corrigir esta produção terminou.");
     }
   }
 
   if (existing && historicalWindow && getShiftWindow(existing.startedAt).start.getTime() !== historicalWindow.start.getTime()) {
     throw new Error("A data e o turno de uma produção já guardada não podem ser alterados.");
   }
-  if (existing?.status === RecordStatus.DRAFT && getShiftWindow(existing.startedAt).end <= new Date()) {
-    historicalWindow = getShiftWindow(existing.startedAt);
-  }
-  if (historicalWindow) await assertPastProductionEnabled();
 
-  const secondWorker = finalize && user.role !== "ADMIN" ? await verifySecondWorker(formData, user.id) : null;
+  if (historicalWindow && !existing) await assertPastProductionEnabled();
+  const periodToken=String(formData.get("productionPeriod")??"");
+  const recordWindow=existing?getShiftWindow(existing.startedAt):historicalWindow??(periodToken?readProductionPeriod(periodToken,user.id,now):getProductionEntryWindow(now));
+  const lateClosure=recordWindow.end<=now;
+
+  const confirmationAt=historicalWindow?now:recordWindow.start;
+  const secondWorker = finalize && user.role !== "ADMIN" ? await verifySecondWorker(formData, user.id, db, confirmationAt) : null;
   const machineId = asNum(formData.get("machineId"));
   const productId = asNum(formData.get("productId"));
   if (machineId === null || productId === null) {
@@ -236,14 +241,13 @@ export async function saveProduction(formData: FormData) {
     throw new Error("Defina as unidades por embalagem deste produto antes de finalizar a produção.");
   }
 
-  if (!historicalWindow && (!existing || (user.role !== "ADMIN" && existing.status !== RecordStatus.FINALIZED))) {
+  if (!historicalWindow && !lateClosure && (!existing || (user.role !== "ADMIN" && existing.status !== RecordStatus.FINALIZED))) {
     await assertMachineRunning(machineId);
   }
 
-  const recordWindow = existing ? getShiftWindow(existing.startedAt) : historicalWindow ?? getShiftWindow();
   const otherProductionsInShift = await db.production.count({
     where: {
-      machineId, productId, recordOrigin:"PRODUCTION",
+      machineId, productId, recordOrigin:{in:["PRODUCTION","HISTORICAL_IMPORT"]},
       startedAt: { gte: recordWindow.start, lt: recordWindow.end },
       status: { not: RecordStatus.CANCELLED },
       ...(productionId ? { id: { not: productionId } } : {}),
@@ -264,7 +268,7 @@ export async function saveProduction(formData: FormData) {
   ], finalize);
   const rightTests = isMachine7 ? parseRightTests(formData, finalize) : [];
 
-  const shift = existing ? { code: existing.shiftCode } : historicalWindow ? { code: historicalWindow.code } : getShift();
+  const shift = existing ? { code: existing.shiftCode } : {code:recordWindow.code};
   const status = finalize || existing?.status === RecordStatus.FINALIZED ? RecordStatus.FINALIZED : RecordStatus.DRAFT;
 
   const production = await db.$transaction(async (tx) => {
@@ -272,7 +276,7 @@ export async function saveProduction(formData: FormData) {
     // protects against two tabs submitting the same normal production at once.
     await tx.query("SELECT id FROM Machine WHERE id=? FOR UPDATE", [machineId]);
     await tx.query("SELECT id FROM Product WHERE id IN (?,?) ORDER BY id FOR UPDATE", [productId,existing?.productId??productId]);
-    if (!historicalWindow && (!existing || (user.role !== "ADMIN" && existing.status !== RecordStatus.FINALIZED))) {
+    if (!historicalWindow && !lateClosure && (!existing || (user.role !== "ADMIN" && existing.status !== RecordStatus.FINALIZED))) {
       const activeStartup = await tx.weeklyStartup.findFirst({ where: { status: RecordStatus.FINALIZED, shutdown: null } });
       const currentMachine = await tx.machine.findFirst({ where: { id: machineId, active: true, status: "RUNNING" } });
       if (!activeStartup || !currentMachine) throw new Error("A máquina ou o ciclo semanal já não estão em funcionamento. Atualize a página.");
@@ -282,15 +286,15 @@ export async function saveProduction(formData: FormData) {
       if(positions.length!==uniqueStorageLocationIds.length)throw new Error("Uma posição de stock foi removida. Atualize o formulário.");
     }
     const simultaneous = await tx.production.count({ where: {
-      recordOrigin:"PRODUCTION", machineId, productId, startedAt: { gte: recordWindow.start, lt: recordWindow.end }, status: { not: RecordStatus.CANCELLED },
+      recordOrigin:{in:["PRODUCTION","HISTORICAL_IMPORT"]}, machineId, productId, startedAt: { gte: recordWindow.start, lt: recordWindow.end }, status: { not: RecordStatus.CANCELLED },
       ...(productionId ? { id: { not: productionId } } : {}),
     } });
     if (simultaneous > 0 && !exceptionReason) throw new Error("Já existe uma produção deste produto nesta máquina neste turno. Atualize a página ou indique o motivo de uma produção adicional.");
     if (historicalWindow) {
       // Serialize past-shift inserts and the administrator's permission toggle.
-      await assertPastProductionEnabled(tx, true);
+      if(!existing)await assertPastProductionEnabled(tx, true);
       const duplicate = await tx.production.count({ where: {
-        recordOrigin:"PRODUCTION", machineId, productId, startedAt: { gte: recordWindow.start, lt: recordWindow.end },
+        recordOrigin:{in:["PRODUCTION","HISTORICAL_IMPORT"]}, machineId, productId, startedAt: { gte: recordWindow.start, lt: recordWindow.end },
         status: { not: RecordStatus.CANCELLED }, ...(productionId ? { id: { not: productionId } } : {}),
       } });
       if (duplicate) throw new Error("Já existe uma produção para este produto, máquina, dia e turno.");
@@ -361,7 +365,7 @@ export async function saveProduction(formData: FormData) {
       observations: String(formData.get("observations") || "").trim().slice(0, 500) || null,
       exceptionReason: otherProductionsInShift > 0 ? (exceptionReason || null) : null,
       exceptionNotes: otherProductionsInShift > 0 ? (exceptionNotes || null) : null,
-      startedAt: lockedExisting ? undefined : historicalWindow?.start,
+      startedAt: lockedExisting ? undefined : historicalWindow || lateClosure ? recordWindow.start : now,
       finalizedAt: status === RecordStatus.FINALIZED
         ? (lockedExisting?.status === RecordStatus.FINALIZED ? undefined : new Date())
         : null,
@@ -433,7 +437,7 @@ export async function saveProduction(formData: FormData) {
     }
 
     if (finalize && secondWorker) {
-      await saveRecordConfirmation("Production", saved.id, secondWorker, user.id, tx);
+      await saveRecordConfirmation("Production", saved.id, secondWorker, user.id, tx, confirmationAt);
     }
 
     const action = finalize ? "FINALIZE" : lockedExisting ? "EDIT" : "CREATE";

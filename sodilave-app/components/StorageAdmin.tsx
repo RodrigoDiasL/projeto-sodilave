@@ -1,5 +1,5 @@
 "use client";
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { FeedbackForm } from "@/components/FeedbackForm";
 import { ConfirmDeleteButton } from "@/components/ConfirmDeleteButton";
 import { saveStorageLocation,removeStorageLocation,addOpeningStock } from "@/app/actions/storage-admin";
@@ -7,6 +7,9 @@ import { productionUnitLabel } from "@/lib/production-unit";
 type Position={id:number;warehouseCode:string;warehouseName:string;zoneType:string;rowNumber:number;columnNumber:number;code:string;active:boolean};
 type Product={id:number;code:string;name:string;productionUnit:string;unitsPerPackage:number};
 export function StorageAdmin({locations,products,machines}:{locations:Position[];products:Product[];machines:{id:number;code:string;name:string}[]}){
+  const [requestId,setRequestId]=useState("");const [quantity,setQuantity]=useState("");
+  useEffect(()=>setRequestId(crypto.randomUUID()),[]);
+  const saveOpening=async(fd:FormData)=>{const result=await addOpeningStock(fd);if(result.ok){setRequestId(crypto.randomUUID());setQuantity("");}return result;};
   const [selected,setSelected]=useState("");const current=locations.find(l=>String(l.id)===selected);
   const [productId,setProductId]=useState("");const product=products.find(p=>String(p.id)===productId);
   return <div className="form-stack">
@@ -18,8 +21,8 @@ export function StorageAdmin({locations,products,machines}:{locations:Position[]
       </FeedbackForm>
       {current?.active&&<FeedbackForm action={removeStorageLocation} successMessage="Posição removida do mapa."><input type="hidden" name="id" value={current.id}/><ConfirmDeleteButton label="Remover posição" message="Remover esta posição do mapa? Só é possível se estiver vazia e sem saídas por regularizar."/></FeedbackForm>}
     </section>
-    <section className="panel form-stack"><h2>Dar entrada de stock inicial</h2><p>Registe as quantidades que já existiam antes da app. Não exige arranque, verificações ou mistura; não soma aos contadores de produção nem consome matérias-primas. Use o código de lote que consta nas embalagens.</p>
-      <FeedbackForm action={addOpeningStock} className="form-stack" successMessage="Stock inicial registado e disponível no mapa e nas saídas."><div className="two-col"><label>Produto<select name="productId" value={productId} onChange={e=>setProductId(e.target.value)} required><option value="">Selecione</option>{products.map(p=><option key={p.id} value={p.id}>{p.code} — {p.name}</option>)}</select></label><label>Máquina de origem<select name="machineId" required defaultValue=""><option value="">Selecione</option>{machines.map(m=><option key={m.id} value={m.id}>{m.code} — {m.name}</option>)}</select></label><label>Código do lote existente<input name="lotCode" maxLength={120} required/></label><label>Quantidade ({productionUnitLabel(product?.productionUnit??"BAG",2)})<input name="quantityPackages" type="number" min="1" max="10000000" step="1" required/></label><label>Posição no armazém<select name="locationId" required defaultValue=""><option value="">Selecione</option>{locations.filter(l=>l.active).map(l=><option key={l.id} value={l.id}>{l.warehouseName} · {l.code}</option>)}</select></label></div>{product&&<p>Cada {productionUnitLabel(product.productionUnit,1)} corresponde a {product.productionUnit==="UNIT"?1:product.unitsPerPackage} artigo(s).</p>}<label>Observações<textarea name="notes" maxLength={500}/></label><button className="btn primary">Registar stock inicial</button></FeedbackForm>
+    <section className="panel form-stack"><h2>Dar entrada de stock inicial</h2><p>Registe as quantidades que já existiam antes da app. Não exige arranque, verificações ou mistura; não soma aos contadores de produção nem consome matérias-primas. Use o código de lote que consta nas embalagens. Pode repetir o mesmo lote em várias entradas e posições; cada entrada acrescenta apenas a quantidade indicada.</p>
+      <FeedbackForm action={saveOpening} className="form-stack" successMessage="Stock inicial registado e disponível no mapa e nas saídas."><input type="hidden" name="requestId" value={requestId}/><div className="two-col"><label>Produto<select name="productId" value={productId} onChange={e=>setProductId(e.target.value)} required><option value="">Selecione</option>{products.map(p=><option key={p.id} value={p.id}>{p.code} — {p.name}</option>)}</select></label><label>Máquina de origem<select name="machineId" required defaultValue=""><option value="">Selecione</option>{machines.map(m=><option key={m.id} value={m.id}>{m.code} — {m.name}</option>)}</select></label><label>Código do lote existente<input name="lotCode" maxLength={120} required/></label><label>Quantidade ({productionUnitLabel(product?.productionUnit??"BAG",2)})<input name="quantityPackages" value={quantity} onChange={e=>setQuantity(e.target.value)} type="number" min="1" max="10000000" step="1" required/></label><label>Posição no armazém<select name="locationId" required defaultValue=""><option value="">Selecione</option>{locations.filter(l=>l.active).map(l=><option key={l.id} value={l.id}>{l.warehouseName} · {l.code}</option>)}</select></label></div>{product&&<p>Cada {productionUnitLabel(product.productionUnit,1)} corresponde a {product.productionUnit==="UNIT"?1:product.unitsPerPackage} artigo(s).</p>}<label>Observações<textarea name="notes" maxLength={500}/></label><button className="btn primary" disabled={!requestId}>Registar stock inicial</button></FeedbackForm>
     </section>
   </div>;
 }

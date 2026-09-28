@@ -117,7 +117,7 @@ export function AdminOperationsDashboard({
       <aside className="admin-actions-panel panel">
         <div className="admin-panel-title"><div><h2>Registo e gestão</h2><p>Acesso rápido</p></div></div>
         <nav className="admin-side-actions">
-          <ActionLink href="/production" title="Registar produção" icon={<ClipboardList />} disabled={!pastProductionEnabled && (!hasStartup || !hasRunning)} />
+          <ActionLink href="/production" title="Registar produção" icon={<ClipboardList />} />
           {pastProductionEnabled && <ActionLink href="/production#passada" title="Registo de produção passada" icon={<CalendarDays />} />}
           <ActionLink href="/checkups" title="Verificações de turno" icon={<ShieldCheck />} disabled={!hasStartup || !hasRunning} />
           <ActionLink href="/orders/new" title="Adicionar Encomenda" icon={<ClipboardList />} />

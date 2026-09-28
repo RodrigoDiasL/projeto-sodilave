@@ -6,14 +6,15 @@ import { PageIntro } from "@/components/PageIntro";
 import { ProductionForm } from "@/components/ProductionForm";
 import { SecondWorkerConfirmationPortals } from "@/components/SecondWorkerConfirmationPortals";
 import { getProductionFormData } from "@/lib/production-form-data";
-import { getShiftWindow, getShiftWindowForDate, type ShiftCode } from "@/lib/shift";
+import { issueProductionPeriod } from "@/lib/production-period";
+import { getProductionEntryWindow, getShiftWindow, getShiftWindowForDate, type ShiftCode } from "@/lib/shift";
 import { db } from "@/lib/db";
 import { previousProductionToDefaults, productionToInitial } from "@/lib/production-initial";
 import { requireOperationalUser } from "@/lib/auth";
 import { getActiveWeeklyStartup } from "@/lib/active-machines";
 import { getShiftPeerConfirmation } from "@/lib/second-worker-confirmation";
 
-export default async function NewProductionPage({ searchParams }: { searchParams: Promise<{ extraMachine?: string; date?: string; shift?: string }> }) {
+export default async function NewProductionPage({ searchParams }: { searchParams: Promise<{ extraMachine?: string; date?: string; shift?: string; current?:string }> }) {
   const user = await requireOperationalUser();
   const q = await searchParams;
 
@@ -38,9 +39,11 @@ export default async function NewProductionPage({ searchParams }: { searchParams
   }
 
   const data = await getProductionFormData({ allActiveMachines: Boolean(historicalWindow), currentUserId: user.id });
-  const window = historicalWindow ?? getShiftWindow();
+  const window = historicalWindow ?? (q.current==="1"?getShiftWindow():getProductionEntryWindow());
+  const productionPeriod=historicalWindow?undefined:issueProductionPeriod(user.id,window);
+  const inGrace=!historicalWindow&&window.end<=new Date();
   const startup = historicalWindow ? null : await getActiveWeeklyStartup();
-  const peerConfirmation = user.role === "ADMIN" ? null : await getShiftPeerConfirmation(user.id);
+  const peerConfirmation = user.role === "ADMIN" ? null : await getShiftPeerConfirmation(user.id,historicalWindow?new Date():window.start);
   const previousShiftStart = new Date(window.start.getTime() - 8 * 60 * 60 * 1000);
   const previousLowerBound = historicalWindow
     ? previousShiftStart
@@ -64,7 +67,7 @@ export default async function NewProductionPage({ searchParams }: { searchParams
   const historicalContext = historicalWindow && q.date
     ? { date: q.date, shiftCode: historicalWindow.code }
     : undefined;
-  const contextQuery = historicalContext ? `date=${encodeURIComponent(historicalContext.date)}&shift=${historicalContext.shiftCode}&` : "";
+  const contextQuery = historicalContext ? `date=${encodeURIComponent(historicalContext.date)}&shift=${historicalContext.shiftCode}&` : q.current==="1"?"current=1&":"";
 
   return <>
     <PageIntro
@@ -73,6 +76,7 @@ export default async function NewProductionPage({ searchParams }: { searchParams
         ? `Registo relativo a ${window.start.toLocaleDateString("pt-PT")} · ${window.label}.`
         : "Preencha o registo de cada máquina em funcionamento. Pode registar produtos diferentes na mesma máquina e turno."}
     />
+    {inGrace&&<div className="notice">Fecho do turno anterior com 30 minutos de tolerância. <Link className="btn secondary" href="/production/new?current=1">Registar produção do turno atual</Link></div>}
     <ProductionPeriodSelector key={`${q.date ?? "current"}:${q.shift ?? ""}`} enabled={pastProductionEnabled} date={q.date} shift={q.shift}/>
     <div className="notice">
       <strong>{window.label}:</strong> {window.hours}.
@@ -99,13 +103,13 @@ export default async function NewProductionPage({ searchParams }: { searchParams
         return <section key={`${machine.id}:${window.start.toISOString()}`} id={`machine-${machine.id}`} className="machine-production-section">
           {primary?.status === "FINALIZED"
             ? <div className="panel finalized-summary"><h2>Máquina {machine.code}</h2><p>{primary.product?.name} · Produção finalizada: <strong>{primary.productionLot}</strong>.</p><Link className="btn secondary" href={`/production/details/${primary.id}`}>Ver detalhes</Link></div>
-            : <ProductionForm draftScope={`${user.id}:${window.start.toISOString()}`} {...data} products={machineProducts} machines={[machine]} fixedMachine={machine} initial={primary ? productionToInitial(primary) : defaults as any} historicalContext={historicalContext} />}
+            : <ProductionForm productionPeriod={productionPeriod} draftScope={`${user.id}:${window.start.toISOString()}`} {...data} products={machineProducts} machines={[machine]} fixedMachine={machine} initial={primary ? productionToInitial(primary) : defaults as any} historicalContext={historicalContext} />}
           {!primary && previousIsUsable && <div className="notice muted">Produto e lotes de matéria-prima preenchidos com base no último registo finalizado do turno anterior. Confirme ou altere antes de gravar.</div>}
           {!primary && previous && !previousIsUsable && <div className="notice muted">O registo anterior não foi pré-preenchido porque o produto deixou de estar autorizado nesta máquina ou um dos lotes já não está disponível.</div>}
           {extras.map((row) => row.status === "DRAFT"
-            ? <ProductionForm key={row.id} draftScope={`${user.id}:${window.start.toISOString()}`} {...data} products={machineProducts} machines={[machine]} fixedMachine={machine} additional repeatProductIds={machineRecords.filter(r=>r.id!==row.id).map(r=>r.productId)} initial={productionToInitial(row)} historicalContext={historicalContext} />
+            ? <ProductionForm productionPeriod={productionPeriod} key={row.id} draftScope={`${user.id}:${window.start.toISOString()}`} {...data} products={machineProducts} machines={[machine]} fixedMachine={machine} additional repeatProductIds={machineRecords.filter(r=>r.id!==row.id).map(r=>r.productId)} initial={productionToInitial(row)} historicalContext={historicalContext} />
             : <div key={row.id} className="panel finalized-summary"><p>{row.product?.name} · Produção finalizada: <strong>{row.productionLot}</strong></p><Link className="btn secondary" href={`/production/details/${row.id}`}>Ver detalhes</Link></div>)}
-          {extraMachineId === machine.id && <ProductionForm draftScope={`${user.id}:${window.start.toISOString()}`} {...data} products={machineProducts} machines={[machine]} fixedMachine={machine} additional repeatProductIds={machineRecords.map(r=>r.productId)} historicalContext={historicalContext} />}
+          {extraMachineId === machine.id && <ProductionForm productionPeriod={productionPeriod} draftScope={`${user.id}:${window.start.toISOString()}`} {...data} products={machineProducts} machines={[machine]} fixedMachine={machine} additional repeatProductIds={machineRecords.map(r=>r.productId)} historicalContext={historicalContext} />}
           {<div className="additional-production-link"><Link className="btn secondary" href={`/production/new?${contextQuery}extraMachine=${machine.id}#machine-${machine.id}`}>+ Registar outro produto / outra produção nesta máquina</Link></div>}
         </section>;
       })}

@@ -1,3 +1,4 @@
+import Link from "next/link";
 import { db } from "@/lib/db";
 import { requireReadAccess } from "@/lib/auth";
 import { PageIntro } from "@/components/PageIntro";
@@ -151,6 +152,7 @@ export default async function Page({searchParams}:{searchParams:Promise<{q?:stri
         <h2>{r.productionLot}</h2>
         {aliases.some(a=>a.productionId===r.id)&&<p className="muted">Códigos anteriores: {Array.from(new Set(aliases.filter(a=>a.productionId===r.id).map(a=>a.oldLabel||a.oldCode))).join(" · ")}</p>}
 
+        {r.recordOrigin==="HISTORICAL_IMPORT"&&<p className="notice">Produção histórica importada, sem stock físico associado. <Link href={`/admin/import-history/${r.id}`}>Consultar dados da folha original</Link></p>}
         <h3>Produção de origem</h3>
         <div className="detail-grid">
           <p><strong>Produção:</strong> #{r.id}</p>

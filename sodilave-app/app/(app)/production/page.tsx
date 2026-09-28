@@ -30,6 +30,7 @@ export default async function ProductionPage() {
 
   return <>
     <PageIntro title="Produções" subtitle="Inicie uma nova produção ou continue um registo já guardado." />
+    {user.role==="ADMIN"&&<Link className="btn secondary" href="/admin/import-history">Importar produções antigas de ficheiro</Link>}
     <ProductionPeriodSelector enabled={pastProductionEnabled}/>
     <section className="production-choice-grid">
       {user.role!=="AUDITOR"&&<Link className="admin-card production-choice" href="/production/new"><ClipboardPlus/><h2>Nova produção</h2><p>Criar um novo registo de produção.</p><span>→</span></Link>}

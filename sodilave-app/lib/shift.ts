@@ -47,3 +47,12 @@ export function formatLocalDateInput(date = new Date()) {
   const day = String(date.getDate()).padStart(2, "0");
   return `${year}-${month}-${day}`;
 }
+
+export const productionGraceMs = 30 * 60 * 1000;
+export function productionEditDeadline(date:Date){return new Date(getShiftWindow(date).end.getTime()+productionGraceMs);}
+// During handover, new closing records default to the shift that just ended.
+export function getProductionEntryWindow(now=new Date()){
+  const current=getShiftWindow(now);
+  return now.getTime()-current.start.getTime()<=productionGraceMs
+    ? getShiftWindow(new Date(current.start.getTime()-1)) : current;
+}
