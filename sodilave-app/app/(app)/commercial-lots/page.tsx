@@ -9,7 +9,7 @@ import { getShiftWindow } from "@/lib/shift";
 export default async function Page({searchParams}:{searchParams:Promise<{productId?:string;q?:string}>}){
   const user=await requireReadAccess(),params=await searchParams,canManage=["ADMIN","PRODUCTION_MANAGER"].includes(user.role);
   const products=await db.query<any[]>(`SELECT p.id,p.code,p.name,p.active,COALESCE(c.majorLetter,'A') majorLetter,COALESCE(c.minorLetter,'A') minorLetter,COALESCE(c.version,0) version FROM Product p LEFT JOIN ProductLotConfig c ON c.productId=p.id ORDER BY p.active DESC,p.name,p.id`);
-  const product=products.find(p=>p.id===Number(params.productId))??products[0];
+  const product=products.find(p=>p.id===Number(params.productId));
   const q=String(params.q??"").trim().slice(0,120),shift=getShiftWindow();
   const [machines,lots,history]=product?await Promise.all([
     db.query<any[]>("SELECT m.code FROM Machine m JOIN ProductMachine pm ON pm.machineId=m.id WHERE pm.productId=? AND m.active=1 ORDER BY m.code",[product.id]),
@@ -18,7 +18,7 @@ export default async function Page({searchParams}:{searchParams:Promise<{product
   ]):[[],[],[]];
   const examples=machines.map(m=>({code:m.code,suffix:formatProductionLot(m.code,shift.code,shift.start).slice(2)}));
   return <><DashboardRefresh/><PageIntro title="Lotes por produto" subtitle="Escolha as duas letras do produto. A app completa o código do saco com o turno, data e máquina da produção."/>
-    <section className="panel form-stack"><h2>1. Escolher o produto</h2><form className="inline-form" method="get"><label>Produto<select name="productId" defaultValue={product?.id}>{products.map(p=><option key={p.id} value={p.id}>{p.code} — {p.name}{p.active?"":" (inativo)"}</option>)}</select></label><button className="btn secondary">Abrir produto</button></form>
+    <section className="panel form-stack"><h2>1. Escolher o produto</h2><form className="inline-form" method="get"><label>Produto<select name="productId" defaultValue={product?.id??""} required><option value="">Selecione o produto</option>{products.map(p=><option key={p.id} value={p.id}>{p.code} — {p.name}{p.active?"":" (inativo)"}</option>)}</select></label><button className="btn secondary">Abrir produto</button></form>
       <p>As letras pertencem ao artigo. Dois produtos podem usar AA, mesmo quando são produzidos na mesma máquina. Uma troca de molde ou de produto não altera as letras automaticamente.</p>
       <p className="muted">Turno A: 00h–08h · Turno B: 08h–16h · Turno C: 16h–24h. A data é a da produção; dia da semana: 1 = segunda-feira, …, 6 = sábado, 0 = domingo.</p>
     </section>
@@ -34,6 +34,6 @@ export default async function Page({searchParams}:{searchParams:Promise<{product
         {lots.length===100&&<p>Mostrados os 100 lotes mais recentes. Use a pesquisa para encontrar um lote anterior.</p>}
       </section>
       <section className="panel"><h2>Histórico de alterações deste produto</h2>{!history.length?<p>Ainda não foram alteradas as letras neste ecrã.</p>:<div className="responsive-table"><table><thead><tr><th>Data / utilizador</th><th>Âmbito</th><th>Anterior → novo</th><th>Alteração e motivo</th></tr></thead><tbody>{history.map(h=><tr key={h.id}><td>{new Date(h.createdAt).toLocaleString("pt-PT")}<br/>{h.changedBy}</td><td>{h.scope==="FUTURE"?"Novos registos":"Lote já registado"}</td><td>{h.previousCode??h.previousPrefix} → {h.newCode??h.newPrefix}</td><td>{h.reason}</td></tr>)}</tbody></table></div>}</section>
-    </>:<div className="notice">Crie primeiro os produtos no catálogo.</div>}
+    </>:<div className="notice">{products.length?"Selecione e abra um produto para consultar ou configurar os seus lotes.":"Crie primeiro os produtos no catálogo."}</div>}
   </>;
 }

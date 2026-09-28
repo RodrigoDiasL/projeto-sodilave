@@ -11,8 +11,8 @@ function input(fd:FormData){
   if(!reason||reason.length>2000)throw new UserInputError("Explique a alteração e o motivo (até 2000 caracteres).");
   return {productId,majorLetter,minorLetter,reason,prefix:majorLetter+minorLetter};
 }
-async function feedback(action:()=>Promise<void>){
-  try{await action();for(const path of ["/commercial-lots","/production","/admin/productions","/stock-map","/lot-dispatch","/traceability","/admin/production-display"])revalidatePath(path);return {ok:true as const};}
+async function feedback(action:()=>Promise<void|string>){
+  try{const message=await action();for(const path of ["/commercial-lots","/production","/admin/productions","/stock-map","/lot-dispatch","/traceability","/admin/production-display"])revalidatePath(path);return {ok:true as const,...(message?{message}:{})};}
   catch(error){if(error instanceof UserInputError)return {ok:false as const,message:error.message};const reference=crypto.randomUUID();console.error("[product-lots]",reference,error);return {ok:false as const,message:`Não foi possível guardar a alteração. Atualize a página para confirmar o estado. Referência: ${reference}`};}
 }
 export async function saveProductLotConfig(fd:FormData){
@@ -20,13 +20,13 @@ export async function saveProductLotConfig(fd:FormData){
   return feedback(async()=>{
     const data=input(fd),expectedVersion=Number(fd.get("expectedVersion"));
     if(!fd.has("expectedVersion")||!Number.isSafeInteger(expectedVersion)||expectedVersion<0)throw new UserInputError("Atualize a página antes de alterar as letras.");
-    await db.$transaction(async tx=>{
+    return await db.$transaction(async tx=>{
       const [product]=await tx.query<any[]>("SELECT id FROM Product WHERE id=? AND active=1 FOR UPDATE",[data.productId]);
       if(!product)throw new UserInputError("Este produto não existe ou está inativo.");
       const [config]=await tx.query<any[]>("SELECT * FROM ProductLotConfig WHERE productId=? FOR UPDATE",[data.productId]);
       const previous=(config?.majorLetter??"A")+(config?.minorLetter??"A");
       if(Number(config?.version??0)!==expectedVersion)throw new UserInputError("As letras foram alteradas por outro utilizador. Atualize a página.");
-      if(previous===data.prefix)throw new UserInputError("As letras não foram alteradas.");
+      if(previous===data.prefix)return `O produto já usa ${data.prefix} nos novos registos. As letras estão confirmadas; não foi necessário alterá-las.`;
       await tx.execute("INSERT INTO ProductLotConfig (productId,majorLetter,minorLetter,version,updatedById) VALUES (?,?,?,1,?) ON DUPLICATE KEY UPDATE majorLetter=VALUES(majorLetter),minorLetter=VALUES(minorLetter),version=version+1,updatedById=VALUES(updatedById)",[data.productId,data.majorLetter,data.minorLetter,user.id]);
       await tx.execute("INSERT INTO ProductLotHistory (productId,scope,previousPrefix,newPrefix,reason,changedById) VALUES (?,'FUTURE',?,?,?,?)",[data.productId,previous,data.prefix,data.reason,user.id]);
       await tx.auditLog.create({data:{userId:user.id,action:"CHANGE_CONFIG",entity:"ProductLotConfig",entityId:String(data.productId),details:{previous,next:data.prefix,reason:data.reason}}});

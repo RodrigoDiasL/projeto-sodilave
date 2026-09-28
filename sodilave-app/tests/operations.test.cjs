@@ -840,6 +840,9 @@ test('letters belong to products and managers can choose either or both with a r
   const change=(a,b,version,reason='Mixture / settings changed')=>saveProductLotConfig(fd({productId:p.id,majorLetter:a,minorLetter:b,expectedVersion:version,reason}));
   try {
     assert.match(await generateProductionLot(p.id,'3','B',new Date(2026,8,28,8)),/^AAB14026m3$/);
+    assert.equal((await change('','',0)).ok,false);
+    const unchanged=await change('A','A',0);assert.equal(unchanged.ok,true);assert.match(unchanged.message,/já usa AA/);
+    assert.equal((await db.query('SELECT * FROM ProductLotHistory WHERE productId=?',[p.id])).length,0);
     assert.equal((await change('A','Z',0,'')).ok,false);
     assert.equal((await change('A','Z',0)).ok,true);
     assert.equal((await change('Q','Z',1)).ok,true);

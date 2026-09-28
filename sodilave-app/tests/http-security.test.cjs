@@ -108,8 +108,16 @@ test('production pages enforce commerce roles and provide auditors read-only cat
         if(['ADMIN','PRODUCTION_MANAGER','AUDITOR'].includes(role)){
           const response=await get('/commercial-lots');assert.equal(response.status,200);const html=await response.text();
           assert.equal((await get('/admin/lot-rules')).headers.get('location'),'/commercial-lots');
-          if(role==='AUDITOR')assert.doesNotMatch(html,/>Guardar letras para novos registos<|>Guardar correção deste lote</);
-          else assert.match(html,/>Guardar letras para novos registos</);
+          assert.doesNotMatch(html,/>Guardar letras para novos registos</,'no product is automatically selected');
+          assert.match(html,/<option(?=[^>]*value="")(?=[^>]*selected)[^>]*>Selecione o produto/);
+          const [[product]]=await connection.query('SELECT id FROM Product WHERE active=1 ORDER BY id LIMIT 1');
+          const selected=await get('/commercial-lots?productId='+product.id);assert.equal(selected.status,200);const selectedHtml=await selected.text();
+          if(role==='AUDITOR')assert.doesNotMatch(selectedHtml,/>Guardar letras para novos registos<|>Guardar correção deste lote</);
+          else {
+            assert.match(selectedHtml,/>Guardar letras para novos registos</);
+            for(const label of ['primeira','segunda'])assert.match(selectedHtml,new RegExp('<option(?=[^>]*value="")(?=[^>]*selected)[^>]*>Selecione a '+label+' letra'));
+            assert.match(selectedHtml,/<button(?=[^>]*type="submit")(?![^>]*disabled)[^>]*>Guardar letras para novos registos<\/button>/);
+          }
         }
         if(role==='ADMIN') {
           const storage=await get('/admin/storage');assert.equal(storage.status,200);assert.match(await storage.text(),/Dar entrada de stock inicial/);
