@@ -36,40 +36,44 @@ export type DisplayData = { generatedAt: string; validUntil: string; shift: stri
 export async function getProductionDisplayData(now = new Date()): Promise<DisplayData> {
   const shift = getShiftWindow(now);
   const rows = await db.query<any[]>(`SELECT m.id,m.code,m.status,m.active,s.id AS startupId,
-    o.commercialLotId AS orderLotId,o.destination,o.notes,cl.status AS lotStatus,
-    cl.code AS commercialCode,cl.productId AS orderProductId,pr.code AS productCode,pr.name AS productName,pr.active AS productActive,
-    cfg.majorLetter,cfg.minorLetter,p.id AS productionId,p.productId,p.productionLot,
-    pp.code AS actualProductCode,pp.name AS actualProductName,pa.labelCode,pa.commercialLotId AS actualLotId
+    o.productId AS orderProductId,o.destination,o.notes,pr.code AS productCode,pr.name AS productName,pr.active AS productActive,
+    pm.productId AS assignedProductId,cfg.majorLetter,cfg.minorLetter,p.id AS productionId,p.productId,p.productionLot,
+    actualCfg.majorLetter AS actualMajor,actualCfg.minorLetter AS actualMinor,
+    pp.code AS actualProductCode,pp.name AS actualProductName,pa.labelCode
     FROM Machine m
     LEFT JOIN WeeklyStartup s ON s.id=(SELECT ws.id FROM WeeklyStartup ws
       WHERE ws.status='FINALIZED' AND NOT EXISTS (SELECT 1 FROM WeeklyShutdown wd WHERE wd.weeklyStartupId=ws.id AND wd.status='FINALIZED')
       ORDER BY ws.startupDate DESC,ws.id DESC LIMIT 1)
     LEFT JOIN MachineDisplayOrder o ON o.machineId=m.id AND o.weeklyStartupId=s.id
-    LEFT JOIN CommercialLot cl ON cl.id=o.commercialLotId
-    LEFT JOIN Product pr ON pr.id=cl.productId
-    LEFT JOIN MachineLotConfig cfg ON cfg.machineId=m.id
+    LEFT JOIN Product pr ON pr.id=o.productId
+    LEFT JOIN ProductMachine pm ON pm.productId=pr.id AND pm.machineId=m.id
+    LEFT JOIN ProductLotConfig cfg ON cfg.productId=pr.id
     LEFT JOIN Production p ON p.id=(SELECT p2.id FROM Production p2 WHERE p2.recordOrigin='PRODUCTION' AND p2.machineId=m.id
+      AND (o.productId IS NULL OR p2.productId=o.productId)
       AND p2.status<>'CANCELLED' AND p2.startedAt>=? AND p2.startedAt<?
       AND p2.startedAt>=COALESCE(s.finalizedAt,s.startupDate)
       ORDER BY p2.startedAt DESC,p2.id DESC LIMIT 1)
     LEFT JOIN Product pp ON pp.id=p.productId
+    LEFT JOIN ProductLotConfig actualCfg ON actualCfg.productId=p.productId
     LEFT JOIN ProductionLotAssociation pa ON pa.productionId=p.id
     WHERE m.active=1 ORDER BY CAST(m.code AS UNSIGNED),m.code`, [shift.start, shift.end]);
   const cycleActive = rows.some(row => row.startupId != null);
   const machines: DisplayMachine[] = rows.filter(row => row.startupId && row.status === "RUNNING").map(row => {
-    const internal = formatProductionLot(String(row.code), shift.code, shift.start, { majorLetter: row.majorLetter ?? "A", minorLetter: row.minorLetter ?? "A" });
-    // A lot-rule change during the shift starts a new internal lot. Do not keep
-    // showing the previous production record as the lot currently being made.
-    const currentProduction = Boolean(row.productionId && row.productionLot === internal);
-    const orderValid = row.orderLotId && row.lotStatus === "ACTIVE" && row.productActive &&
-      (!currentProduction || (Number(row.productId) === Number(row.orderProductId) && (!row.actualLotId || Number(row.actualLotId) === Number(row.orderLotId))));
+    const orderValid = Boolean(row.orderProductId && row.productActive && row.assignedProductId);
+    const prefix = orderValid
+      ? { majorLetter: row.majorLetter ?? "A", minorLetter: row.minorLetter ?? "A" }
+      : { majorLetter: row.actualMajor ?? "A", minorLetter: row.actualMinor ?? "A" };
+    const internal = formatProductionLot(String(row.code), shift.code, shift.start, prefix);
+    // The selected product takes precedence after a mould change. A changed
+    // prefix previews the next lot without rewriting a previously saved record.
+    const currentProduction = Boolean(row.productionId && row.productionLot === internal && (!row.orderProductId || orderValid));
     return {
       id: row.id, code: row.code,
       product: currentProduction ? `${row.actualProductCode} — ${row.actualProductName}` : orderValid ? `${row.productCode} — ${row.productName}` : null,
-      lot: currentProduction ? row.labelCode ?? row.productionLot : orderValid ? `${row.commercialCode} / ${internal}` : null,
+      lot: currentProduction ? row.labelCode ?? row.productionLot : orderValid ? internal : null,
       lotState: currentProduction ? "REGISTERED" : orderValid ? "PLANNED" : "MISSING",
       destination: orderValid ? row.destination : null, notes: orderValid ? row.notes : "",
-      warning: orderValid ? null : row.orderLotId ? "Ordem desatualizada. Confirmar com o responsável." : "Falta definir a ordem de paletização.",
+      warning: orderValid ? null : row.orderProductId ? "Ordem desatualizada. Confirmar com o responsável." : "Falta definir a ordem de paletização.",
     };
   });
   return { generatedAt: now.toISOString(), validUntil: shift.end.toISOString(), shift: `${shift.label} · ${shift.hours}`, cycleActive, machines };

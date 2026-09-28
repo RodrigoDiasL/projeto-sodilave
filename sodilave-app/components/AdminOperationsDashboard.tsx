@@ -126,7 +126,7 @@ export function AdminOperationsDashboard({
           <ActionLink href="/stock-map" title="Mapa de Stock" icon={<Warehouse />} />
           <ActionLink href="/scoreboards" title="Contadores de Produção" icon={<Gauge />} />
           <ActionLink href="/admin/queries" title="Consultas" icon={<Search />} />
-          <ActionLink href="/commercial-lots" title="Lotes e controlo interno" icon={<Tags />} />
+          <ActionLink href="/commercial-lots" title="Lotes por produto" icon={<Tags />} />
           <ActionLink href="/maintenance" title="Manutenções" icon={<Wrench />} />
           <ActionLink href="/traceability" title="Rastreabilidade" icon={<ScanSearch />} />
           <ActionLink href="/admin" title="Controlos de administrador" icon={<Settings />} />

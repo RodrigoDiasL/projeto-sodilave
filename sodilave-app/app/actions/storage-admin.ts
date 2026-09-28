@@ -66,7 +66,7 @@ export async function addOpeningStock(fd:FormData) {
       if(!machine||!product||!location)throw new UserInputError("Selecione um produto, máquina de origem e posição ativos.");
       const units=product.productionUnit==="UNIT"?1:Number(product.unitsPerPackage);
       if(!Number.isSafeInteger(units)||units<1)throw new UserInputError("Configure as unidades por saco/palete deste produto antes de dar entrada de stock.");
-      const existing=await tx.production.findUnique({where:{productionLot:lotCode}});
+      const existing=await tx.production.findUnique({where:{productId,productionLot:lotCode}});
       if(existing)throw new UserInputError("Este lote já está registado. Use o Mapa de Stock para distribuir ou corrigir as suas posições.");
       const saved=await tx.production.create({data:{machineId,productId,operatorId:admin.id,productionLot:lotCode,shiftCode:"INITIAL",status:"FINALIZED",recordOrigin:"INITIAL_STOCK",quantityProduced:quantity,unitsPerPackageSnapshot:units,productionUnitSnapshot:product.productionUnit,finalizedAt:new Date(),observations:notes||"Entrada de stock anterior à utilização da aplicação."}});
       await tx.productionStorageBalance.create({data:{productionId:saved.id,locationId,quantityPackages:quantity}});

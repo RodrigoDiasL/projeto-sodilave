@@ -49,17 +49,17 @@ export default async function NewProductionPage({ searchParams }: { searchParams
   const [records, previousRecords] = await Promise.all([
     db.production.findMany({
       where: { recordOrigin:"PRODUCTION", startedAt: { gte: window.start, lt: window.end }, status: { not: "CANCELLED" } },
-      include: { materials: { include: { rawMaterialLot: true } }, tests: true },
+      include: { product:true, materials: { include: { rawMaterialLot: true } }, tests: true },
       orderBy: { createdAt: "asc" },
     }),
     historicalWindow || startup ? db.production.findMany({
       where: { recordOrigin:"PRODUCTION", startedAt: { gte: previousLowerBound, lt: window.start }, status: "FINALIZED" },
-      include: { materials: { include: { rawMaterialLot: true } } },
+      include: { product:true, materials: { include: { rawMaterialLot: true } } },
       orderBy: [{ startedAt: "desc" }, { id: "desc" }],
     }) : Promise.resolve([]),
   ]);
 
-  const extraMachineId = historicalWindow ? 0 : Number(q.extraMachine || 0);
+  const extraMachineId = Number(q.extraMachine || 0);
   const activeLotIds = new Set(data.lots.map((lot) => lot.id));
   const historicalContext = historicalWindow && q.date
     ? { date: q.date, shiftCode: historicalWindow.code }
@@ -71,14 +71,14 @@ export default async function NewProductionPage({ searchParams }: { searchParams
       title={historicalWindow ? "Registo de produção passada" : "Produção do turno"}
       subtitle={historicalWindow
         ? `Registo relativo a ${window.start.toLocaleDateString("pt-PT")} · ${window.label}.`
-        : "Preencha o registo de cada máquina em funcionamento. Cada máquina tem o seu próprio rascunho."}
+        : "Preencha o registo de cada máquina em funcionamento. Pode registar produtos diferentes na mesma máquina e turno."}
     />
     <ProductionPeriodSelector key={`${q.date ?? "current"}:${q.shift ?? ""}`} enabled={pastProductionEnabled} date={q.date} shift={q.shift}/>
     <div className="notice">
       <strong>{window.label}:</strong> {window.hours}.
       {historicalWindow
-        ? " Produção passada: só é permitida uma produção normal por máquina neste dia e turno."
-        : " Só pode existir uma produção normal por máquina; produções adicionais exigem justificação."}
+        ? " Produção passada: uma produção normal por produto e máquina neste dia e turno."
+        : " Produtos diferentes podem ser registados na mesma máquina. Repetir o mesmo produto neste turno exige justificação."}
       {peerConfirmation && ` Colega de turno já confirmado: ${peerConfirmation.name}.`}
     </div>
     <div className="machine-forms-stack">
@@ -98,15 +98,15 @@ export default async function NewProductionPage({ searchParams }: { searchParams
 
         return <section key={`${machine.id}:${window.start.toISOString()}`} id={`machine-${machine.id}`} className="machine-production-section">
           {primary?.status === "FINALIZED"
-            ? <div className="panel finalized-summary"><h2>Máquina {machine.code}</h2><p>Produção principal já finalizada: <strong>{primary.productionLot}</strong>.</p><Link className="btn secondary" href={`/production/details/${primary.id}`}>Ver detalhes</Link></div>
+            ? <div className="panel finalized-summary"><h2>Máquina {machine.code}</h2><p>{primary.product?.name} · Produção finalizada: <strong>{primary.productionLot}</strong>.</p><Link className="btn secondary" href={`/production/details/${primary.id}`}>Ver detalhes</Link></div>
             : <ProductionForm draftScope={`${user.id}:${window.start.toISOString()}`} {...data} products={machineProducts} machines={[machine]} fixedMachine={machine} initial={primary ? productionToInitial(primary) : defaults as any} historicalContext={historicalContext} />}
           {!primary && previousIsUsable && <div className="notice muted">Produto e lotes de matéria-prima preenchidos com base no último registo finalizado do turno anterior. Confirme ou altere antes de gravar.</div>}
           {!primary && previous && !previousIsUsable && <div className="notice muted">O registo anterior não foi pré-preenchido porque o produto deixou de estar autorizado nesta máquina ou um dos lotes já não está disponível.</div>}
           {extras.map((row) => row.status === "DRAFT"
-            ? <ProductionForm key={row.id} draftScope={`${user.id}:${window.start.toISOString()}`} {...data} products={machineProducts} machines={[machine]} fixedMachine={machine} additional initial={productionToInitial(row)} />
-            : <div key={row.id} className="panel finalized-summary"><p>Produção adicional finalizada: <strong>{row.productionLot}</strong></p><Link className="btn secondary" href={`/production/details/${row.id}`}>Ver detalhes</Link></div>)}
-          {!historicalWindow && extraMachineId === machine.id && <ProductionForm draftScope={`${user.id}:${window.start.toISOString()}`} {...data} products={machineProducts} machines={[machine]} fixedMachine={machine} additional />}
-          {!historicalWindow && <div className="additional-production-link"><Link className="btn secondary" href={`/production/new?${contextQuery}extraMachine=${machine.id}#machine-${machine.id}`}>+ Registar produção adicional nesta máquina</Link></div>}
+            ? <ProductionForm key={row.id} draftScope={`${user.id}:${window.start.toISOString()}`} {...data} products={machineProducts} machines={[machine]} fixedMachine={machine} additional repeatProductIds={machineRecords.filter(r=>r.id!==row.id).map(r=>r.productId)} initial={productionToInitial(row)} historicalContext={historicalContext} />
+            : <div key={row.id} className="panel finalized-summary"><p>{row.product?.name} · Produção finalizada: <strong>{row.productionLot}</strong></p><Link className="btn secondary" href={`/production/details/${row.id}`}>Ver detalhes</Link></div>)}
+          {extraMachineId === machine.id && <ProductionForm draftScope={`${user.id}:${window.start.toISOString()}`} {...data} products={machineProducts} machines={[machine]} fixedMachine={machine} additional repeatProductIds={machineRecords.map(r=>r.productId)} historicalContext={historicalContext} />}
+          {<div className="additional-production-link"><Link className="btn secondary" href={`/production/new?${contextQuery}extraMachine=${machine.id}#machine-${machine.id}`}>+ Registar outro produto / outra produção nesta máquina</Link></div>}
         </section>;
       })}
     </div>

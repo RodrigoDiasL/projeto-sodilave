@@ -1,116 +1,61 @@
 "use server";
 import { revalidatePath } from "next/cache";
-import { UserInputError } from "@/lib/action-error";
 import { db } from "@/lib/db";
 import { requireUser } from "@/lib/auth";
-
-async function requireLotManager() {
-  const user = await requireUser();
-  if (!["ADMIN", "PRODUCTION_MANAGER"].includes(user.role)) throw new UserInputError("Apenas administradores e o responsável de produção podem gerir lotes.");
-  return user;
+import { UserInputError } from "@/lib/action-error";
+import { generatedLotPattern } from "@/lib/lot-code";
+async function requireLotManager(){const user=await requireUser();if(!["ADMIN","PRODUCTION_MANAGER"].includes(user.role))throw new UserInputError("Não tem permissão para alterar lotes.");return user;}
+function input(fd:FormData){
+  const productId=Number(fd.get("productId")),majorLetter=String(fd.get("majorLetter")||"").trim().toUpperCase(),minorLetter=String(fd.get("minorLetter")||"").trim().toUpperCase(),reason=String(fd.get("reason")||"").trim();
+  if(!Number.isSafeInteger(productId)||productId<1||!/[A-Z]/.test(majorLetter)||majorLetter.length!==1||!/[A-Z]/.test(minorLetter)||minorLetter.length!==1)throw new UserInputError("Selecione o produto e uma letra de A a Z em cada campo.");
+  if(!reason||reason.length>2000)throw new UserInputError("Explique a alteração e o motivo (até 2000 caracteres).");
+  return {productId,majorLetter,minorLetter,reason,prefix:majorLetter+minorLetter};
 }
-
-function nextLetter(letter: string) {
-  const code = letter.toUpperCase().charCodeAt(0);
-  if (code < 65 || code > 90) return "A";
-  if (code === 90) throw new UserInputError("A sequência de letras chegou a Z. Defina uma nova regra antes de continuar.");
-  return String.fromCharCode(code + 1);
+async function feedback(action:()=>Promise<void>){
+  try{await action();for(const path of ["/commercial-lots","/production","/admin/productions","/stock-map","/lot-dispatch","/traceability","/admin/production-display"])revalidatePath(path);return {ok:true as const};}
+  catch(error){if(error instanceof UserInputError)return {ok:false as const,message:error.message};const reference=crypto.randomUUID();console.error("[product-lots]",reference,error);return {ok:false as const,message:`Não foi possível guardar a alteração. Atualize a página para confirmar o estado. Referência: ${reference}`};}
 }
-
-export async function createCommercialLot(fd: FormData) {
-  const user = await requireLotManager();
-  const productId = Number(fd.get("productId"));
-  const notes = String(fd.get("notes") || "").trim().slice(0, 1500) || null;
-  if (!Number.isInteger(productId) || productId <= 0) throw new UserInputError("Selecione um produto.");
-
-  const product = await db.product.findFirst({ where: { id: productId, active: true }, select: { id: true } });
-  if (!product) throw new UserInputError("O produto selecionado não existe ou está inativo.");
-
-  const materials: { rawMaterialId: number; percentage: number }[] = [];
-  for (let i = 0; i < 8; i++) {
-    const rawMaterialId = Number(fd.get(`rawMaterialId_${i}`) || 0);
-    const percentage = Number(fd.get(`percentage_${i}`) || 0);
-    if (!rawMaterialId) continue;
-    if (!Number.isInteger(rawMaterialId) || rawMaterialId <= 0 || !Number.isFinite(percentage) || percentage <= 0 || percentage > 100) throw new UserInputError("A mistura contém valores inválidos.");
-    if (materials.some((row) => row.rawMaterialId === rawMaterialId)) throw new UserInputError("A mesma matéria-prima não pode aparecer duas vezes.");
-    materials.push({ rawMaterialId, percentage });
-  }
-  if (!materials.length || Math.abs(materials.reduce((sum, row) => sum + row.percentage, 0) - 100) > 0.001) throw new UserInputError("A mistura do lote comercial tem de totalizar 100%.");
-
-  const validMaterials = await db.rawMaterial.count({ where: { id: { in: materials.map((row) => row.rawMaterialId) }, active: true } });
-  if (validMaterials !== materials.length) throw new UserInputError("Uma das matérias-primas selecionadas não existe ou está inativa.");
-
-  const year = String(new Date().getFullYear()).slice(-2);
-  await db.$transaction(async (tx) => {
-    // Serialize allocation even when the first commercial lot does not exist yet.
-    await tx.query("SELECT id FROM Product ORDER BY id FOR UPDATE");
-    const active = await tx.$queryRaw<{ id: number; code: string }[]>`SELECT id, code FROM CommercialLot WHERE productId=${productId} AND status='ACTIVE' FOR UPDATE`;
-    if (active.length) throw new UserInputError(`Já existe o lote comercial ativo ${active[0].code} para este produto. Feche-o antes de criar outro.`);
-
-    const rows = await tx.$queryRaw<{ code: string }[]>`SELECT code FROM CommercialLot WHERE code LIKE ${`L${year}%`} ORDER BY code DESC LIMIT 1 FOR UPDATE`;
-    const last = rows[0]?.code?.slice(3) ?? "000";
-    const sequence = Number(last) + 1;
-    if (!Number.isInteger(sequence) || sequence < 1 || sequence > 999) throw new UserInputError("Foi atingido o limite anual de lotes comerciais.");
-    const nextCode = `L${year}${String(sequence).padStart(3, "0")}`;
-
-    await tx.$executeRaw`INSERT INTO CommercialLot (code, productId, status, notes, createdById) VALUES (${nextCode}, ${productId}, 'ACTIVE', ${notes}, ${user.id})`;
-    const created = await tx.$queryRaw<{ id: number }[]>`SELECT id FROM CommercialLot WHERE code=${nextCode} LIMIT 1`;
-    if (!created[0]) throw new UserInputError("Não foi possível criar o lote comercial.");
-    for (const row of materials) {
-      await tx.$executeRaw`INSERT INTO CommercialLotMaterial (commercialLotId, rawMaterialId, percentage) VALUES (${created[0].id}, ${row.rawMaterialId}, ${row.percentage})`;
-    }
-    await tx.auditLog.create({ data: { userId: user.id, action: "CREATE", entity: "CommercialLot", entityId: nextCode, details: { productId, materials } } });
+export async function saveProductLotConfig(fd:FormData){
+  const user=await requireLotManager();
+  return feedback(async()=>{
+    const data=input(fd),expectedVersion=Number(fd.get("expectedVersion"));
+    if(!fd.has("expectedVersion")||!Number.isSafeInteger(expectedVersion)||expectedVersion<0)throw new UserInputError("Atualize a página antes de alterar as letras.");
+    await db.$transaction(async tx=>{
+      const [product]=await tx.query<any[]>("SELECT id FROM Product WHERE id=? AND active=1 FOR UPDATE",[data.productId]);
+      if(!product)throw new UserInputError("Este produto não existe ou está inativo.");
+      const [config]=await tx.query<any[]>("SELECT * FROM ProductLotConfig WHERE productId=? FOR UPDATE",[data.productId]);
+      const previous=(config?.majorLetter??"A")+(config?.minorLetter??"A");
+      if(Number(config?.version??0)!==expectedVersion)throw new UserInputError("As letras foram alteradas por outro utilizador. Atualize a página.");
+      if(previous===data.prefix)throw new UserInputError("As letras não foram alteradas.");
+      await tx.execute("INSERT INTO ProductLotConfig (productId,majorLetter,minorLetter,version,updatedById) VALUES (?,?,?,1,?) ON DUPLICATE KEY UPDATE majorLetter=VALUES(majorLetter),minorLetter=VALUES(minorLetter),version=version+1,updatedById=VALUES(updatedById)",[data.productId,data.majorLetter,data.minorLetter,user.id]);
+      await tx.execute("INSERT INTO ProductLotHistory (productId,scope,previousPrefix,newPrefix,reason,changedById) VALUES (?,'FUTURE',?,?,?,?)",[data.productId,previous,data.prefix,data.reason,user.id]);
+      await tx.auditLog.create({data:{userId:user.id,action:"CHANGE_CONFIG",entity:"ProductLotConfig",entityId:String(data.productId),details:{previous,next:data.prefix,reason:data.reason}}});
+    });
   });
-
-  revalidatePath("/commercial-lots");
 }
-
-export async function closeCommercialLot(fd: FormData) {
-  const user = await requireLotManager();
-  const id = Number(fd.get("id"));
-  if (!Number.isInteger(id) || id <= 0) throw new UserInputError("Lote inválido.");
-  await db.$transaction(async tx=>{
-    const affected = await tx.$executeRaw`UPDATE CommercialLot SET status='CLOSED', closedAt=NOW(3), closedById=${user.id} WHERE id=${id} AND status='ACTIVE'`;
-    if (!affected) throw new UserInputError("O lote comercial não existe ou já se encontra fechado.");
-    await tx.auditLog.create({ data: { userId: user.id, action: "CLOSE", entity: "CommercialLot", entityId: String(id) } });
+export async function editProducedLot(fd:FormData){
+  const user=await requireLotManager();
+  return feedback(async()=>{
+    const data=input(fd),oldCode=String(fd.get("expectedCode")||""),expectedCount=Number(fd.get("expectedCount"));
+    if(!generatedLotPattern.test(oldCode)||!Number.isSafeInteger(expectedCount)||expectedCount<1)throw new UserInputError("Selecione um lote gerado pela aplicação e atualize a página.");
+    const newCode=data.prefix+oldCode.slice(2);
+    if(newCode===oldCode)throw new UserInputError("As letras não foram alteradas.");
+    await db.$transaction(async tx=>{
+      const [product]=await tx.query<any[]>("SELECT id FROM Product WHERE id=? FOR UPDATE",[data.productId]);
+      if(!product)throw new UserInputError("O produto já não existe.");
+      const rows=await tx.query<any[]>("SELECT id FROM Production WHERE productId=? AND productionLot=? AND status<>'CANCELLED' AND recordOrigin='PRODUCTION' ORDER BY id FOR UPDATE",[data.productId,oldCode]);
+      if(rows.length!==expectedCount)throw new UserInputError("O lote mudou desde que abriu a página. Atualize e confirme novamente.");
+      const [conflict]=await tx.query<any[]>("SELECT id FROM Production WHERE productId=? AND productionLot=? AND status<>'CANCELLED' LIMIT 1",[data.productId,newCode]);
+      if(conflict)throw new UserInputError("Esse código já identifica outro lote deste produto. Escolha outras letras para não juntar lotes diferentes.");
+      await tx.execute("INSERT INTO ProductLotHistory (productId,scope,previousPrefix,newPrefix,previousCode,newCode,reason,changedById) VALUES (?,'EXISTING',?,?,?,?,?,?)",[data.productId,oldCode.slice(0,2),data.prefix,oldCode,newCode,data.reason,user.id]);
+      const [history]=await tx.query<any[]>("SELECT LAST_INSERT_ID() AS id");
+      for(const row of rows){
+        const [association]=await tx.query<any[]>("SELECT labelCode FROM ProductionLotAssociation WHERE productionId=?",[row.id]);
+        await tx.execute("INSERT INTO ProductionLotAlias (productionId,historyId,oldCode,oldLabel) VALUES (?,?,?,?)",[row.id,history.id,oldCode,association?.labelCode??null]);
+        await tx.production.update({where:{id:row.id},data:{productionLot:newCode}});
+        await tx.execute("UPDATE ProductionLotAssociation SET internalCode=?,labelCode=? WHERE productionId=?",[newCode,newCode,row.id]);
+      }
+      await tx.auditLog.create({data:{userId:user.id,action:"EDIT_LOT",entity:"ProductLot",entityId:String(data.productId),details:{oldCode,newCode,productionIds:rows.map(r=>r.id),reason:data.reason}}});
+    });
   });
-  revalidatePath("/commercial-lots");
 }
-
-export async function changeMachineLotConfig(fd: FormData) {
-  const user = await requireLotManager();
-  const machineId = Number(fd.get("machineId"));
-  const changeType = String(fd.get("changeType") || "");
-  const reason = String(fd.get("reason") || "").trim().slice(0, 2000);
-  if (!Number.isInteger(machineId) || machineId <= 0 || !["MAJOR", "MINOR"].includes(changeType) || !reason) throw new UserInputError("Preencha a máquina, o tipo de alteração e o motivo.");
-
-  const machine = await db.machine.findUnique({ where: { id: machineId }, select: { id: true } });
-  if (!machine) throw new UserInputError("A máquina selecionada não existe.");
-
-  await db.$transaction(async (tx) => {
-    await tx.query("SELECT id FROM Machine WHERE id=? FOR UPDATE",[machineId]);
-    const rows = await tx.$queryRaw<{ majorLetter: string; minorLetter: string }[]>`SELECT majorLetter, minorLetter FROM MachineLotConfig WHERE machineId=${machineId} FOR UPDATE`;
-    const previous = rows[0] ?? { majorLetter: "A", minorLetter: "A" };
-    const next = changeType === "MAJOR"
-      ? { majorLetter: nextLetter(previous.majorLetter), minorLetter: "A" }
-      : { majorLetter: previous.majorLetter, minorLetter: nextLetter(previous.minorLetter) };
-    await tx.$executeRaw`INSERT INTO MachineLotConfig (machineId, majorLetter, minorLetter, updatedById) VALUES (${machineId}, ${next.majorLetter}, ${next.minorLetter}, ${user.id}) ON DUPLICATE KEY UPDATE majorLetter=VALUES(majorLetter), minorLetter=VALUES(minorLetter), updatedById=VALUES(updatedById)`;
-    await tx.$executeRaw`INSERT INTO MachineLotConfigHistory (machineId, previousMajor, previousMinor, newMajor, newMinor, changeType, reason, changedById) VALUES (${machineId}, ${previous.majorLetter}, ${previous.minorLetter}, ${next.majorLetter}, ${next.minorLetter}, ${changeType}, ${reason}, ${user.id})`;
-    await tx.auditLog.create({ data: { userId: user.id, action: "CHANGE_CONFIG", entity: "MachineLotConfig", entityId: String(machineId), details: { previous, next, changeType, reason } } });
-  });
-
-  revalidatePath("/commercial-lots");
-}
-
-async function lotFeedback(action: (fd: FormData) => Promise<void>, fd: FormData) {
-  await requireLotManager();
-  try { await action(fd); return {ok:true as const}; }
-  catch (error) {
-    if (error instanceof UserInputError) return {ok:false as const,message:error.message};
-    const reference=crypto.randomUUID();console.error("[lots]",reference,error);
-    return {ok:false as const,message:`Não foi possível guardar o lote. Confirme o estado antes de repetir. Referência: ${reference}`};
-  }
-}
-export async function submitCommercialLot(fd: FormData) {return lotFeedback(createCommercialLot,fd);}
-export async function submitCloseCommercialLot(fd: FormData) {return lotFeedback(closeCommercialLot,fd);}
-export async function submitMachineLotConfig(fd: FormData) {return lotFeedback(changeMachineLotConfig,fd);}

@@ -4,18 +4,18 @@ import { useState } from "react";
 import { useRouter } from "next/navigation";
 import { createDisplayDevice, revokeDisplayDevice, saveDisplayOrder } from "@/app/actions/production-display";
 
-type Machine={id:number;code:string;commercialLotId:number|null;destination:string|null;notes:string|null;currentOrder:number};
+type Machine={id:number;code:string;productId:number|null;destination:string|null;notes:string|null;currentOrder:number};
 type Lot={id:number;code:string;product:string;machineId:number};
 type Device={id:string;name:string;paired:boolean;expiresAt:string|null;pairingExpiresAt:string};
 function OrderForm({machine,lots,enabled}:{machine:Machine;lots:Lot[];enabled:boolean}) {
-  const router=useRouter();const [busy,setBusy]=useState(false);const [message,setMessage]=useState("");const notify=useFeedback();
+  const router=useRouter();const [busy,setBusy]=useState(false);const [message,setMessage]=useFeedbackState("success");const notify=useFeedback();
   return <form className="panel form-stack" onSubmit={async event=>{
     event.preventDefault();const fd=new FormData(event.currentTarget);setBusy(true);setMessage("");
     try {await saveDisplayOrder(fd);setMessage("Ordem guardada. O ecrã atualiza em até 10 segundos.");notify("success","Ordem de paletização guardada.");router.refresh();}
     catch(e){const message=e instanceof Error?e.message:"Não foi possível guardar.";setMessage(message);notify("error",message);}finally{setBusy(false);}
   }}><h2>Máquina {machine.code}</h2><input type="hidden" name="machineId" value={machine.id}/>
-    <label>Produto / lote comercial<select name="commercialLotId" defaultValue={machine.currentOrder?machine.commercialLotId??"":""} required disabled={!enabled||busy}>
-      <option value="">Selecione o lote ativo</option>{lots.filter(l=>l.machineId===machine.id).map(l=><option key={l.id} value={l.id}>{l.product} · {l.code}</option>)}
+    <label>Produto a produzir<select name="productId" defaultValue={machine.currentOrder?machine.productId??"":""} required disabled={!enabled||busy}>
+      <option value="">Selecione o produto</option>{lots.filter(l=>l.machineId===machine.id).map(l=><option key={l.id} value={l.id}>{l.product} · {l.code}</option>)}
     </select></label><label>Destino das embalagens<select name="destination" defaultValue={machine.currentOrder?machine.destination??"":""} required disabled={!enabled||busy}><option value="">Selecione</option><option value="PALLET">Paletes</option><option value="STACK">Estiba / monte</option></select></label>
     <label>Instruções adicionais<input name="notes" maxLength={240} defaultValue={machine.currentOrder?machine.notes??"":""} placeholder="Ex.: 8 embalagens por camada" disabled={!enabled||busy}/></label>
     <button className="btn primary" disabled={!enabled||busy}>{busy?"A guardar…":"Publicar ordem no ecrã"}</button>{message&&<p role="status">{message}</p>}
@@ -31,7 +31,7 @@ export function DisplayAdmin({machines,lots,devices,cycleActive}:{machines:Machi
     <p className="muted">Ligação válida por 90 dias. Pode revogar o acesso a qualquer momento. A TV deve ter acesso à rede da aplicação; em produção, utilize HTTPS.</p>
     {devices.map(device=><div className="display-device" key={device.id}><span><strong>{device.name}</strong> · {device.paired?`Ligado até ${device.expiresAt?.slice(0,10)}`:`Por ligar · código válido até ${new Date(device.pairingExpiresAt).toLocaleTimeString("pt-PT")}`}</span><button className="btn secondary" disabled={busy} onClick={async()=>{setBusy(true);setError("");try{const fd=new FormData();fd.set("id",device.id);await revokeDisplayDevice(fd);notify("success","Acesso do ecrã revogado.");router.refresh();}catch{setError("Não foi possível revogar o ecrã.");}finally{setBusy(false);}}}>Revogar acesso</button></div>)}
     {error&&<p role="alert" className="alert error">{error}</p>}
-  </section><section><h2>Ordens de paletização por máquina</h2><p>As ordens são válidas para o ciclo semanal atual. O código interno previsto acompanha a mudança de turno; depois de guardar a produção, o ecrã mostra o lote registado. Confirme a ordem se mudar de produto ou de lote comercial.</p>
+  </section><section><h2>Ordens de paletização por máquina</h2><p>As ordens são válidas para o ciclo semanal atual. O código do lote previsto acompanha a mudança de turno; depois de guardar a produção, o ecrã mostra o lote registado. Confirme a ordem se mudar de produto.</p>
     {!cycleActive&&<p className="alert error">Conclua o arranque semanal para publicar ordens.</p>}
     <div className="admin-grid">{machines.map(machine=><OrderForm key={`${machine.id}-${machine.currentOrder}`} machine={machine} lots={lots} enabled={cycleActive}/>)}</div>
   </section></div>;

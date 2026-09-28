@@ -37,14 +37,10 @@ export default async function Page({searchParams}:{searchParams:Promise<{q?:stri
   await requireReadAccess();
   const { q = "" } = await searchParams;
 
-  const linkedIds = q
-    ? await db.$queryRaw<{productionId:number;labelCode:string}[]>`
-        SELECT productionId,labelCode
-        FROM ProductionLotAssociation
-        WHERE labelCode LIKE ${`%${q}%`}
-        LIMIT 100
-      `
-    : [];
+  const linkedIds = q ? await db.query<{productionId:number}[]>(`
+    SELECT productionId FROM ProductionLotAssociation WHERE labelCode LIKE ?
+    UNION SELECT productionId FROM ProductionLotAlias WHERE oldCode LIKE ? OR oldLabel LIKE ?
+    LIMIT 100`,Array(3).fill(`%${q}%`)) : [];
   const ids = linkedIds.map((x) => x.productionId);
 
   const rows = q
@@ -123,13 +119,14 @@ export default async function Page({searchParams}:{searchParams:Promise<{q?:stri
     ),
   ]) : [[], [], []];
 
-  const labels = new Map(linkedIds.map((x) => [x.productionId, x.labelCode]));
+  const aliases = productionIds.length ? await db.query<{productionId:number;oldCode:string;oldLabel:string|null}[]>(
+    `SELECT productionId,oldCode,oldLabel FROM ProductionLotAlias WHERE productionId IN (${placeholders}) ORDER BY historyId`,productionIds) : [];
 
   return <>
-    <PageIntro title="Rastreabilidade" subtitle="Pesquisar por lote comercial, código interno, produto ou máquina."/>
+    <PageIntro title="Rastreabilidade" subtitle="Pesquisar por lote atual ou anterior, produto ou máquina."/>
     <section className="panel">
       <form className="inline-form">
-        <input name="q" defaultValue={q} placeholder="Lote comercial, controlo interno, produto ou máquina"/>
+        <input name="q" defaultValue={q} placeholder="Lote atual ou anterior, produto ou máquina"/>
         <button className="btn primary">Pesquisar</button>
       </form>
     </section>
@@ -151,7 +148,8 @@ export default async function Page({searchParams}:{searchParams:Promise<{q?:stri
           : "Sem saídas para clientes";
 
       return <section className="panel trace-card" key={r.id}>
-        <h2>{labels.get(r.id) || r.productionLot}</h2>
+        <h2>{r.productionLot}</h2>
+        {aliases.some(a=>a.productionId===r.id)&&<p className="muted">Códigos anteriores: {Array.from(new Set(aliases.filter(a=>a.productionId===r.id).map(a=>a.oldLabel||a.oldCode))).join(" · ")}</p>}
 
         <h3>Produção de origem</h3>
         <div className="detail-grid">

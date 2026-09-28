@@ -97,7 +97,7 @@ test('production pages enforce commerce roles and provide auditors read-only cat
         else assert.equal(orders.status,200);
         if(role==='LOGISTICS') {assert.equal((await get('/orders/new')).status,200);assert.equal((await get('/checkups')).status,200);assert.equal((await get('/admin/users')).headers.get('location'),'/access-denied');}
         if(role==='AUDITOR') {
-          for(const path of ['/admin/queries','/admin/productions','/admin/checkups','/admin/raw-materials','/admin/products','/admin/users','/admin/lot-rules','/admin/settings','/admin/production-display','/maintenance','/traceability','/lot-dispatch']) {
+          for(const path of ['/admin/queries','/admin/productions','/admin/checkups','/admin/raw-materials','/admin/products','/admin/users','/admin/settings','/admin/production-display','/maintenance','/traceability','/lot-dispatch']) {
             const response=await get(path);assert.equal(response.status,200,path);const html=await response.text();
             assert.doesNotMatch(html,/<input[^>]+type="password"/,path);
             assert.doesNotMatch(html,/>Adicionar produto<|>Guardar alterações<|>Criar utilizador<|>Dar entrada de lote<|>Ativar nova regra<|>Criar manutenção</,path);
@@ -107,8 +107,9 @@ test('production pages enforce commerce roles and provide auditors read-only cat
         if(role!=='ADMIN')assert.equal((await get('/admin/storage')).headers.get('location'),'/access-denied');
         if(['ADMIN','PRODUCTION_MANAGER','AUDITOR'].includes(role)){
           const response=await get('/commercial-lots');assert.equal(response.status,200);const html=await response.text();
-          if(role==='AUDITOR')assert.doesNotMatch(html,/>Criar lote comercial<|>Registar e atualizar letras</);
-          else assert.match(html,/>Criar lote comercial</);
+          assert.equal((await get('/admin/lot-rules')).headers.get('location'),'/commercial-lots');
+          if(role==='AUDITOR')assert.doesNotMatch(html,/>Guardar letras para novos registos<|>Guardar correção deste lote</);
+          else assert.match(html,/>Guardar letras para novos registos</);
         }
         if(role==='ADMIN') {
           const storage=await get('/admin/storage');assert.equal(storage.status,200);assert.match(await storage.text(),/Dar entrada de stock inicial/);

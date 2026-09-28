@@ -15,10 +15,12 @@ export default async function DisplaySettingsPage() {
   }
   const startup=await getActiveWeeklyStartup();
   const [machines,lots,rows]=await Promise.all([
-    db.query<any[]>(`SELECT m.id,m.code,o.commercialLotId,o.destination,o.notes,COALESCE(o.weeklyStartupId=?,0) AS currentOrder
+    db.query<any[]>(`SELECT m.id,m.code,o.productId,o.destination,o.notes,COALESCE(o.weeklyStartupId=?,0) AS currentOrder
       FROM Machine m LEFT JOIN MachineDisplayOrder o ON o.machineId=m.id WHERE m.active=1 ORDER BY CAST(m.code AS UNSIGNED),m.code`,[startup?.id??0]),
-    db.query<any[]>(`SELECT cl.id,cl.code,CONCAT(p.code,' — ',p.name) AS product,pm.machineId FROM CommercialLot cl
-      INNER JOIN Product p ON p.id=cl.productId INNER JOIN ProductMachine pm ON pm.productId=p.id WHERE cl.status='ACTIVE' AND p.active=1 ORDER BY p.code,cl.code`),
+    db.query<any[]>(`SELECT p.id,CONCAT(COALESCE(cfg.majorLetter,'A'),COALESCE(cfg.minorLetter,'A')) AS code,
+      CONCAT(p.code,' — ',p.name) AS product,pm.machineId FROM Product p
+      INNER JOIN ProductMachine pm ON pm.productId=p.id LEFT JOIN ProductLotConfig cfg ON cfg.productId=p.id
+      WHERE p.active=1 ORDER BY p.code`),
     db.query<any[]>(`SELECT id,name,tokenHash IS NOT NULL AS paired,expiresAt,pairingExpiresAt FROM ProductionDisplayDevice
       WHERE revokedAt IS NULL AND (expiresAt>NOW(3) OR (tokenHash IS NULL AND pairingExpiresAt>NOW(3))) ORDER BY createdAt DESC`),
   ]);

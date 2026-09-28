@@ -33,23 +33,23 @@ export async function revokeDisplayDevice(fd: FormData) {
 
 export async function saveDisplayOrder(fd: FormData) {
   const user = await requireAdmin();
-  const machineId=Number(fd.get("machineId")), lotId=Number(fd.get("commercialLotId"));
+  const machineId=Number(fd.get("machineId")), productId=Number(fd.get("productId"));
   const destination=String(fd.get("destination")), notes=String(fd.get("notes") ?? "").trim();
-  if (!Number.isSafeInteger(machineId) || machineId<1 || !Number.isSafeInteger(lotId) || lotId<1 || !["STACK","PALLET"].includes(destination) || notes.length>240) throw new Error("Verifique a máquina, o lote e o destino.");
+  if (!Number.isSafeInteger(machineId) || machineId<1 || !Number.isSafeInteger(productId) || productId<1 || !["STACK","PALLET"].includes(destination) || notes.length>240) throw new Error("Verifique a máquina, o produto e o destino.");
   await db.$transaction(async tx => {
     const machines=await tx.query<any[]>("SELECT id FROM Machine WHERE id=? AND active=1 FOR UPDATE",[machineId]);
     const cycles=await tx.query<any[]>(`SELECT s.id FROM WeeklyStartup s WHERE s.status='FINALIZED'
       AND NOT EXISTS (SELECT 1 FROM WeeklyShutdown wd WHERE wd.weeklyStartupId=s.id AND wd.status='FINALIZED')
       ORDER BY s.startupDate DESC,s.id DESC LIMIT 1`,[]);
     if (!machines.length || !cycles.length) throw new Error("É necessário um arranque semanal ativo e uma máquina ativa.");
-    const lots=await tx.query<any[]>(`SELECT cl.id FROM CommercialLot cl INNER JOIN Product p ON p.id=cl.productId
+    const products=await tx.query<any[]>(`SELECT p.id FROM Product p
       INNER JOIN ProductMachine pm ON pm.productId=p.id AND pm.machineId=?
-      WHERE cl.id=? AND cl.status='ACTIVE' AND p.active=1 FOR UPDATE`,[machineId,lotId]);
-    if (!lots.length) throw new Error("Escolha um lote comercial ativo de um produto associado à máquina.");
-    await tx.execute(`INSERT INTO MachineDisplayOrder (machineId,weeklyStartupId,commercialLotId,destination,notes,updatedById)
-      VALUES (?,?,?,?,?,?) ON DUPLICATE KEY UPDATE weeklyStartupId=VALUES(weeklyStartupId),commercialLotId=VALUES(commercialLotId),
-      destination=VALUES(destination),notes=VALUES(notes),updatedById=VALUES(updatedById),updatedAt=NOW(3)`,[machineId,cycles[0].id,lotId,destination,notes,user.id]);
-    await tx.auditLog.create({data:{userId:user.id,action:"EDIT",entity:"MachineDisplayOrder",entityId:String(machineId),details:{weeklyStartupId:cycles[0].id,commercialLotId:lotId,destination,notes}}});
+      WHERE p.id=? AND p.active=1 FOR UPDATE`,[machineId,productId]);
+    if (!products.length) throw new Error("Escolha um produto ativo associado à máquina.");
+    await tx.execute(`INSERT INTO MachineDisplayOrder (machineId,weeklyStartupId,productId,commercialLotId,destination,notes,updatedById)
+      VALUES (?,?,?,NULL,?,?,?) ON DUPLICATE KEY UPDATE weeklyStartupId=VALUES(weeklyStartupId),productId=VALUES(productId),commercialLotId=NULL,
+      destination=VALUES(destination),notes=VALUES(notes),updatedById=VALUES(updatedById),updatedAt=NOW(3)`,[machineId,cycles[0].id,productId,destination,notes,user.id]);
+    await tx.auditLog.create({data:{userId:user.id,action:"EDIT",entity:"MachineDisplayOrder",entityId:String(machineId),details:{weeklyStartupId:cycles[0].id,productId,destination,notes}}});
   });
   revalidatePath("/admin/production-display");
 }

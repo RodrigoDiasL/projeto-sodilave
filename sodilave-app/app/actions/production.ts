@@ -6,7 +6,7 @@ import { revalidatePath } from "next/cache";
 import { db } from "@/lib/db";
 import { requireOperationalUser } from "@/lib/auth";
 import { formatLocalDateInput, getShift, getShiftWindow, getShiftWindowForDate, type ShiftCode } from "@/lib/shift";
-import { generateProductionLot, getActiveCommercialLotForProduct, validateCommercialLotMixture } from "@/lib/lot";
+import { generateProductionLot } from "@/lib/lot";
 import { assertMachineRunning } from "@/lib/active-machines";
 import { saveRecordConfirmation, verifySecondWorker } from "@/lib/second-worker-confirmation";
 import { getRecordedProductionStock, reconcileProductionStock, replaceRecordedProductionStock } from "@/lib/raw-material-stock";
@@ -240,39 +240,20 @@ export async function saveProduction(formData: FormData) {
     await assertMachineRunning(machineId);
   }
 
-  const previousAssociation = productionId ? await db.$queryRaw<{ commercialLotId: number; code: string; productId: number }[]>`
-    SELECT pla.commercialLotId, cl.code, cl.productId
-    FROM ProductionLotAssociation pla
-    INNER JOIN CommercialLot cl ON cl.id=pla.commercialLotId
-    WHERE pla.productionId=${productionId}
-    LIMIT 1
-  ` : [];
-  const associatedLot = previousAssociation[0];
-  const commercialLot = associatedLot && associatedLot.productId === productId
-    ? { id: associatedLot.commercialLotId, code: associatedLot.code }
-    : await getActiveCommercialLotForProduct(productId);
-
-  if (finalize && !commercialLot) {
-    throw new Error("Não existe um lote comercial ativo para este produto. Peça a um administrador ou ao responsável de produção para o criar.");
-  }
-  if (finalize && commercialLot && !(await validateCommercialLotMixture(commercialLot.id, materials))) {
-    throw new Error(`A mistura introduzida não corresponde à mistura definida no lote comercial ${commercialLot.code}.`);
-  }
-
   const recordWindow = existing ? getShiftWindow(existing.startedAt) : historicalWindow ?? getShiftWindow();
   const otherProductionsInShift = await db.production.count({
     where: {
-      machineId,
+      machineId, productId, recordOrigin:"PRODUCTION",
       startedAt: { gte: recordWindow.start, lt: recordWindow.end },
       status: { not: RecordStatus.CANCELLED },
       ...(productionId ? { id: { not: productionId } } : {}),
     },
   });
   if (historicalWindow && otherProductionsInShift > 0) {
-    throw new Error("Já existe uma produção desta máquina para a data e turno selecionados. O registo de produção passada não pode criar duplicações.");
+    throw new Error("Já existe uma produção deste produto nesta máquina para a data e turno selecionados. O registo de produção passada não pode criar duplicações.");
   }
   if (finalize && otherProductionsInShift > 0 && !exceptionReason) {
-    throw new Error("Já existe uma produção desta máquina neste turno. Indique o motivo da produção adicional.");
+    throw new Error("Já existe uma produção deste produto nesta máquina neste turno. Indique o motivo da produção adicional.");
   }
 
   const leftTests = parseTests(formData, [
@@ -284,13 +265,13 @@ export async function saveProduction(formData: FormData) {
   const rightTests = isMachine7 ? parseRightTests(formData, finalize) : [];
 
   const shift = existing ? { code: existing.shiftCode } : historicalWindow ? { code: historicalWindow.code } : getShift();
-  const internalCode = existing?.productionLot ?? await generateProductionLot(machine.code, shift.code, recordWindow.start);
   const status = finalize || existing?.status === RecordStatus.FINALIZED ? RecordStatus.FINALIZED : RecordStatus.DRAFT;
 
   const production = await db.$transaction(async (tx) => {
     // Lock before checking weekly/machine state and shift uniqueness. This also
     // protects against two tabs submitting the same normal production at once.
     await tx.query("SELECT id FROM Machine WHERE id=? FOR UPDATE", [machineId]);
+    await tx.query("SELECT id FROM Product WHERE id IN (?,?) ORDER BY id FOR UPDATE", [productId,existing?.productId??productId]);
     if (!historicalWindow && (!existing || (user.role !== "ADMIN" && existing.status !== RecordStatus.FINALIZED))) {
       const activeStartup = await tx.weeklyStartup.findFirst({ where: { status: RecordStatus.FINALIZED, shutdown: null } });
       const currentMachine = await tx.machine.findFirst({ where: { id: machineId, active: true, status: "RUNNING" } });
@@ -301,18 +282,18 @@ export async function saveProduction(formData: FormData) {
       if(positions.length!==uniqueStorageLocationIds.length)throw new Error("Uma posição de stock foi removida. Atualize o formulário.");
     }
     const simultaneous = await tx.production.count({ where: {
-      recordOrigin:"PRODUCTION", machineId, startedAt: { gte: recordWindow.start, lt: recordWindow.end }, status: { not: RecordStatus.CANCELLED },
+      recordOrigin:"PRODUCTION", machineId, productId, startedAt: { gte: recordWindow.start, lt: recordWindow.end }, status: { not: RecordStatus.CANCELLED },
       ...(productionId ? { id: { not: productionId } } : {}),
     } });
-    if (simultaneous > 0 && !exceptionReason) throw new Error("Já existe uma produção desta máquina neste turno. Atualize a página ou indique o motivo de uma produção adicional.");
+    if (simultaneous > 0 && !exceptionReason) throw new Error("Já existe uma produção deste produto nesta máquina neste turno. Atualize a página ou indique o motivo de uma produção adicional.");
     if (historicalWindow) {
       // Serialize past-shift inserts and the administrator's permission toggle.
       await assertPastProductionEnabled(tx, true);
       const duplicate = await tx.production.count({ where: {
-        recordOrigin:"PRODUCTION", machineId, startedAt: { gte: recordWindow.start, lt: recordWindow.end },
+        recordOrigin:"PRODUCTION", machineId, productId, startedAt: { gte: recordWindow.start, lt: recordWindow.end },
         status: { not: RecordStatus.CANCELLED }, ...(productionId ? { id: { not: productionId } } : {}),
       } });
-      if (duplicate) throw new Error("Já existe uma produção para esta máquina, dia e turno.");
+      if (duplicate) throw new Error("Já existe uma produção para este produto, máquina, dia e turno.");
     }
     let lockedExisting: ExistingProduction | null = existing;
     if (productionId) {
@@ -326,6 +307,8 @@ export async function saveProduction(formData: FormData) {
       if (lockedExisting.status !== existing?.status) throw new Error("O estado da produção foi alterado por outro utilizador. Atualize a página antes de continuar.");
     }
 
+    if(lockedExisting?.status===RecordStatus.FINALIZED && lockedExisting.productId!==productId)throw new Error("Uma produção finalizada não pode mudar de produto. Corrija o lote no ecrã Lotes por produto.");
+    const internalCode=lockedExisting && lockedExisting.productId===productId ? lockedExisting.productionLot : await generateProductionLot(productId,machine.code,shift.code,recordWindow.start,tx);
     if (lockedExisting?.status === RecordStatus.FINALIZED && quantityProduced !== null) {
       const [storageRows, dispatchRows] = await Promise.all([
         tx.query<{ total: number | string }[]>(
@@ -367,6 +350,7 @@ export async function saveProduction(formData: FormData) {
     const data = {
       machineId,
       productId,
+      productionLot:internalCode,
       shiftCode: shift.code,
       status,
       initialWeightG,
@@ -409,16 +393,8 @@ export async function saveProduction(formData: FormData) {
       }
     }
 
-    if (commercialLot) {
-      const labelCode = `${commercialLot.code} / ${internalCode}`;
-      await tx.$executeRaw`
-        INSERT INTO ProductionLotAssociation (productionId, commercialLotId, internalCode, labelCode)
-        VALUES (${saved.id}, ${commercialLot.id}, ${internalCode}, ${labelCode})
-        ON DUPLICATE KEY UPDATE commercialLotId=VALUES(commercialLotId), internalCode=VALUES(internalCode), labelCode=VALUES(labelCode)
-      `;
-    } else {
-      await tx.$executeRaw`DELETE FROM ProductionLotAssociation WHERE productionId=${saved.id}`;
-    }
+    // Keep historical labels on unchanged legacy records. New lots use one generated code.
+    if(lockedExisting && lockedExisting.productId!==productId) await tx.execute("DELETE FROM ProductionLotAssociation WHERE productionId=?",[saved.id]);
 
     await tx.productionMaterial.deleteMany({ where: { productionId: saved.id } });
     if (materials.length) {
@@ -469,7 +445,6 @@ export async function saveProduction(formData: FormData) {
         entityId: String(saved.id),
         details: {
           status,
-          commercialLot: commercialLot?.code ?? null,
           internalCode,
           secondWorkerId: secondWorker?.id ?? null,
           secondWorkerName: secondWorker?.name ?? null,
@@ -495,7 +470,7 @@ export async function saveProduction(formData: FormData) {
   return {
     ok: true,
     id: production.id,
-    lot: commercialLot ? `${commercialLot.code} / ${internalCode}` : internalCode,
+    lot: production.productionLot,
     finalized: finalize,
   };
 }

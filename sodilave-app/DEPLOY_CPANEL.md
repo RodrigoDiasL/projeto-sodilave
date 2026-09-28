@@ -446,3 +446,36 @@ As encomendas deixam de ter as entregas apagadas. Manutenções abertas continua
 abertas e devem ser revistas antes de arrancar. Revoga sessões para evitar formulários
 antigos. Não reinicia IDs e regista a operação na auditoria. A limpeza é transacional;
 se a reposição das MPs não for consistente, não altera dados.
+
+
+## Lotes por produto — atualização de 28/09/2026
+
+Executar `npm run db:upgrade` e `npm run db:check` antes de iniciar esta versão.
+A migração conserva os registos existentes. Não executar o reset de testes para
+instalar esta atualização. Fazer o backup normal antes de migrar.
+
+O ecrã **Lotes por produto** reúne a configuração e a edição dos lotes. Escolher
+um artigo e definir livremente as duas letras (A–Z), com alteração e motivo.
+A primeira letra, a segunda ou ambas podem mudar. As letras são por produto:
+artigos diferentes podem usar AA na mesma máquina, sem incremento automático
+quando se muda de molde. Turnos: A 00h–08h, B 08h–16h, C 16h–24h (TZ Europe/Lisbon).
+O resto do código é calculado pela data, turno e máquina de produção.
+
+**Letras para novos registos** afeta apenas produções guardadas posteriormente.
+**Lotes já registados → Editar as duas letras deste lote** corrige todos os
+registos do mesmo produto/código, sem mudar o sufixo, quantidades ou saídas.
+O motivo e o autor ficam no histórico; códigos e etiquetas anteriores continuam
+pesquisáveis na Rastreabilidade. Um código já utilizado por outro lote do mesmo
+produto não pode ser escolhido para uma correção. Stock inicial conserva o código
+introduzido pelo administrador.
+
+A produção deixa de exigir um lote comercial L separado e uma receita prévia.
+A mistura utilizada continua registada em cada produção. Os registos anteriores
+mantêm o seu código e as suas ligações; as letras iniciais de cada produto são
+recuperadas da sua produção mais recente com código gerado pela app (ou AA).
+
+No Ecrã de produção, a ordem da máquina seleciona agora o **produto a produzir**.
+Depois de mudar de artigo/molde, atualizar esta seleção. O lote previsto usa as
+letras desse produto e o turno atual; as ordens antigas são convertidas durante
+a migração. Administradores e responsáveis de produção podem editar lotes;
+auditores têm apenas consulta.

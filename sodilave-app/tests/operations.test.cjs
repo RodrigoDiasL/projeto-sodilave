@@ -380,7 +380,7 @@ test('every operational mutation rejects anonymous users and auditors; admin mut
     }
     for(const role of ['OPERATOR','AUDITOR']) {
       user={...account,role};
-      for(const action of Object.values(load('app/actions/lots')))await assert.rejects(action(new FormData()),/Apenas administradores/);
+      for(const action of Object.values(load('app/actions/lots')))await assert.rejects(action(new FormData()),/permissão/);
     }
   } finally {user=account;}
 });
@@ -479,17 +479,15 @@ test('normal production cannot be duplicated by simultaneous drafts or reassigne
   await load('app/actions/production-admin').cancelProduction(fd({id:row.id}));
 });
 
-test('invalid product configuration and lot rules leave prior data intact',async()=>{
-  const {createProduct,updateProduct,createLotRule}=load('app/actions/admin');
+test('invalid product configuration leaves prior data intact',async()=>{
+  const {createProduct,updateProduct}=load('app/actions/admin');
   const count=await db.product.count();
   await assert.rejects(createProduct(fd({code:'INVALID',name:'Invalid',unitsPerPackage:10,machineIds:2147483647})),/máquinas selecionadas/);
   assert.equal(await db.product.count(),count);
   const previous=await db.product.findUnique({where:{id:product.id}});
   await assert.rejects(updateProduct(fd({id:product.id,code:product.code,name:'Must roll back',unitsPerPackage:5,machineIds:2147483647,active:'on'})),/máquinas selecionadas/);
   assert.equal((await db.product.findUnique({where:{id:product.id}})).name,previous.name);
-  const rules=await db.productionLotRule.count({where:{active:true}});
-  await assert.rejects(createLotRule(fd({name:'',prefix:'X',template:'Y'})),/obrigatório/);
-  assert.equal(await db.productionLotRule.count({where:{active:true}}),rules);
+
 });
 
 test('real session guards deny auditors writes and enforce database expiry and current roles',async()=>{
@@ -557,37 +555,31 @@ test('display pairing is single-use, bounded, revocable and stores only hashed c
   await assert.rejects(pairDisplay('00000000'),/Demasiadas/);
 });
 
-test('display orders track the active cycle and current shift, rejecting stale lots and invalid assignments',async()=>{
+test('display orders follow the selected product, its letters and the current shift',async()=>{
   const {saveDisplayOrder}=load('app/actions/production-display');
   const {getProductionDisplayData}=load('lib/production-display');
-  const {getShiftWindow}=load('lib/shift');
-  const now=new Date();const window=getShiftWindow(now);
+  const now=new Date();const window=load('lib/shift').getShiftWindow(now);
   const tvMachine=await db.machine.create({data:{code:'8',name:'Display test',status:'RUNNING'}});
-  await db.execute('INSERT INTO ProductMachine (productId,machineId) VALUES (?,?)',[product.id,tvMachine.id]);
-  const [commercial]=await db.query("SELECT id FROM CommercialLot WHERE code='TEST-COMMERCIAL'");
-  const order=fd({machineId:tvMachine.id,commercialLotId:commercial.id,destination:'PALLET',notes:'Four layers'});
+  const second=await db.product.create({data:{code:'DISPLAY-SECOND',name:'Second mould',unitsPerPackage:1}});
+  for(const p of [product,second])await db.execute('INSERT INTO ProductMachine (productId,machineId) VALUES (?,?)',[p.id,tvMachine.id]);
+  const order=fd({machineId:tvMachine.id,productId:product.id,destination:'PALLET',notes:'Four layers'});
   await saveDisplayOrder(order);
-  let data=await getProductionDisplayData(now);let card=data.machines.find(m=>m.id===tvMachine.id);
-  assert.equal(card.lotState,'PLANNED');assert.equal(card.destination,'PALLET');assert.match(card.lot,/TEST-COMMERCIAL \/ /);
-  const previousLot=card.lot;
-  data=await getProductionDisplayData(window.end);card=data.machines.find(m=>m.id===tvMachine.id);
-  assert.notEqual(card.lot,previousLot);assert.equal(card.lotState,'PLANNED');
-  const row=await db.production.create({data:{machineId:tvMachine.id,productId:product.id,operatorId:user.id,shiftCode:window.code,productionLot:load('lib/lot').formatProductionLot('8',window.code,window.start),status:'DRAFT',startedAt:now}});
-  card=(await getProductionDisplayData(now)).machines.find(m=>m.id===tvMachine.id);
-  assert.equal(card.lot,row.productionLot);assert.equal(card.lotState,'REGISTERED');
-  await db.execute('INSERT INTO MachineLotConfig (machineId,majorLetter,minorLetter,updatedById) VALUES (?,?,?,?)',[tvMachine.id,'B','A',user.id]);
-  card=(await getProductionDisplayData(now)).machines.find(m=>m.id===tvMachine.id);
-  assert.equal(card.lotState,'PLANNED');assert.notEqual(card.lot,row.productionLot);
-  await db.execute('DELETE FROM MachineLotConfig WHERE machineId=?',[tvMachine.id]);
-  await db.production.update({where:{id:row.id},data:{status:'CANCELLED'}});
-  card=(await getProductionDisplayData(now)).machines.find(m=>m.id===tvMachine.id);assert.equal(card.lotState,'PLANNED');
-  await db.execute("UPDATE CommercialLot SET status='CLOSED' WHERE id=?",[commercial.id]);
-  card=(await getProductionDisplayData(now)).machines.find(m=>m.id===tvMachine.id);assert.equal(card.destination,null);assert.equal(card.lot,null);assert.match(card.warning,/desatualizada/);
-  await assert.rejects(saveDisplayOrder(order),/lote comercial ativo/);
-  await db.execute("UPDATE CommercialLot SET status='ACTIVE' WHERE id=?",[commercial.id]);
+  const card=async(date=now)=>(await getProductionDisplayData(date)).machines.find(m=>m.id===tvMachine.id);
+  let view=await card();assert.equal(view.lotState,'PLANNED');assert.equal(view.destination,'PALLET');assert.match(view.lot,/^AA[ABC]/);
+  assert.notEqual((await card(window.end)).lot,view.lot);
+  const row=await db.production.create({data:{machineId:tvMachine.id,productId:product.id,operatorId:user.id,shiftCode:window.code,productionLot:view.lot,status:'DRAFT',startedAt:now}});
+  assert.equal((await card()).lotState,'REGISTERED');
+  order.set('productId',second.id);await saveDisplayOrder(order);
+  view=await card();assert.equal(view.lot,row.productionLot);assert.equal(view.lotState,'PLANNED');assert.match(view.product,/Second mould/);
+  await db.execute("INSERT INTO ProductLotConfig (productId,majorLetter,minorLetter,updatedById) VALUES (?,'B','A',?)",[second.id,user.id]);
+  view=await card();assert.match(view.lot,/^BA/);assert.equal(view.lotState,'PLANNED');
+  await db.product.update({where:{id:second.id},data:{active:false}});
+  view=await card();assert.equal(view.destination,null);assert.equal(view.lot,null);assert.match(view.warning,/desatualizada/);
+  await assert.rejects(saveDisplayOrder(order),/produto ativo/);
   order.set('destination','invalid');await assert.rejects(saveDisplayOrder(order),/Verifique/);
+  await db.production.update({where:{id:row.id},data:{status:'CANCELLED'}});
   await db.machine.update({where:{id:tvMachine.id},data:{status:'STOPPED'}});
-  assert.ok(!(await getProductionDisplayData(now)).machines.some(m=>m.id===tvMachine.id));
+  assert.equal(await card(),undefined);
   await db.machine.update({where:{id:tvMachine.id},data:{active:false}});
 });
 
@@ -830,26 +822,79 @@ test('checkup color boundaries and categorical oil readings retain historical te
   assert.equal(oilTemperatureLabel({oilTempStatus:'HOT',oilTempC:50}),'Quente');assert.match(oilTemperatureLabel({oilTempC:50}),/50 °C/);
 });
 
-test('commercial lots explain missing mixtures, permit any production manager and serialize new lot codes',async()=>{
-  const {submitCommercialLot,createCommercialLot,changeMachineLotConfig}=load('app/actions/lots');
-  const {validateCommercialLotMixture,generateProductionLot}=load('lib/lot');
-  const p1=await db.product.create({data:{code:'LOT-CREATE-A',name:'Lot A',unitsPerPackage:1}});
-  const p2=await db.product.create({data:{code:'LOT-CREATE-B',name:'Lot B',unitsPerPackage:1}});
-  const admin=user;user={...user,name:'Other manager',role:'PRODUCTION_MANAGER'};
+test('shift boundaries use A at midnight, B at 08:00 and C at 16:00',()=>{
+  const {getShiftWindow,getShiftWindowForDate}=load('lib/shift');const {formatProductionLot}=load('lib/lot');
+  for(const [hour,minute,expected] of [[0,0,'A'],[7,59,'A'],[8,0,'B'],[15,59,'B'],[16,0,'C'],[23,59,'C']]){
+    const date=new Date(2026,8,28,hour,minute);assert.equal(getShiftWindow(date).code,expected);
+    assert.equal(formatProductionLot('3',expected,date),'AA'+expected+'14026m3');
+  }
+  assert.equal(getShiftWindowForDate('2026-09-28','A').start.getHours(),0);
+  assert.equal(getShiftWindowForDate('2026-09-28','B').start.getHours(),8);
+  assert.equal(getShiftWindowForDate('2026-09-28','C').end.getDate(),29);
+});
+
+test('letters belong to products and managers can choose either or both with a reason and stale-write protection',async()=>{
+  const {saveProductLotConfig,editProducedLot}=load('app/actions/lots');const {generateProductionLot}=load('lib/lot');
+  const p=await db.product.create({data:{code:'LOT-CONFIG',name:'Config test',unitsPerPackage:1}});
+  const original=user;user={...user,role:'PRODUCTION_MANAGER'};
+  const change=(a,b,version,reason='Mixture / settings changed')=>saveProductLotConfig(fd({productId:p.id,majorLetter:a,minorLetter:b,expectedVersion:version,reason}));
   try {
-    const invalid=await submitCommercialLot(fd({productId:p1.id}));assert.equal(invalid.ok,false);assert.match(invalid.message,/100%/);
-    const inputs=[p1,p2].map(p=>fd({productId:p.id,rawMaterialId_0:material.id,percentage_0:100}));
-    await Promise.all(inputs.map(f=>createCommercialLot(f)));
-    const rows=await db.query('SELECT id,code FROM CommercialLot WHERE productId IN (?,?)',[p1.id,p2.id]);assert.equal(rows.length,2);assert.notEqual(rows[0].code,rows[1].code);
-    const duplicate=await submitCommercialLot(inputs[0]);assert.equal(duplicate.ok,false);assert.match(duplicate.message,/ativo/);
-    const [commercial]=await db.query('SELECT id FROM CommercialLot WHERE productId=?',[p1.id]);
-    assert.equal(await validateCommercialLotMixture(commercial.id,[{rawMaterialLotId:lot.id,percentage:100}]),true);
-    assert.equal(await validateCommercialLotMixture(commercial.id,[{rawMaterialLotId:lot.id,percentage:90}]),false);
-    const m=await db.machine.create({data:{code:'CONFIG-NEW',name:'Recreated'}});
-    assert.match(await generateProductionLot(m.code,'A',new Date()),/^AAA/);
-    await changeMachineLotConfig(fd({machineId:m.id,changeType:'MINOR',reason:'Setup'}));
-    const [config]=await db.query('SELECT * FROM MachineLotConfig WHERE machineId=?',[m.id]);assert.equal(config.majorLetter,'A');assert.equal(config.minorLetter,'B');
-  } finally {user=admin;}
+    assert.match(await generateProductionLot(p.id,'3','B',new Date(2026,8,28,8)),/^AAB14026m3$/);
+    assert.equal((await change('A','Z',0,'')).ok,false);
+    assert.equal((await change('A','Z',0)).ok,true);
+    assert.equal((await change('Q','Z',1)).ok,true);
+    assert.equal((await change('B','C',2)).ok,true);
+    assert.match(await generateProductionLot(p.id,'3','B',new Date(2026,8,28,8)),/^BCB14026m3$/);
+    assert.equal((await change('A','A',0)).ok,false);
+    const results=await Promise.all([change('C','D',3),change('D','E',3)]);assert.equal(results.filter(r=>r.ok).length,1);
+    assert.equal((await db.query('SELECT * FROM ProductLotHistory WHERE productId=?',[p.id])).length,4);
+    for(const role of ['AUDITOR','OPERATOR','LOGISTICS']){user={...original,role};await assert.rejects(change('X','Y',4),/permissão/);await assert.rejects(editProducedLot(new FormData()),/permissão/);}
+  } finally {user=original;}
+});
+
+test('two products on one machine share AA safely and existing-lot corrections preserve stock, dispatches and old labels',async()=>{
+  const {editProducedLot,saveProductLotConfig}=load('app/actions/lots');
+  const m=await db.machine.create({data:{code:'LOT3',name:'Two moulds',status:'RUNNING'}});
+  const p1=await db.product.create({data:{code:'LOT-A',name:'First mould',unitsPerPackage:1}});
+  const p2=await db.product.create({data:{code:'LOT-B',name:'Second mould',unitsPerPackage:1}});
+  const raw=await db.rawMaterialLot.create({data:{rawMaterialId:material.id,supplierLot:'LOT-CONSUMPTION',quantityInitial:100,quantityAvailable:100}});
+  const where=await db.storageLocation.create({data:{warehouseCode:'LOT',warehouseName:'Lots test',zoneType:'STACK',code:'L1',rowNumber:1,columnNumber:1}});
+  for(const p of [p1,p2])await db.execute('INSERT INTO ProductMachine (productId,machineId) VALUES (?,?)',[p.id,m.id]);
+  const form=p=>fd({intent:'finalize',machineId:m.id,productId:p.id,quantityProduced:4,initialWeightG:100,midWeightG:100,materialLotId_0:raw.id,percentage_0:100,quantityKg_0:1,leakStart:'CONFORMING',leakMid:'CONFORMING',dropStart:'CONFORMING',dropMid:'CONFORMING',[`storage_location_${where.id}`]:4});
+  const a=await saveProduction(form(p1)),b=await saveProduction(form(p2));
+  assert.equal(a.lot,b.lot);assert.match(a.lot,/^AA/);
+  assert.equal(await db.query('SELECT id FROM CommercialLot WHERE productId=?',[p1.id]).then(r=>r.length),0);
+  const order=await load('app/actions/sales-orders').createSalesOrder(fd({customerName:'Lot customer',orderDate:'2026-09-28',requestId:require('node:crypto').randomUUID(),items:JSON.stringify([{productId:p1.id,quantityUnits:1,unitPrice:'1'}])}));
+  const [item]=await db.query('SELECT id FROM SalesOrderItem WHERE salesOrderId=?',[order.id]);
+  const dispatch=await dispatchFromOrder(fd({salesOrderItemId:item.id,requestId:require('node:crypto').randomUUID(),invoiceNumber:'LOT-FT',dispatchDate:'2026-09-28',orderedQuantityUnits:1,[`stock_${a.id}_${where.id}`]:1}));
+  // Emulate an existing label from the former commercial/internal lot system.
+  await db.execute("INSERT INTO CommercialLot (code,productId,status,createdById) VALUES ('LEGACY-LOT',?,'ACTIVE',?)",[p1.id,user.id]);
+  const [legacy]=await db.query("SELECT id FROM CommercialLot WHERE code='LEGACY-LOT'");
+  await db.execute('INSERT INTO ProductionLotAssociation (productionId,commercialLotId,internalCode,labelCode) VALUES (?,?,?,?)',[a.id,legacy.id,a.lot,'LEGACY-LOT / '+a.lot]);
+  const edit=(code,count,first,second)=>editProducedLot(fd({productId:p1.id,expectedCode:code,expectedCount:count,majorLetter:first,minorLetter:second,reason:'Correct printed label'}));
+  assert.equal((await edit(a.lot,2,'Z','A')).ok,false);
+  assert.equal((await edit(a.lot,1,'Z','A')).ok,true);
+  const renamed='ZA'+a.lot.slice(2);
+  assert.equal((await db.production.findUnique({where:{id:a.id}})).productionLot,renamed);
+  assert.equal((await db.production.findUnique({where:{id:b.id}})).productionLot,b.lot);
+  assert.equal((await db.query('SELECT oldCode,oldLabel FROM ProductionLotAlias WHERE productionId=?',[a.id]))[0].oldLabel,'LEGACY-LOT / '+a.lot);
+  assert.equal((await db.query('SELECT labelCode FROM ProductionLotAssociation WHERE productionId=?',[a.id]))[0].labelCode,renamed);
+  assert.equal(Number((await db.query('SELECT quantityPackages FROM ProductionStorageBalance WHERE productionId=?',[a.id]))[0].quantityPackages),3);
+  assert.equal((await db.query('SELECT productionId FROM LotDispatchLine WHERE lotDispatchId=?',[dispatch.id]))[0].productionId,a.id);
+  assert.match(await load('lib/lot').generateProductionLot(p1.id,m.code,'A'),/^AA/);
+  assert.equal((await edit(a.lot,1,'Z','B')).ok,false);
+  const conflict=await db.production.create({data:{machineId:m.id,productId:p1.id,operatorId:user.id,shiftCode:'A',productionLot:'ZZ'+a.lot.slice(2),status:'DRAFT'}});
+  assert.equal((await edit(renamed,1,'Z','Z')).ok,false);
+  // Saving an existing production keeps the corrected code, even when future letters change.
+  assert.equal((await saveProductLotConfig(fd({productId:p1.id,majorLetter:'B',minorLetter:'B',expectedVersion:0,reason:'Next mixture'}))).ok,true);
+  const correction=form(p1);correction.set('productionId',a.id);correction.set('exceptionReason','OTHER');correction.set('exceptionNotes','Weight check');
+  await saveProduction(correction);assert.equal((await db.production.findUnique({where:{id:a.id}})).productionLot,renamed);
+  await db.production.update({where:{id:conflict.id},data:{status:'CANCELLED'}});
+  assert.equal((await edit(renamed,1,'Z','B')).ok,true);
+  assert.equal((await edit('ZB'+a.lot.slice(2),1,'C','D')).ok,true);
+  assert.equal((await db.query('SELECT * FROM ProductionLotAlias WHERE productionId=?',[a.id])).length,3);
+  const available=await getAvailableFinishedLots();assert.equal(available.find(r=>r.productionId===a.id).availablePackages,3);
+  await db.machine.update({where:{id:m.id},data:{status:'STOPPED',active:false}});
 });
 
 test('admin can manage storage and opening stock without affecting production counters or raw materials',async()=>{

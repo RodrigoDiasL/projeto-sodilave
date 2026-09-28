@@ -192,16 +192,6 @@ export async function updateRawMaterialLot(formData: FormData) {
   revalidatePath("/admin/raw-materials", "layout"); revalidatePath("/admin/raw-material-lots"); revalidatePath("/production");
 }
 
-export async function createLotRule(formData: FormData) {
-  await requireAdmin();
-  const data = { name: requireText(text(formData, "name"), "O nome"), prefix: requireText(text(formData, "prefix", 20), "O prefixo"), template: requireText(text(formData, "template", 200), "O modelo"), active: true };
-  await db.$transaction(async tx => {
-    await tx.query("SELECT id FROM ProductionLotRule ORDER BY id FOR UPDATE");
-    await tx.productionLotRule.updateMany({ data: { active: false } });
-    await tx.productionLotRule.create({ data });
-  });
-  revalidatePath("/admin/lot-rules");
-}
 
 export async function deleteMachine(formData: FormData) {
   await requireAdmin(); const id = positiveId(formData);

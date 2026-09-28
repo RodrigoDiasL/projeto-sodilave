@@ -59,3 +59,5 @@ input.condition-green,select.condition-green{background:#dcfce7!important;color:
 input.condition-yellow,select.condition-yellow{background:#fef9c3!important;color:#713f12!important;border-color:#eab308!important}
 input.condition-orange,select.condition-orange{background:#ffedd5!important;color:#7c2d12!important;border-color:#f97316!important}
 input.condition-red,select.condition-red{background:#fee2e2!important;color:#7f1d1d!important;border-color:#ef4444!important}
+
+.lot-code-preview{display:flex;flex-direction:column;gap:.5rem;padding:1rem;border:1px solid var(--border,#ccd4df);border-radius:12px;overflow-wrap:anywhere}.lot-code-preview strong{font-size:clamp(1.25rem,3vw,2rem);font-family:monospace;letter-spacing:.04em}.lot-code-preview mark{background:#dbeafe;color:#1e3a8a;border-radius:4px;padding:.15em}.lot-code-preview small{line-height:1.5}details>.form-stack{margin-top:1rem}
