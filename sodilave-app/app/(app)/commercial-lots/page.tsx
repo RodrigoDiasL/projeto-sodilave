@@ -18,7 +18,7 @@ export default async function Page({searchParams}:{searchParams:Promise<{product
   ]):[[],[],[]];
   const examples=machines.map(m=>({code:m.code,suffix:formatProductionLot(m.code,shift.code,shift.start).slice(2)}));
   return <><DashboardRefresh/><PageIntro title="Lotes por produto" subtitle="Escolha as duas letras do produto. A app completa o código do saco com o turno, data e máquina da produção."/>
-    <section className="panel form-stack"><h2>1. Escolher o produto</h2><form className="inline-form" method="get"><label>Produto<select name="productId" defaultValue={product?.id??""} required><option value="">Selecione o produto</option>{products.map(p=><option key={p.id} value={p.id}>{p.code} — {p.name}{p.active?"":" (inativo)"}</option>)}</select></label><button className="btn secondary">Abrir produto</button></form>
+    <section className="panel form-stack"><h2>1. Escolher o produto</h2><form className="inline-form" method="get"><label style={{minWidth:0,maxWidth:"100%"}}>Produto<select style={{minWidth:0,maxWidth:"100%"}} name="productId" defaultValue={product?.id??""} required><option value="">Selecione o produto</option>{products.map(p=><option key={p.id} value={p.id}>{p.code} — {p.name}{p.active?"":" (inativo)"}</option>)}</select></label><button className="btn secondary">Abrir produto</button></form>
       <p>As letras pertencem ao artigo. Dois produtos podem usar AA, mesmo quando são produzidos na mesma máquina. Uma troca de molde ou de produto não altera as letras automaticamente.</p>
       <p className="muted">Turno A: 00h–08h · Turno B: 08h–16h · Turno C: 16h–24h. A data é a da produção; dia da semana: 1 = segunda-feira, …, 6 = sábado, 0 = domingo.</p>
     </section>
