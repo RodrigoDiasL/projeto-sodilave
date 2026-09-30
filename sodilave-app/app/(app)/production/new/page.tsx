@@ -1,3 +1,5 @@
+import {MachineProductionTabs} from "@/components/MachineProductionTabs";
+import {getProductionMachinesForPeriod} from "@/lib/production-machines";
 import Link from "next/link";
 import { getPastProductionEnabled } from "@/lib/operation-settings";
 import { ProductionPeriodSelector } from "@/components/ProductionPeriodSelector";
@@ -6,7 +8,7 @@ import { PageIntro } from "@/components/PageIntro";
 import { ProductionForm } from "@/components/ProductionForm";
 import { SecondWorkerConfirmationPortals } from "@/components/SecondWorkerConfirmationPortals";
 import { getProductionFormData } from "@/lib/production-form-data";
-import { issueProductionPeriod } from "@/lib/production-period";
+import { issueProductionPeriod, readProductionPeriod } from "@/lib/production-period";
 import { getProductionEntryWindow, getShiftWindow, getShiftWindowForDate, type ShiftCode } from "@/lib/shift";
 import { db } from "@/lib/db";
 import { previousProductionToDefaults, productionToInitial } from "@/lib/production-initial";
@@ -14,7 +16,7 @@ import { requireOperationalUser } from "@/lib/auth";
 import { getActiveWeeklyStartup } from "@/lib/active-machines";
 import { getShiftPeerConfirmation } from "@/lib/second-worker-confirmation";
 
-export default async function NewProductionPage({ searchParams }: { searchParams: Promise<{ extraMachine?: string; date?: string; shift?: string; current?:string }> }) {
+export default async function NewProductionPage({ searchParams }: { searchParams: Promise<{ extraMachine?: string; date?: string; shift?: string; current?:string;period?:string;machine?:string }> }) {
   const user = await requireOperationalUser();
   const q = await searchParams;
 
@@ -38,8 +40,11 @@ export default async function NewProductionPage({ searchParams }: { searchParams
 
   }
 
-  const data = await getProductionFormData({ allActiveMachines: Boolean(historicalWindow), currentUserId: user.id });
-  const window = historicalWindow ?? (q.current==="1"?getShiftWindow():getProductionEntryWindow());
+  let pinnedWindow:ReturnType<typeof getShiftWindowForDate>|null=null;
+  if(q.period){try{pinnedWindow=readProductionPeriod(q.period,user.id);}catch{redirect("/production/new");}}
+  const window = historicalWindow ?? pinnedWindow ?? (q.current==="1"?getShiftWindow():getProductionEntryWindow());
+  const periodMachines=await getProductionMachinesForPeriod(window);
+  const data=await getProductionFormData({machineIds:periodMachines.map(m=>m.id),currentUserId:user.id});
   const productionPeriod=historicalWindow?undefined:issueProductionPeriod(user.id,window);
   const inGrace=!historicalWindow&&window.end<=new Date();
   const startup = historicalWindow ? null : await getActiveWeeklyStartup();
@@ -62,12 +67,16 @@ export default async function NewProductionPage({ searchParams }: { searchParams
     }) : Promise.resolve([]),
   ]);
 
+  const ids=records.map(r=>r.id);
+  const cavityRows=ids.length?await db.query<any[]>(`SELECT * FROM ProductionCavityData WHERE productionId IN (${ids.map(()=>"?").join(",")})`,ids):[];
+  const cavityTests=ids.length?await db.query<any[]>(`SELECT * FROM ProductionCavityTest WHERE productionId IN (${ids.map(()=>"?").join(",")}) AND cavity='RIGHT'`,ids):[];
+  const initialFor=(row:any)=>productionToInitial(row,cavityRows.find(c=>c.productionId===row.id),cavityTests.filter(c=>c.productionId===row.id));
   const extraMachineId = Number(q.extraMachine || 0);
   const activeLotIds = new Set(data.lots.map((lot) => lot.id));
   const historicalContext = historicalWindow && q.date
     ? { date: q.date, shiftCode: historicalWindow.code }
     : undefined;
-  const contextQuery = historicalContext ? `date=${encodeURIComponent(historicalContext.date)}&shift=${historicalContext.shiftCode}&` : q.current==="1"?"current=1&":"";
+  const contextQuery = historicalContext ? `date=${encodeURIComponent(historicalContext.date)}&shift=${historicalContext.shiftCode}&` : `period=${encodeURIComponent(productionPeriod!)}&`;
 
   return <>
     <PageIntro
@@ -85,8 +94,8 @@ export default async function NewProductionPage({ searchParams }: { searchParams
         : " Produtos diferentes podem ser registados na mesma máquina. Repetir o mesmo produto neste turno exige justificação."}
       {peerConfirmation && ` Colega de turno já confirmado: ${peerConfirmation.name}.`}
     </div>
-    <div className="machine-forms-stack">
-      {data.machines.map((machine) => {
+    <MachineProductionTabs key={window.start.toISOString()} initialMachineId={Number(q.extraMachine)||Number(q.machine)||undefined} items={data.machines.map((machine) => {
+        const afterSaveHref=`/production/new?${historicalWindow?`date=${q.date}&shift=${q.shift}&`:`period=${encodeURIComponent(productionPeriod!)}&`}machine=${machine.id}`;
         const machineRecords = records.filter((row) => row.machineId === machine.id);
         const primary = machineRecords[0];
         const extras = machineRecords.slice(1);
@@ -100,20 +109,19 @@ export default async function NewProductionPage({ searchParams }: { searchParams
         );
         const defaults = !primary && previousIsUsable && previous ? previousProductionToDefaults(previous) : undefined;
 
-        return <section key={`${machine.id}:${window.start.toISOString()}`} id={`machine-${machine.id}`} className="machine-production-section">
+        return {id:machine.id,code:machine.code,name:machine.name,status:machineRecords.length&&machineRecords.every(r=>r.status==="FINALIZED")?"Registada":primary?"Em aberto":"Por registar",content:<section key={`${machine.id}:${window.start.toISOString()}`} id={`machine-${machine.id}`} className="machine-production-section">
           {primary?.status === "FINALIZED"
             ? <div className="panel finalized-summary"><h2>Máquina {machine.code}</h2><p>{primary.product?.name} · Produção finalizada: <strong>{primary.productionLot}</strong>.</p><Link className="btn secondary" href={`/production/details/${primary.id}`}>Ver detalhes</Link></div>
-            : <ProductionForm productionPeriod={productionPeriod} draftScope={`${user.id}:${window.start.toISOString()}`} {...data} products={machineProducts} machines={[machine]} fixedMachine={machine} initial={primary ? productionToInitial(primary) : defaults as any} historicalContext={historicalContext} />}
+            : <ProductionForm afterSaveHref={afterSaveHref} productionPeriod={productionPeriod} draftScope={`${user.id}:${window.start.toISOString()}`} {...data} products={machineProducts} machines={[machine]} fixedMachine={machine} initial={primary ? initialFor(primary) : defaults as any} historicalContext={historicalContext} />}
           {!primary && previousIsUsable && <div className="notice muted">Produto e lotes de matéria-prima preenchidos com base no último registo finalizado do turno anterior. Confirme ou altere antes de gravar.</div>}
           {!primary && previous && !previousIsUsable && <div className="notice muted">O registo anterior não foi pré-preenchido porque o produto deixou de estar autorizado nesta máquina ou um dos lotes já não está disponível.</div>}
           {extras.map((row) => row.status === "DRAFT"
-            ? <ProductionForm productionPeriod={productionPeriod} key={row.id} draftScope={`${user.id}:${window.start.toISOString()}`} {...data} products={machineProducts} machines={[machine]} fixedMachine={machine} additional repeatProductIds={machineRecords.filter(r=>r.id!==row.id).map(r=>r.productId)} initial={productionToInitial(row)} historicalContext={historicalContext} />
+            ? <ProductionForm afterSaveHref={afterSaveHref} productionPeriod={productionPeriod} key={row.id} draftScope={`${user.id}:${window.start.toISOString()}`} {...data} products={machineProducts} machines={[machine]} fixedMachine={machine} additional repeatProductIds={machineRecords.filter(r=>r.id!==row.id).map(r=>r.productId)} initial={initialFor(row)} historicalContext={historicalContext} />
             : <div key={row.id} className="panel finalized-summary"><p>{row.product?.name} · Produção finalizada: <strong>{row.productionLot}</strong></p><Link className="btn secondary" href={`/production/details/${row.id}`}>Ver detalhes</Link></div>)}
-          {extraMachineId === machine.id && <ProductionForm productionPeriod={productionPeriod} draftScope={`${user.id}:${window.start.toISOString()}`} {...data} products={machineProducts} machines={[machine]} fixedMachine={machine} additional repeatProductIds={machineRecords.map(r=>r.productId)} historicalContext={historicalContext} />}
+          {extraMachineId === machine.id && <ProductionForm afterSaveHref={afterSaveHref} productionPeriod={productionPeriod} draftScope={`${user.id}:${window.start.toISOString()}`} {...data} products={machineProducts} machines={[machine]} fixedMachine={machine} additional repeatProductIds={machineRecords.map(r=>r.productId)} historicalContext={historicalContext} />}
           {<div className="additional-production-link"><Link className="btn secondary" href={`/production/new?${contextQuery}extraMachine=${machine.id}#machine-${machine.id}`}>+ Registar outro produto / outra produção nesta máquina</Link></div>}
-        </section>;
-      })}
-    </div>
+        </section>};
+      })}/>
     <SecondWorkerConfirmationPortals workers={data.workers} selector="form.machine-production-form" disabled={user.role === "ADMIN" || Boolean(peerConfirmation)} />
   </>;
 }

@@ -1,4 +1,5 @@
 "use server";
+import {assertPalletAvailable} from "@/lib/pallet-occupancy";
 
 import { createHash } from "node:crypto";
 import { validOrderDate, orderReference as referenceForOrder } from "@/lib/order-values";
@@ -288,6 +289,7 @@ export async function cancelLotDispatch(formData: FormData) {
       throw new Error("Esta saída antiga não tem um histórico completo das posições. É necessária uma reconciliação de stock antes de a anular.");
     }
     for (const movement of movements) {
+      await assertPalletAvailable(tx,Number(movement.fromLocationId),movement.productionId);
       await tx.execute(`INSERT INTO ProductionStorageBalance (productionId,locationId,quantityPackages)
         VALUES (?,?,?) ON DUPLICATE KEY UPDATE quantityPackages=quantityPackages+?`,
         [movement.productionId,movement.fromLocationId,movement.quantityPackages,movement.quantityPackages]);

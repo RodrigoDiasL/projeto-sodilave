@@ -1,3 +1,4 @@
+import {isDualCavityMachine} from "@/lib/machine-icon";
 import Link from "next/link";
 import { getPastProductionEnabled } from "@/lib/operation-settings";
 import { getShiftWindow, productionEditDeadline, formatLocalDateInput } from "@/lib/shift";
@@ -30,7 +31,7 @@ export default async function EditProductionPage({ params }: { params: Promise<{
 
   let cavityData: CavityDataRow | undefined;
   let cavityTests: CavityTestRow[] = [];
-  if (production.machine.code === "7") {
+  if (isDualCavityMachine(production.machine.code)) {
     const rows = await db.$queryRaw<CavityDataRow[]>`SELECT rightInitialWeightG, rightMidWeightG FROM ProductionCavityData WHERE productionId = ${production.id} LIMIT 1`;
     cavityData = rows[0];
     cavityTests = await db.$queryRaw<CavityTestRow[]>`SELECT type, moment, result FROM ProductionCavityTest WHERE productionId = ${production.id} AND cavity = 'RIGHT'`;

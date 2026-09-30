@@ -1,5 +1,8 @@
 "use server";
 
+import {UserInputError} from "@/lib/action-error";
+import {isCapMachine,isDualCavityMachine} from "@/lib/machine-icon";
+import {assertPalletAvailable} from "@/lib/pallet-occupancy";
 import { assertPastProductionEnabled } from "@/lib/operation-settings";
 import { RecordStatus, TestMoment, TestResult, TestType } from "@/lib/db-types";
 import { revalidatePath } from "next/cache";
@@ -18,12 +21,13 @@ const validResults: TestResult[] = [TestResult.CONFORMING, TestResult.NON_CONFOR
 const finiteInRange = (value: number | null, min: number, max: number, label: string, integer = false) => {
   if (value === null) return;
   if (!Number.isFinite(value) || value < min || value > max || (integer && !Number.isInteger(value))) {
-    throw new Error(`${label} tem um valor inválido.`);
+    throw new UserInputError(`${label} tem um valor inválido.`);
   }
 };
 
 type ExistingProduction = {
   recordOrigin?: string;
+  capPackaging?:string|null;
   id: number;
   status: RecordStatus;
   operatorId: number;
@@ -48,7 +52,7 @@ function parseTests(formData: FormData, inputs: TestInput[], required: boolean) 
     if (validResults.includes(value as TestResult)) {
       rows.push({ type: input.type, moment: input.moment, result: value as TestResult });
     } else if (required) {
-      throw new Error("Preencha todos os testes antes de finalizar.");
+      throw new UserInputError("Preencha todos os testes antes de finalizar.");
     }
   }
   return rows;
@@ -67,7 +71,7 @@ function parseRightTests(formData: FormData, required: boolean) {
     if (validResults.includes(value as TestResult)) {
       rows.push({ type: input.type, moment: input.moment, result: value as TestResult });
     } else if (required) {
-      throw new Error("Preencha todos os testes das duas cavidades antes de finalizar.");
+      throw new UserInputError("Preencha todos os testes das duas cavidades antes de finalizar.");
     }
   }
   return rows;
@@ -78,43 +82,43 @@ export async function saveProduction(formData: FormData) {
   const now=new Date();
   const intent = String(formData.get("intent") || "draft");
   const finalize = intent === "finalize";
-  if (!["draft", "finalize"].includes(intent)) throw new Error("Ação inválida.");
+  if (!["draft", "finalize"].includes(intent)) throw new UserInputError("Ação inválida.");
 
   const productionId = asNum(formData.get("productionId"));
   if (productionId !== null && (!Number.isInteger(productionId) || productionId <= 0)) {
-    throw new Error("Identificador da produção inválido.");
+    throw new UserInputError("Identificador da produção inválido.");
   }
 
   const historicalDate = String(formData.get("historicalDate") || "").trim();
   const historicalShiftRaw = String(formData.get("historicalShift") || "").trim();
   let historicalWindow: ReturnType<typeof getShiftWindowForDate> | null = null;
   if (historicalDate || historicalShiftRaw) {
-    if (!historicalDate || !["A", "B", "C"].includes(historicalShiftRaw)) throw new Error("Selecione uma data e um turno válidos.");
+    if (!historicalDate || !["A", "B", "C"].includes(historicalShiftRaw)) throw new UserInputError("Selecione uma data e um turno válidos.");
     historicalWindow = getShiftWindowForDate(historicalDate, historicalShiftRaw as ShiftCode);
-    if (historicalWindow.end > new Date()) throw new Error("Selecione um turno já terminado para registar produção passada.");
+    if (historicalWindow.end > new Date()) throw new UserInputError("Selecione um turno já terminado para registar produção passada.");
   }
 
   let existing: ExistingProduction | null = null;
   if (productionId) {
     existing = await db.production.findUnique({
       where: { id: productionId },
-      select: { id: true, recordOrigin: true, status: true, operatorId: true, productionLot: true, startedAt: true, shiftCode: true, productId: true, machineId: true, quantityProduced: true, unitsPerPackageSnapshot: true, productionUnitSnapshot: true },
+      select: { id: true, capPackaging:true, recordOrigin: true, status: true, operatorId: true, productionLot: true, startedAt: true, shiftCode: true, productId: true, machineId: true, quantityProduced: true, unitsPerPackageSnapshot: true, productionUnitSnapshot: true },
     });
-    if (existing?.recordOrigin === "HISTORICAL_IMPORT") throw new Error("Este registo pertence à importação histórica e não pode movimentar stock atual. Consulte-o em Importar histórico.");
-    if (existing?.recordOrigin === "INITIAL_STOCK") throw new Error("Edite o stock inicial no Mapa de Stock.");
-    if (!existing) throw new Error("A produção em aberto já não existe.");
-    if (existing.status === RecordStatus.CANCELLED) throw new Error("Esta produção foi cancelada.");
+    if (existing?.recordOrigin === "HISTORICAL_IMPORT") throw new UserInputError("Este registo pertence à importação histórica e não pode movimentar stock atual. Consulte-o em Importar histórico.");
+    if (existing?.recordOrigin === "INITIAL_STOCK") throw new UserInputError("Edite o stock inicial no Mapa de Stock.");
+    if (!existing) throw new UserInputError("A produção em aberto já não existe.");
+    if (existing.status === RecordStatus.CANCELLED) throw new UserInputError("Esta produção foi cancelada.");
     if (existing.status === RecordStatus.FINALIZED && !finalize) {
-      throw new Error("Uma produção finalizada só pode ser corrigida através de ‘Finalizar e registar produção’.");
+      throw new UserInputError("Uma produção finalizada só pode ser corrigida através de ‘Finalizar e registar produção’.");
     }
     if (existing.status === RecordStatus.FINALIZED && user.role !== "ADMIN") {
       const window = getShiftWindow(existing.startedAt);
-      if (now > productionEditDeadline(existing.startedAt)) throw new Error("A tolerância de 30 minutos para corrigir esta produção terminou.");
+      if (now > productionEditDeadline(existing.startedAt)) throw new UserInputError("A tolerância de 30 minutos para corrigir esta produção terminou.");
     }
   }
 
   if (existing && historicalWindow && getShiftWindow(existing.startedAt).start.getTime() !== historicalWindow.start.getTime()) {
-    throw new Error("A data e o turno de uma produção já guardada não podem ser alterados.");
+    throw new UserInputError("A data e o turno de uma produção já guardada não podem ser alterados.");
   }
 
   if (historicalWindow && !existing) await assertPastProductionEnabled();
@@ -127,19 +131,31 @@ export async function saveProduction(formData: FormData) {
   const machineId = asNum(formData.get("machineId"));
   const productId = asNum(formData.get("productId"));
   if (machineId === null || productId === null) {
-    throw new Error("Para guardar o rascunho, selecione pelo menos a máquina e o produto.");
+    throw new UserInputError("Para guardar o rascunho, selecione pelo menos a máquina e o produto.");
   }
   if (!Number.isInteger(machineId) || machineId <= 0 || !Number.isInteger(productId) || productId <= 0) {
-    throw new Error("Máquina e produto têm valores inválidos.");
+    throw new UserInputError("Máquina e produto têm valores inválidos.");
   }
 
-  if (existing && machineId !== existing.machineId) throw new Error("A máquina de uma produção já guardada não pode ser alterada.");
+  if (existing && machineId !== existing.machineId) throw new UserInputError("A máquina de uma produção já guardada não pode ser alterada.");
 
+  const machine=await db.machine.findFirst({where:{id:machineId,...(!historicalWindow&&!existing?{active:true}:{})}});
+  if(!machine)throw new UserInputError("A máquina selecionada não está disponível.");
+  const isCap=isCapMachine(machine.code),isMachine7=isDualCavityMachine(machine.code);
+  const producedKg=isCap?asNum(formData.get("producedKg")):null;
+  const productionColor=isCap?String(formData.get("productionColor")??"").trim().slice(0,80):null;
+  const capPackaging=isCap?String(formData.get("capPackaging")??""):null;
+  const capUnits=isCap?asNum(formData.get("capUnitsPerPackage")):null;
+  finiteInRange(producedKg,0,999999,"Os kg de tampas produzidas");
+  finiteInRange(capUnits,1,10000000,"As tampas por caixa/caixote",true);
+  if(isCap&&capPackaging&&!["BOX","BIN"].includes(capPackaging))throw new UserInputError("Selecione caixas ou caixotes.");
+  if(isCap&&finalize&&(producedKg===null||!productionColor||!capPackaging||capUnits===null))throw new UserInputError("Indique os kg produzidos, a cor, o tipo de embalagem e as tampas por caixa/caixote.");
+  if(isCap&&existing?.status==="FINALIZED"&&(capUnits!==existing.unitsPerPackageSnapshot||capPackaging!==existing.productionUnitSnapshot))throw new UserInputError("O acondicionamento e as tampas por embalagem de uma produção finalizada não podem mudar porque já estão ligados ao stock. Use a correção administrativa para rever o registo.");
   const exceptionReason = String(formData.get("exceptionReason") || "").trim();
   const exceptionNotes = String(formData.get("exceptionNotes") || "").trim().slice(0, 500);
   const allowedExceptionReasons = ["MOULD_CHANGE", "RAW_MATERIAL_CHANGE", "OTHER"];
-  if (exceptionReason && !allowedExceptionReasons.includes(exceptionReason)) throw new Error("O motivo da produção adicional é inválido.");
-  if (exceptionReason === "OTHER" && finalize && !exceptionNotes) throw new Error("Explique o motivo da produção adicional.");
+  if (exceptionReason && !allowedExceptionReasons.includes(exceptionReason)) throw new UserInputError("O motivo da produção adicional é inválido.");
+  if (exceptionReason === "OTHER" && finalize && !exceptionNotes) throw new UserInputError("Explique o motivo da produção adicional.");
 
   const initialWeightG = asNum(formData.get("initialWeightG"));
   const midWeightG = asNum(formData.get("midWeightG"));
@@ -153,7 +169,7 @@ export async function saveProduction(formData: FormData) {
     const locationId = Number(key.slice("storage_location_".length));
     const quantityPackages = Number(rawValue || 0);
     if (!Number.isInteger(locationId) || locationId <= 0) continue;
-    if (!Number.isInteger(quantityPackages) || quantityPackages < 0) throw new Error("Uma das quantidades de armazenamento é inválida.");
+    if (!Number.isInteger(quantityPackages) || quantityPackages < 0) throw new UserInputError("Uma das quantidades de armazenamento é inválida.");
     if (quantityPackages > 0) storageAllocations.set(locationId, quantityPackages);
   }
   finiteInRange(initialWeightG, 1, 100000, "O peso inicial da cavidade esquerda", true);
@@ -169,7 +185,7 @@ export async function saveProduction(formData: FormData) {
     const quantityKg = asNum(formData.get(`quantityKg_${index}`));
     if (!rawMaterialLotId) continue;
     if (!Number.isInteger(rawMaterialLotId) || rawMaterialLotId <= 0) {
-      if (finalize) throw new Error("Um dos lotes selecionados é inválido.");
+      if (finalize) throw new UserInputError("Um dos lotes selecionados é inválido.");
       continue;
     }
     if (percentage !== null) finiteInRange(percentage, 0, 100, "A percentagem");
@@ -178,33 +194,33 @@ export async function saveProduction(formData: FormData) {
   }
 
   if (new Set(materials.map((row) => row.rawMaterialLotId)).size !== materials.length) {
-    throw new Error("O mesmo lote de matéria-prima não pode ser selecionado mais do que uma vez.");
+    throw new UserInputError("O mesmo lote de matéria-prima não pode ser selecionado mais do que uma vez.");
   }
 
   if (finalize) {
-    if (materials.length === 0) throw new Error("Adicione pelo menos um lote de matéria-prima.");
-    if (materials.some((row) => row.percentage === null || row.percentage < 5 || row.percentage % 5 !== 0)) {
-      throw new Error("As percentagens devem variar de 5% em 5%.");
+    if (materials.length === 0) throw new UserInputError("Adicione pelo menos um lote de matéria-prima.");
+    if (materials.some((row) => row.percentage === null || row.percentage < (isCap?0.01:5) || (!isCap&&row.percentage % 5 !== 0))) {
+      throw new UserInputError(isCap?"Indique percentagens positivas para as matérias-primas e masterbatches.":"As percentagens devem variar de 5% em 5%.");
     }
-    if (materials.reduce((sum, row) => sum + (row.percentage ?? 0), 0) !== 100) {
-      throw new Error("A soma das percentagens da mistura tem de ser 100%.");
+    if (Math.abs(materials.reduce((sum, row) => sum + (row.percentage ?? 0), 0)-100)>0.001) {
+      throw new UserInputError("A soma das percentagens da mistura tem de ser 100%.");
     }
     if (materials.some((row) => row.quantityKg === null || row.quantityKg <= 0)) {
-      throw new Error("Introduza a quantidade total de matéria-prima para calcular as quantidades da mistura.");
+      throw new UserInputError("Introduza a quantidade total de matéria-prima para calcular as quantidades da mistura.");
     }
-    if (initialWeightG === null || midWeightG === null) throw new Error("Preencha os pesos do início e do meio do turno.");
-    if (quantityProduced === null) throw new Error("Introduza a quantidade produzida.");
+    if (!isCap&&(initialWeightG === null || midWeightG === null)) throw new UserInputError("Preencha os pesos do início e do meio do turno.");
+    if (quantityProduced === null) throw new UserInputError("Introduza a quantidade produzida.");
   }
 
   const firstFinalization = finalize && existing?.status !== RecordStatus.FINALIZED;
   if (storageUnlocated && !historicalWindow) {
-    throw new Error("A opção sem localização só pode ser usada em registos de produção passada.");
+    throw new UserInputError("A opção sem localização só pode ser usada em registos de produção passada.");
   }
   if (firstFinalization && quantityProduced !== null && quantityProduced > 0 && !storageUnlocated) {
     const allocatedPackages = [...storageAllocations.values()].reduce((sum, value) => sum + value, 0);
-    if (!storageAllocations.size) throw new Error("Indique no mapa onde a produção ficou armazenada.");
+    if (!storageAllocations.size) throw new UserInputError("Indique no mapa onde a produção ficou armazenada.");
     if (allocatedPackages !== quantityProduced) {
-      throw new Error(`A localização do stock totaliza ${allocatedPackages} embalagem(ns), mas a produção tem ${quantityProduced}.`);
+      throw new UserInputError(`A localização do stock totaliza ${allocatedPackages} embalagem(ns), mas a produção tem ${quantityProduced}.`);
     }
   }
 
@@ -212,33 +228,31 @@ export async function saveProduction(formData: FormData) {
   const storageLocationRows = uniqueStorageLocationIds.length
     ? await db.storageLocation.findMany({ where: { id: { in: uniqueStorageLocationIds }, active: true } })
     : [];
-  if (storageLocationRows.length !== uniqueStorageLocationIds.length) throw new Error("Uma das posições de armazenamento selecionadas já não está disponível.");
+  if (storageLocationRows.length !== uniqueStorageLocationIds.length) throw new UserInputError("Uma das posições de armazenamento selecionadas já não está disponível.");
   if (new Set(storageLocationRows.map((row:any) => row.zoneType)).size > 1) {
-    throw new Error("A mesma produção deve ser armazenada apenas em estibas/montes ou apenas em paletes.");
+    throw new UserInputError("A mesma produção deve ser armazenada apenas em estibas/montes ou apenas em paletes.");
   }
 
   const uniqueLotIds = [...new Set(materials.map((row) => row.rawMaterialLotId))];
   const lotRows = uniqueLotIds.length ? await db.rawMaterialLot.findMany({ where: { id: { in: uniqueLotIds } } }) : [];
-  if (lotRows.length !== uniqueLotIds.length) throw new Error("Um dos lotes selecionados já não existe.");
+  if (lotRows.length !== uniqueLotIds.length) throw new UserInputError("Um dos lotes selecionados já não existe.");
 
-  const machine = await db.machine.findFirst({ where: { id: machineId, active: true } });
   const product = await db.product.findFirst({ where: { id: productId, active: true } });
-  if (!machine || !product) throw new Error("A máquina ou o produto selecionado já não está ativo.");
+  if (!machine || !product) throw new UserInputError("A máquina ou o produto selecionado já não está ativo.");
   if (existing?.status === RecordStatus.FINALIZED && productId !== existing.productId) {
-    throw new Error("O artigo de uma produção já finalizada não pode ser alterado porque já está ligado ao stock físico e à rastreabilidade.");
+    throw new UserInputError("O artigo de uma produção já finalizada não pode ser alterado porque já está ligado ao stock físico e à rastreabilidade.");
   }
 
   const productMachine = await db.$queryRaw<{ ok: number }[]>`
     SELECT 1 AS ok FROM ProductMachine WHERE productId=${productId} AND machineId=${machineId} LIMIT 1
   `;
-  if (!productMachine.length) throw new Error("O produto selecionado não está autorizado para esta máquina.");
+  if (!productMachine.length) throw new UserInputError("O produto selecionado não está autorizado para esta máquina.");
 
-  const isMachine7 = machine.code === "7";
   if (finalize && isMachine7 && (rightInitialWeightG === null || rightMidWeightG === null)) {
-    throw new Error("Preencha os pesos das cavidades esquerda e direita da máquina 7.");
+    throw new UserInputError("Preencha os pesos das cavidades esquerda e direita da máquina 7.");
   }
-  if (finalize && (!product.unitsPerPackage || product.unitsPerPackage <= 0)) {
-    throw new Error("Defina as unidades por embalagem deste produto antes de finalizar a produção.");
+  if (finalize && !isCap && (!product.unitsPerPackage || product.unitsPerPackage <= 0)) {
+    throw new UserInputError("Defina as unidades por embalagem deste produto antes de finalizar a produção.");
   }
 
   if (!historicalWindow && !lateClosure && (!existing || (user.role !== "ADMIN" && existing.status !== RecordStatus.FINALIZED))) {
@@ -254,13 +268,13 @@ export async function saveProduction(formData: FormData) {
     },
   });
   if (historicalWindow && otherProductionsInShift > 0) {
-    throw new Error("Já existe uma produção deste produto nesta máquina para a data e turno selecionados. O registo de produção passada não pode criar duplicações.");
+    throw new UserInputError("Já existe uma produção deste produto nesta máquina para a data e turno selecionados. O registo de produção passada não pode criar duplicações.");
   }
   if (finalize && otherProductionsInShift > 0 && !exceptionReason) {
-    throw new Error("Já existe uma produção deste produto nesta máquina neste turno. Indique o motivo da produção adicional.");
+    throw new UserInputError("Já existe uma produção deste produto nesta máquina neste turno. Indique o motivo da produção adicional.");
   }
 
-  const leftTests = parseTests(formData, [
+  const leftTests = isCap ? [] : parseTests(formData, [
     { type: TestType.LEAK, moment: TestMoment.START, key: "leakStart" },
     { type: TestType.LEAK, moment: TestMoment.MID, key: "leakMid" },
     { type: TestType.DROP, moment: TestMoment.START, key: "dropStart" },
@@ -279,17 +293,17 @@ export async function saveProduction(formData: FormData) {
     if (!historicalWindow && !lateClosure && (!existing || (user.role !== "ADMIN" && existing.status !== RecordStatus.FINALIZED))) {
       const activeStartup = await tx.weeklyStartup.findFirst({ where: { status: RecordStatus.FINALIZED, shutdown: null } });
       const currentMachine = await tx.machine.findFirst({ where: { id: machineId, active: true, status: "RUNNING" } });
-      if (!activeStartup || !currentMachine) throw new Error("A máquina ou o ciclo semanal já não estão em funcionamento. Atualize a página.");
+      if (!activeStartup || !currentMachine) throw new UserInputError("A máquina ou o ciclo semanal já não estão em funcionamento. Atualize a página.");
     }
     if(uniqueStorageLocationIds.length){
       const positions=await tx.query<any[]>(`SELECT id FROM StorageLocation WHERE id IN (${uniqueStorageLocationIds.map(()=>"?").join(",")}) AND active=1 ORDER BY id FOR UPDATE`,uniqueStorageLocationIds);
-      if(positions.length!==uniqueStorageLocationIds.length)throw new Error("Uma posição de stock foi removida. Atualize o formulário.");
+      if(positions.length!==uniqueStorageLocationIds.length)throw new UserInputError("Uma posição de stock foi removida. Atualize o formulário.");
     }
     const simultaneous = await tx.production.count({ where: {
       recordOrigin:{in:["PRODUCTION","HISTORICAL_IMPORT"]}, machineId, productId, startedAt: { gte: recordWindow.start, lt: recordWindow.end }, status: { not: RecordStatus.CANCELLED },
       ...(productionId ? { id: { not: productionId } } : {}),
     } });
-    if (simultaneous > 0 && !exceptionReason) throw new Error("Já existe uma produção deste produto nesta máquina neste turno. Atualize a página ou indique o motivo de uma produção adicional.");
+    if (simultaneous > 0 && !exceptionReason) throw new UserInputError("Já existe uma produção deste produto nesta máquina neste turno. Atualize a página ou indique o motivo de uma produção adicional.");
     if (historicalWindow) {
       // Serialize past-shift inserts and the administrator's permission toggle.
       if(!existing)await assertPastProductionEnabled(tx, true);
@@ -297,21 +311,23 @@ export async function saveProduction(formData: FormData) {
         recordOrigin:{in:["PRODUCTION","HISTORICAL_IMPORT"]}, machineId, productId, startedAt: { gte: recordWindow.start, lt: recordWindow.end },
         status: { not: RecordStatus.CANCELLED }, ...(productionId ? { id: { not: productionId } } : {}),
       } });
-      if (duplicate) throw new Error("Já existe uma produção para este produto, máquina, dia e turno.");
+      if (duplicate) throw new UserInputError("Já existe uma produção para este produto, máquina, dia e turno.");
     }
     let lockedExisting: ExistingProduction | null = existing;
     if (productionId) {
       const locked = await tx.query<ExistingProduction[]>(
-        "SELECT id, status, operatorId, productionLot, startedAt, shiftCode, productId, machineId, quantityProduced, unitsPerPackageSnapshot, productionUnitSnapshot FROM Production WHERE id=? FOR UPDATE",
+        "SELECT id, status, operatorId, productionLot, startedAt, shiftCode, productId, machineId, quantityProduced, unitsPerPackageSnapshot, productionUnitSnapshot,capPackaging FROM Production WHERE id=? FOR UPDATE",
         [productionId],
       );
       lockedExisting = locked[0] ?? null;
-      if (!lockedExisting) throw new Error("A produção já não existe.");
-      if (lockedExisting.status === RecordStatus.CANCELLED) throw new Error("Esta produção foi cancelada.");
-      if (lockedExisting.status !== existing?.status) throw new Error("O estado da produção foi alterado por outro utilizador. Atualize a página antes de continuar.");
+      if (!lockedExisting) throw new UserInputError("A produção já não existe.");
+      if (lockedExisting.status === RecordStatus.CANCELLED) throw new UserInputError("Esta produção foi cancelada.");
+      if (lockedExisting.status !== existing?.status) throw new UserInputError("O estado da produção foi alterado por outro utilizador. Atualize a página antes de continuar.");
     }
 
-    if(lockedExisting?.status===RecordStatus.FINALIZED && lockedExisting.productId!==productId)throw new Error("Uma produção finalizada não pode mudar de produto. Corrija o lote no ecrã Lotes por produto.");
+    if(lockedExisting?.status===RecordStatus.FINALIZED && lockedExisting.productId!==productId)throw new UserInputError("Uma produção finalizada não pode mudar de produto. Corrija o lote no ecrã Lotes por produto.");
+    if(isCap&&lockedExisting?.status==="FINALIZED"&&(capUnits!==lockedExisting.unitsPerPackageSnapshot||capPackaging!==lockedExisting.productionUnitSnapshot))throw new UserInputError("O acondicionamento deste registo mudou. Atualize a página.");
+    if(isCap&&finalize&&Number(quantityProduced)>0&&!(Number(producedKg)>0))throw new UserInputError("Indique os kg de tampas produzidas.");
     const internalCode=lockedExisting && lockedExisting.productId===productId ? lockedExisting.productionLot : await generateProductionLot(productId,machine.code,shift.code,recordWindow.start,tx);
     if (lockedExisting?.status === RecordStatus.FINALIZED && quantityProduced !== null) {
       const [storageRows, dispatchRows] = await Promise.all([
@@ -330,11 +346,11 @@ export async function saveProduction(formData: FormData) {
       const snapshotUnits = Number(lockedExisting.unitsPerPackageSnapshot ?? product.unitsPerPackage ?? 0);
       const dispatchedUnits = Number(dispatchRows[0]?.total ?? 0);
       if (snapshotUnits <= 0 || dispatchedUnits % snapshotUnits !== 0) {
-        throw new Error("A quantidade histórica deste lote não permite uma correção segura da produção.");
+        throw new UserInputError("A quantidade histórica deste lote não permite uma correção segura da produção.");
       }
       const accountedPackages = Number(storageRows[0]?.total ?? 0) + dispatchedUnits / snapshotUnits;
       if (quantityProduced < accountedPackages) {
-        throw new Error(`A produção não pode ser reduzida para ${quantityProduced}: já existem ${accountedPackages} embalagem(ns) localizadas ou expedidas.`);
+        throw new UserInputError(`A produção não pode ser reduzida para ${quantityProduced}: já existem ${accountedPackages} embalagem(ns) localizadas ou expedidas.`);
       }
     }
     if (
@@ -343,7 +359,7 @@ export async function saveProduction(formData: FormData) {
       quantityProduced !== null &&
       Number(lockedExisting.quantityProduced ?? 0) !== quantityProduced
     ) {
-      throw new Error("Depois de finalizada, a quantidade produzida só pode ser corrigida por um administrador porque está ligada ao mapa de stock.");
+      throw new UserInputError("Depois de finalizada, a quantidade produzida só pode ser corrigida por um administrador porque está ligada ao mapa de stock.");
     }
 
     const previousStock = lockedExisting ? await getRecordedProductionStock(tx, lockedExisting.id) : [];
@@ -357,11 +373,12 @@ export async function saveProduction(formData: FormData) {
       productionLot:internalCode,
       shiftCode: shift.code,
       status,
-      initialWeightG,
-      midWeightG,
+      initialWeightG:isCap?(existing?undefined:null):initialWeightG,
+      midWeightG:isCap?(existing?undefined:null):midWeightG,
+      producedKg,productionColor,capPackaging,
       quantityProduced,
-      unitsPerPackageSnapshot: existing?.status === RecordStatus.FINALIZED ? undefined : (product.unitsPerPackage ?? null),
-      productionUnitSnapshot: existing?.status === RecordStatus.FINALIZED ? undefined : (product.productionUnit ?? "BAG"),
+      unitsPerPackageSnapshot: existing?.status === RecordStatus.FINALIZED ? undefined : (isCap?capUnits:(product.unitsPerPackage ?? null)),
+      productionUnitSnapshot: existing?.status === RecordStatus.FINALIZED ? undefined : (isCap?capPackaging:(product.productionUnit ?? "BAG")),
       observations: String(formData.get("observations") || "").trim().slice(0, 500) || null,
       exceptionReason: otherProductionsInShift > 0 ? (exceptionReason || null) : null,
       exceptionNotes: otherProductionsInShift > 0 ? (exceptionNotes || null) : null,
@@ -379,6 +396,7 @@ export async function saveProduction(formData: FormData) {
     if (becameFinalized && !storageUnlocated && quantityProduced && quantityProduced > 0) {
       await tx.productionStorageBalance.deleteMany({ where: { productionId: saved.id } });
       for (const [locationId, quantityPackages] of storageAllocations) {
+        await assertPalletAvailable(tx,locationId,saved.id);
         await tx.productionStorageBalance.create({
           data: { productionId: saved.id, locationId, quantityPackages },
         });
@@ -407,7 +425,7 @@ export async function saveProduction(formData: FormData) {
       });
     }
 
-    await tx.qualityTest.deleteMany({ where: { productionId: saved.id } });
+    if(!isCap)await tx.qualityTest.deleteMany({ where: { productionId: saved.id } });
     if (leftTests.length) {
       await tx.qualityTest.createMany({
         data: leftTests.map((row) => ({ productionId: saved.id, ...row })),
@@ -449,6 +467,7 @@ export async function saveProduction(formData: FormData) {
         entityId: String(saved.id),
         details: {
           status,
+          producedKg,productionColor,capPackaging,capUnits,
           internalCode,
           secondWorkerId: secondWorker?.id ?? null,
           secondWorkerName: secondWorker?.name ?? null,
@@ -472,9 +491,14 @@ export async function saveProduction(formData: FormData) {
   revalidatePath("/lot-dispatch");
   revalidatePath("/traceability");
   return {
-    ok: true,
+    ok: true as const,
     id: production.id,
     lot: production.productionLot,
     finalized: finalize,
   };
+}
+
+export async function submitProduction(fd:FormData){
+  await requireOperationalUser();
+  try{return await saveProduction(fd);}catch(error){if(error instanceof UserInputError)return {ok:false as const,message:error.message};const reference=crypto.randomUUID();console.error("[production]",reference,error);return {ok:false as const,message:`Não foi possível guardar. Confirme o estado antes de repetir. Referência: ${reference}`};}
 }

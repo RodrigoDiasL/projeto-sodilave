@@ -45,7 +45,7 @@ export default async function ProductionPage() {
 
     <section className="panel" id="finalizadas">
       <h2>Produções finalizadas recentemente</h2>
-      {finalized.length === 0 ? <p className="empty-state">Ainda não existem produções finalizadas.</p> : <div className="responsive-table"><table><thead><tr><th>Data</th><th>Lote</th><th>Máquina</th><th>Produto</th><th>Quantidade</th><th>Estado</th><th>Ação</th></tr></thead><tbody>{finalized.map((row) => <tr key={row.id}><td>{(row.finalizedAt ?? row.updatedAt).toLocaleString("pt-PT")}</td><td>{row.productionLot}</td><td>{row.machine.code}</td><td>{row.product.name}</td><td>{row.quantityProduced ?? "—"}</td><td>{statusLabel(row.status)}</td><td><Link className="btn secondary" href={`/production/details/${row.id}`}>Ver detalhes</Link></td></tr>)}</tbody></table></div>}
+      {finalized.length === 0 ? <p className="empty-state">Ainda não existem produções finalizadas.</p> : <div className="responsive-table"><table><thead><tr><th>Data</th><th>Lote</th><th>Máquina</th><th>Produto</th><th>Quantidade</th><th>Estado</th><th>Ação</th></tr></thead><tbody>{finalized.map((row) => <tr key={row.id}><td>{(row.finalizedAt ?? row.updatedAt).toLocaleString("pt-PT")}</td><td>{row.productionLot}</td><td>{row.machine.code}</td><td>{row.product.name}</td><td>{row.capPackaging?`${Number(row.producedKg).toLocaleString("pt-PT")} kg · ${row.quantityProduced} ${row.capPackaging==="BOX"?"caixas":"caixotes"}`:row.quantityProduced ?? "—"}</td><td>{statusLabel(row.status)}</td><td><Link className="btn secondary" href={`/production/details/${row.id}`}>Ver detalhes</Link></td></tr>)}</tbody></table></div>}
     </section>
   </>;
 }

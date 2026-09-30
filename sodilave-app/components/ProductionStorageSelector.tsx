@@ -91,18 +91,20 @@ export function ProductionStorageSelector({
         </label>
       </div>
 
-      <div className="production-storage-map" style={{gridTemplateColumns:"repeat(7,minmax(0,1fr))"}}>
+      <div className="production-storage-map" style={{gridTemplateColumns:`repeat(${Math.max(1,...visible.map(l=>l.columnNumber))},minmax(60px,1fr))`}}>
         {visible.map((location) => {
           const active = allocations[location.id] !== undefined;
           return <button
             type="button"
             key={location.id}
             className={`storage-map-cell selector-cell${active ? " selected" : ""}`}
+            style={{gridColumn:location.columnNumber,gridRow:location.rowNumber}}
+            disabled={location.zoneType==="PALLET"&&location.occupied}
             onClick={() => selectLocation(location.id)}
             aria-pressed={active}
           >
             <strong>{location.code}</strong>
-            <small>{active ? `${allocations[location.id] ?? 0} ${unitLabel(productionUnit, allocations[location.id] ?? 0)}` : "Selecionar"}</small>
+            <small>{active ? `${allocations[location.id] ?? 0} ${unitLabel(productionUnit, allocations[location.id] ?? 0)}` : location.zoneType==="PALLET"&&location.occupied?"Ocupada":"Selecionar"}</small>
           </button>;
         })}
       </div>

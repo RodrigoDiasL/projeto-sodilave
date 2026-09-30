@@ -17,6 +17,10 @@ export function productionToInitial(production: any, cavityData?: any, cavityTes
   };
 
   return {
+    producedKg:production.producedKg==null?"":String(Number(production.producedKg)),
+    productionColor:production.productionColor??"",
+    capPackaging:production.capPackaging??"",
+    capUnitsPerPackage:production.capPackaging&&production.unitsPerPackageSnapshot?String(production.unitsPerPackageSnapshot):"",
     id: production.id,
     machineId: production.machineId,
     productId: production.productId,
@@ -45,6 +49,9 @@ export function productionToInitial(production: any, cavityData?: any, cavityTes
 export function previousProductionToDefaults(production:any){
   const availableMaterials=production.materials.filter((material:any)=>material.rawMaterialLot.status==="ACTIVE"&&Number(material.rawMaterialLot.quantityAvailable)>0);
   return {
+    productionColor:production.productionColor??"",
+    capPackaging:production.capPackaging??"",
+    capUnitsPerPackage:production.capPackaging&&production.unitsPerPackageSnapshot?String(production.unitsPerPackageSnapshot):"",
     machineId:production.machineId,
     productId:production.productId,
     productionLot:"",

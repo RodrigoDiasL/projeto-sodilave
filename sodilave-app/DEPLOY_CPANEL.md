@@ -570,3 +570,32 @@ localizar, mais um total das variantes de cada família. Usam as unidades por
 embalagem guardadas em cada produção, para respeitar embalamentos históricos.
 As importações apenas para histórico não aparecem no stock por localizar e não
 podem ser localizadas ou expedidas como stock físico.
+
+
+## Atualização de 30/09/2026 — formulários por máquina e paletes
+
+Aplicar `npm run db:upgrade` e `npm run db:check` antes de iniciar esta versão.
+A migração adiciona kg, cor e acondicionamento às produções de tampas e completa
+até 70 posições de paletes em cada armazém (10 filas × 7 colunas), preservando
+posições existentes e desativadas. Não executar o reset de testes na instalação real.
+
+A produção tem abas por máquina, mantém os dados preenchidos ao mudar de aba e
+permanece no mesmo turno ao gravar. Os turnos passados apresentam apenas máquinas
+com evidência de atividade: arranque/paragem, estado anterior ou registo nesse turno.
+Folhas anteriores à aplicação continuam a entrar por Importar histórico.
+
+As máquinas identificadas por 5/6 (incluindo M5, M6, Maq5 e Maq6) registam kg de
+tampas, cor, caixas/caixotes, quantidade de embalagens e tampas por embalagem.
+O stock de unidades usa esta quantidade real, sem converter kg por um peso estimado.
+Os lotes de masterbatch usam a mistura de MPs, com percentagens a partir de 0,01%.
+Os consumos sugeridos devem ser confirmados, incluindo perdas. Não há pesagens
+individuais nem testes destas máquinas, e ficam fora das verificações de turno.
+A máquina 7 tem pesos e testes independentes para as cavidades esquerda e direita,
+incluindo recuperação de rascunhos e consulta de detalhes.
+
+As posições de paletes ocupadas ficam indisponíveis para outra produção. O servidor
+bloqueia sobreposições também em entradas manuais, transferências, correções e
+reposições de expedições. A mesma produção pode ter a sua quantidade corrigida.
+As estibas continuam a permitir vários lotes. Sobreposições anteriores ficam
+assinaladas para correção manual; esta atualização não desloca nem elimina stock.
+As células das estibas são maiores e apresentam artigo e cor junto ao código.

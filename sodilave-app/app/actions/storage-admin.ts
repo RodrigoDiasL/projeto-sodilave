@@ -1,4 +1,5 @@
 "use server";
+import {assertPalletAvailable} from "@/lib/pallet-occupancy";
 import { createHash } from "node:crypto";
 import { revalidatePath } from "next/cache";
 import { requireAdmin } from "@/lib/auth";
@@ -32,6 +33,7 @@ export async function saveStorageLocation(fd:FormData) {
       if(id){
         const [current]=await tx.query<any[]>("SELECT * FROM StorageLocation WHERE id=? FOR UPDATE",[id]);
         if(!current)throw new UserInputError("A posição já não existe.");
+        if(zoneType==="PALLET"){const rows=await tx.query<any[]>("SELECT productionId FROM ProductionStorageBalance WHERE locationId=? AND quantityPackages>0 FOR UPDATE",[id]);if(rows.length>1)throw new UserInputError("Não pode converter em palete uma estiba com vários lotes. Separe primeiro o stock.");}
         await tx.storageLocation.update({where:{id},data});
       }else await tx.storageLocation.create({data});
       await tx.auditLog.create({data:{userId:admin.id,action:id?"EDIT":"CREATE",entity:"StorageLocation",entityId:id?String(id):`${warehouseCode}:${code}`,details:data}});
@@ -72,6 +74,7 @@ export async function addOpeningStock(fd:FormData) {
       if(!Number.isSafeInteger(units)||units<1)throw new UserInputError("Configure as unidades por saco/palete deste produto antes de dar entrada de stock.");
       const [request]=await tx.query<any[]>("SELECT requestHash FROM OpeningStockRequest WHERE requestId=? FOR UPDATE",[requestId]);
       if(request){if(request.requestHash!==requestHash)throw new UserInputError("Esta entrada já foi guardada com outros dados. Atualize a página antes de criar uma nova entrada.");return;}
+      await assertPalletAvailable(tx,locationId);
       const saved=await tx.production.create({data:{machineId,productId,operatorId:admin.id,productionLot:lotCode,shiftCode:"INITIAL",status:"FINALIZED",recordOrigin:"INITIAL_STOCK",quantityProduced:quantity,unitsPerPackageSnapshot:units,productionUnitSnapshot:product.productionUnit,finalizedAt:new Date(),observations:notes||"Entrada de stock anterior à utilização da aplicação."}});
       await tx.execute("INSERT INTO OpeningStockRequest (requestId,requestHash,productionId) VALUES (?,?,?)",[requestId,requestHash,saved.id]);
       await tx.productionStorageBalance.create({data:{productionId:saved.id,locationId,quantityPackages:quantity}});

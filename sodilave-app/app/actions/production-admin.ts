@@ -1,5 +1,6 @@
 "use server";
 
+import {assertPalletAvailable} from "@/lib/pallet-occupancy";
 import { UserInputError } from "@/lib/action-error";
 import { getShiftWindowForDate, formatLocalDateInput, type ShiftCode } from "@/lib/shift";
 import { RecordStatus } from "@/lib/db-types";
@@ -150,6 +151,7 @@ export async function correctProductionRecord(fd:FormData){
       if(row.recordOrigin==="HISTORICAL_IMPORT"&&balances.length)throw new UserInputError("Este histórico tem movimentos físicos inesperados. Reveja os movimentos antes de o corrigir.");
       for(const balance of allocations){
         const delta=balance.amount-Number(balance.quantityPackages);if(!delta)continue;
+        if(delta>0)await assertPalletAvailable(tx,Number(balance.locationId),id);
         if(balance.amount===0)await tx.productionStorageBalance.delete({where:{productionId:id,locationId:balance.locationId}});
         else await tx.productionStorageBalance.update({where:{productionId:id,locationId:balance.locationId},data:{quantityPackages:balance.amount}});
         await tx.productionStorageMovement.create({data:{productionId:id,movementType:"ADJUSTMENT",fromLocationId:delta<0?balance.locationId:null,toLocationId:delta>0?balance.locationId:null,quantityPackages:Math.abs(delta),createdById:admin.id,reason}});

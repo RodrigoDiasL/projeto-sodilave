@@ -5,7 +5,7 @@ import { getStorageLocations } from "@/lib/stock-map";
 
 type ProductMachineRow={productId:number;machineId:number};
 
-export async function getProductionFormData(options: { allActiveMachines?: boolean; currentUserId?: number; existingProductionId?: number } = {}) {
+export async function getProductionFormData(options: { machineIds?:number[]; allActiveMachines?: boolean; currentUserId?: number; existingProductionId?: number } = {}) {
   const existing = options.existingProductionId
     ? await db.production.findUnique({where:{id:options.existingProductionId},include:{materials:{include:{rawMaterialLot:true}}}})
     : null;
@@ -17,7 +17,7 @@ export async function getProductionFormData(options: { allActiveMachines?: boole
     : [];
   const credit = new Map(recorded.map(row=>[row.rawMaterialLotId,Number(row.quantityKg)]));
   const runningMachineIds = options.allActiveMachines ? [] : await getActiveWeeklyMachineIds();
-  const machineWhere = options.allActiveMachines
+  const machineWhere = options.machineIds ? {id:{in:options.machineIds}} : options.allActiveMachines
     ? { active: true }
     : { active: true, id: { in: runningMachineIds } };
 

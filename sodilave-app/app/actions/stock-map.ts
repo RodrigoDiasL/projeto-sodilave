@@ -1,5 +1,6 @@
 "use server";
 
+import {assertPalletAvailable} from "@/lib/pallet-occupancy";
 import { UserInputError } from "@/lib/action-error";
 import { revalidatePath } from "next/cache";
 import { requireAdmin } from "@/lib/auth";
@@ -93,6 +94,7 @@ export async function adjustStockMap(formData: FormData) {
       throw new UserInputError(`A correção excede o stock possível deste lote. Máximo atualmente armazenável: ${capacity.maxStoredPackages} embalagem(ns).`);
     }
 
+    if(newQuantityPackages>current)await assertPalletAvailable(tx,locationId,productionId);
     if (newQuantityPackages === 0) {
       if (current > 0) await tx.productionStorageBalance.delete({ where: { productionId, locationId } });
     } else if (current > 0) {
@@ -154,6 +156,7 @@ export async function transferStockMap(formData: FormData) {
       [productionId, fromLocationId, toLocationId],
     );
     const fromQty = Number(rows.find((row) => Number(row.locationId) === fromLocationId)?.quantityPackages ?? 0);
+    await assertPalletAvailable(tx,toLocationId,productionId);
     const toQty = Number(rows.find((row) => Number(row.locationId) === toLocationId)?.quantityPackages ?? 0);
     if (!formData.has("expectedQuantity") || Number(formData.get("expectedQuantity")) !== fromQty) throw new UserInputError("O stock mudou. Atualize o mapa e confirme novamente.");
     if (quantityPackages > fromQty) throw new UserInputError(`A posição de origem só tem ${fromQty} embalagem(ns) deste lote.`);
@@ -223,6 +226,7 @@ export async function addUnlocatedStock(formData: FormData) {
       "SELECT locationId,quantityPackages FROM ProductionStorageBalance WHERE productionId=? FOR UPDATE",
       [productionId],
     );
+    await assertPalletAvailable(tx,locationId,productionId);
     const currentTotal = balances.reduce((sum, row) => sum + Number(row.quantityPackages), 0);
     const missing = capacity.maxStoredPackages - currentTotal;
     if (quantityPackages > missing) {
@@ -292,6 +296,7 @@ export async function relocateStoragePosition(formData: FormData) {
     const source=balances.filter(row=>Number(row.locationId)===fromLocationId&&Number(row.quantityPackages)>0).sort((a,b)=>a.productionId-b.productionId);
     if(source.length!==expected.length||source.some((row,i)=>Number(row.productionId)!==expected[i].productionId||Number(row.quantityPackages)!==expected[i].quantityPackages)) throw new UserInputError("O stock mudou desde que abriu o mapa. Atualize e confirme novamente.");
     if(balances.some(row=>Number(row.locationId)===toLocationId&&Number(row.quantityPackages)>0)) throw new UserInputError("A posição de destino está ocupada. Escolha uma posição livre.");
+    if(positions[0].zoneType==="PALLET"&&expected.length>1)throw new UserInputError("Separe os lotes sobrepostos em posições de palete distintas.");
     for(const row of expected) {
       await tx.execute("DELETE FROM ProductionStorageBalance WHERE productionId=? AND locationId=?",[row.productionId,fromLocationId]);
       await tx.execute(`INSERT INTO ProductionStorageBalance (productionId,locationId,quantityPackages) VALUES (?,?,?)

@@ -38,7 +38,7 @@ function MapGrid({
     <div className="section-heading">
       <div><h2>{title}</h2><p className="muted small">{subtitle}</p></div>
     </div>
-    <div className="stock-map-scroll" tabIndex={0} aria-label={`Mapa de ${title}`}><div className="stock-map-grid" style={{gridTemplateColumns:`repeat(${Math.max(1,...locations.map(l=>l.columnNumber))},minmax(95px,1fr))`}}>
+    <div className="stock-map-scroll" tabIndex={0} aria-label={`Mapa de ${title}`}><div className="stock-map-grid" style={{gridTemplateColumns:`repeat(${Math.max(1,...locations.map(l=>l.columnNumber))},minmax(${locations[0]?.zoneType==="STACK"?180:110}px,1fr))`}}>
       {locations.map((location) => <button
         type="button"
         key={location.id}
@@ -46,7 +46,7 @@ function MapGrid({
         onClick={() => onSelect(location.id)}
         className={`stock-map-cell ${location.lotCount ? "occupied" : "empty"} ${selectedId === location.id ? "selected" : ""}`}
       >
-        <span className="stock-map-cell-code">{location.code}</span>
+        <span className="stock-map-cell-heading"><span className="stock-map-cell-code">{location.code}</span>{location.lots.length>0&&<span className="stock-map-cell-products">{[...new Set(location.lots.map(l=>l.productName+(l.productionColor?` · ${l.productionColor}`:"")))].join(" · ")}</span>}</span>{location.zoneType==="PALLET"&&location.lots.length>1&&<small className="alert error">Sobreposição existente: corrigir</small>}
         {location.lotCount === 0
           ? <small>Livre</small>
           : <>
@@ -145,7 +145,7 @@ export function StockMap({
                   <select name="toLocationId" required defaultValue="">
                     <option value="">Selecione a posição de destino</option>
                     {allLocations.filter((location) => location.id !== selected.id).map((location) =>
-                      <option key={location.id} value={location.id}>{location.warehouseName} · {location.zoneType === "STACK" ? "Estiba" : "Paletes"} · {location.code}</option>
+                      <option key={location.id} value={location.id} disabled={location.zoneType==="PALLET"&&location.occupied}>{location.warehouseName} · {location.zoneType === "STACK" ? "Estiba" : "Paletes"} · {location.code}</option>
                     )}
                   </select>
                 </label>
@@ -172,7 +172,7 @@ export function StockMap({
             <label>Posição
               <select name="locationId" required defaultValue="">
                 <option value="">Selecione</option>
-                {allLocations.map((location) => <option key={location.id} value={location.id}>{location.warehouseName} · {location.zoneType === "STACK" ? "Estiba" : "Paletes"} · {location.code}</option>)}
+                {allLocations.map((location) => <option key={location.id} value={location.id} disabled={location.zoneType==="PALLET"&&location.occupied}>{location.warehouseName} · {location.zoneType === "STACK" ? "Estiba" : "Paletes"} · {location.code}</option>)}
               </select>
             </label>
             <label>Quantidade a localizar

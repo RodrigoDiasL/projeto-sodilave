@@ -16,7 +16,7 @@ try {
     WeeklyShutdown:["weeklyStartupId","status","finalizedAt"],
     Machine:["status","statusChangedAt"],
     MachineEvent:["machineId","occurredAt","toStatus"],
-    Production:["recordOrigin","unitsPerPackageSnapshot","productionUnitSnapshot"],
+    Production:["producedKg","productionColor","capPackaging","recordOrigin","unitsPerPackageSnapshot","productionUnitSnapshot"],
     ProductionStockConsumption:["productionId","rawMaterialLotId","quantityKg"],
     LotDispatch:["cancelledAt","cancelledById","cancelReason","salesOrderItemId","requestId","requestHash"],
     SalesOrder:["id","customerName","orderDate","requestId","requestHash","status"],

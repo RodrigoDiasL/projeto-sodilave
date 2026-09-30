@@ -161,7 +161,7 @@ export default async function Page({searchParams}:{searchParams:Promise<{q?:stri
           <p><strong>Turno:</strong> {r.shiftCode}</p>
           <p><strong>Operador:</strong> {r.operator.name}</p>
           <p><strong>Data:</strong> {r.startedAt.toLocaleString("pt-PT")}</p>
-          <p><strong>Produzido:</strong> {producedPackages.toLocaleString("pt-PT")} {packageLabel(productionUnit, producedPackages)}{unitsPerPackage > 0 ? ` · ${producedUnits.toLocaleString("pt-PT")} artigos` : ""}</p>
+          {r.capPackaging&&<p><strong>Tampas:</strong> {Number(r.producedKg).toLocaleString("pt-PT")} kg · {r.productionColor}</p>}<p><strong>Produzido:</strong> {producedPackages.toLocaleString("pt-PT")} {packageLabel(productionUnit, producedPackages)}{unitsPerPackage > 0 ? ` · ${producedUnits.toLocaleString("pt-PT")} artigos` : ""}</p>
           <p><strong>Estado comercial:</strong> {saleState}</p>
         </div>
 

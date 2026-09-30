@@ -1062,6 +1062,73 @@ test('checkups retain the previous shift during the 30 minute grace, including s
   }finally{t.mock.timers.reset();await db.machine.update({where:{id:m.id},data:{active:false,status:'STOPPED'}});for(const old of previousStates)await db.machine.update({where:{id:old.id},data:{status:'RUNNING'}});}
 });
 
+test('caps record kg, colour and real package counts without weights or tests; small masterbatch percentages persist',async()=>{
+  const caps=[];
+  for(const code of ['M05','Maq6'])caps.push(await db.machine.create({data:{code,name:'Caps '+code,status:'RUNNING'}}));
+  const p=await db.product.create({data:{code:'CAP-FORM',name:'Blue cap',unitsPerPackage:1,productionUnit:'UNIT'}});
+  const raw=await db.rawMaterialLot.create({data:{rawMaterialId:material.id,supplierLot:'CAP-RESIN',quantityInitial:500,quantityAvailable:500}});
+  const mb=await db.rawMaterial.create({data:{code:'MB',name:'Blue masterbatch'}});
+  const mbLot=await db.rawMaterialLot.create({data:{rawMaterialId:mb.id,supplierLot:'CAP-BLUE',quantityInitial:100,quantityAvailable:100}});
+  const stack=await db.storageLocation.create({data:{warehouseCode:'CAP',warehouseName:'Caps',zoneType:'STACK',code:'C1',rowNumber:1,columnNumber:1}});
+  for(const m of caps)await db.execute('INSERT INTO ProductMachine (productId,machineId) VALUES (?,?)',[p.id,m.id]);
+  for(const [i,m] of caps.entries()){
+    const form=fd({intent:'draft',machineId:m.id,productId:p.id,quantityProduced:2,producedKg:100,productionColor:'Azul',capPackaging:i?'BIN':'BOX',capUnitsPerPackage:i?55000:3000,materialLotId_0:raw.id,percentage_0:98,quantityKg_0:98,materialLotId_1:mbLot.id,percentage_1:2,quantityKg_1:2,[`storage_location_${stack.id}`]:2});
+    const draft=await saveProduction(form);form.set('productionId',draft.id);form.set('intent','finalize');
+    form.delete('productionColor');assert.equal((await load('app/actions/production').submitProduction(form)).ok,false);form.set('productionColor','Azul');
+    const result=await saveProduction(form);assert.equal(result.id,draft.id);
+    const row=await db.production.findUnique({where:{id:result.id},include:{materials:{include:{rawMaterialLot:true}},tests:true}});
+    assert.equal(Number(row.producedKg),100);assert.equal(row.productionColor,'Azul');assert.equal(row.initialWeightG,null);assert.equal(row.tests.length,0);
+    assert.equal(row.productionUnitSnapshot,i?'BIN':'BOX');assert.equal(row.unitsPerPackageSnapshot,i?55000:3000);
+    const initial=productionToInitial(row);assert.equal(initial.producedKg,'100');assert.equal(initial.capUnitsPerPackage,i?'55000':'3000');
+    await saveProduction(form);assert.equal(Number((await db.rawMaterialLot.findUnique({where:{id:raw.id}})).quantityAvailable),500-98*(i+1));
+    form.set('capUnitsPerPackage','4000');await assert.rejects(saveProduction(form),/acondicionamento/);
+  }
+  const now=new Date(),w=load('lib/shift').getShiftWindow(now);
+  const checkups=await load('lib/checkup-machines').getCheckupMachines(w,now);assert.ok(caps.every(m=>!checkups.some(c=>c.id===m.id)));
+  const handover=await load('lib/checkup-machines').getCheckupMachines(w,new Date(w.end.getTime()+60000));assert.ok(caps.every(m=>!handover.some(c=>c.id===m.id)));
+});
+
+test('M7 requires and restores independent weights and tests for both cavities',async()=>{
+  const m=await db.machine.create({data:{code:'M07',name:'Double cavity',status:'RUNNING'}});
+  await db.execute('INSERT INTO ProductMachine (productId,machineId) VALUES (?,?)',[product.id,m.id]);
+  const raw=await db.rawMaterialLot.create({data:{rawMaterialId:material.id,supplierLot:'M7',quantityInitial:50,quantityAvailable:50}});
+  const form=fd({intent:'draft',machineId:m.id,productId:product.id,quantityProduced:2,initialWeightG:100,midWeightG:101,rightInitialWeightG:102,rightMidWeightG:103,materialLotId_0:raw.id,percentage_0:100,quantityKg_0:1,leakStart:'CONFORMING',leakMid:'NON_CONFORMING',dropStart:'CONFORMING',dropMid:'NOT_PERFORMED',leakStartRight:'NON_CONFORMING',leakMidRight:'CONFORMING',dropStartRight:'NOT_PERFORMED',dropMidRight:'CONFORMING',[`storage_location_${location.id}`]:2});
+  const draft=await saveProduction(form);form.set('productionId',draft.id);
+  const [cavity]=await db.query('SELECT * FROM ProductionCavityData WHERE productionId=?',[draft.id]);
+  const tests=await db.query('SELECT * FROM ProductionCavityTest WHERE productionId=?',[draft.id]);
+  const row=await db.production.findUnique({where:{id:draft.id},include:{materials:{include:{rawMaterialLot:true}},tests:true}});
+  const initial=productionToInitial(row,cavity,tests);assert.equal(initial.rightMidWeightG,'103');assert.equal(initial.tests.leakStartRight,'NON_CONFORMING');assert.equal(initial.tests.leakStart,'CONFORMING');
+  form.set('intent','finalize');form.delete('rightMidWeightG');await assert.rejects(saveProduction(form),/pesos|pesagens|cavidades/);form.set('rightMidWeightG','103');
+  form.delete('dropMidRight');await assert.rejects(saveProduction(form),/testes/);form.set('dropMidRight','CONFORMING');await saveProduction(form);
+  assert.equal((await db.query('SELECT * FROM ProductionCavityTest WHERE productionId=?',[draft.id])).length,4);
+});
+
+test('historical production machines need evidence within the selected shift, including retired machines',async()=>{
+  const helper=load('lib/production-machines').getProductionMachinesForPeriod;
+  const start=new Date('2023-02-01T08:00:00Z'),end=new Date('2023-02-01T16:00:00Z');
+  const list=[];for(let i=0;i<4;i++)list.push(await db.machine.create({data:{code:'HIST-M'+i,name:'History '+i,active:i!==0,status:'STOPPED'}}));
+  for(const [m,at,from,to] of [[list[0],'07:00','STOPPED','RUNNING'],[list[0],'09:00','RUNNING','STOPPED'],[list[1],'10:00','STOPPED','RUNNING'],[list[1],'15:00','RUNNING','STOPPED'],[list[2],'16:00','STOPPED','RUNNING']])await db.machineEvent.create({data:{machineId:m.id,createdById:user.id,type:'STATUS_CHANGE',occurredAt:new Date('2023-02-01T'+at+':00Z'),fromStatus:from,toStatus:to}});
+  const result=await helper({start,end});assert.ok(result.some(m=>m.id===list[0].id));assert.ok(result.some(m=>m.id===list[1].id));assert.ok(!result.some(m=>m.id===list[2].id||m.id===list[3].id));
+});
+
+test('pallet occupancy serializes competing stock entries and rejects other incoming paths while stacks allow mixing',async()=>{
+  const {addOpeningStock}=load('app/actions/storage-admin'),actions=load('app/actions/stock-map');
+  const uuid=require('node:crypto').randomUUID;
+  const pallet=await db.storageLocation.create({data:{warehouseCode:'OCC',warehouseName:'Occupancy',zoneType:'PALLET',code:'P1',rowNumber:1,columnNumber:1}});
+  const stack=await db.storageLocation.create({data:{warehouseCode:'OCC',warehouseName:'Occupancy',zoneType:'STACK',code:'S1',rowNumber:1,columnNumber:1}});
+  const entry=(loc,code)=>fd({productId:product.id,machineId:machine.id,locationId:loc.id,quantityPackages:4,lotCode:code,requestId:uuid()});
+  const attempts=await Promise.all([addOpeningStock(entry(pallet,'OCC-A')),addOpeningStock(entry(pallet,'OCC-B'))]);assert.equal(attempts.filter(x=>x.ok).length,1);assert.match(attempts.find(x=>!x.ok).message,/ocupada/);
+  assert.equal((await db.query('SELECT * FROM ProductionStorageBalance WHERE locationId=?',[pallet.id])).length,1);
+  for(const name of ['OCC-C','OCC-D'])assert.equal((await addOpeningStock(entry(stack,name))).ok,true);
+  const p=await db.production.findFirst({where:{productionLot:'OCC-C'}});
+  await assert.rejects(actions.transferStockMap(fd({productionId:p.id,fromLocationId:stack.id,toLocationId:pallet.id,quantityPackages:1,reason:'Occupied test'})),/ocupada/);
+  await assert.rejects(actions.adjustStockMap(fd({productionId:p.id,locationId:pallet.id,newQuantityPackages:1,expectedQuantity:0,reason:'Occupied test'})),/ocupada/);
+  assert.equal(Number((await db.query('SELECT quantityPackages FROM ProductionStorageBalance WHERE productionId=?',[p.id]))[0].quantityPackages),4);
+  const [occupant]=await db.query('SELECT productionId FROM ProductionStorageBalance WHERE locationId=?',[pallet.id]);
+  await actions.adjustStockMap(fd({productionId:occupant.productionId,locationId:pallet.id,newQuantityPackages:5,expectedQuantity:4,reason:'Same lot count correction'}));
+  assert.equal(Number((await db.query('SELECT quantityPackages FROM ProductionStorageBalance WHERE locationId=?',[pallet.id]))[0].quantityPackages),5);
+});
+
 test('test-data reset previews safely, restores consumed MPs and preserves master data',async()=>{
   const tables=['User','Product','RawMaterial','RawMaterialLot','Machine','StorageLocation','CommercialLot','SalesOrder','Maintenance'];
   const counts=async()=>Object.fromEntries(await Promise.all(tables.map(async table=>{const [r]=await db.query(`SELECT COUNT(*) AS total FROM ${table}`);return [table,Number(r.total)];})));
